@@ -1129,7 +1129,7 @@ wheels = [
 
 [[package]]
 name = "office4ai"
-version = "0.1.1rc2"
+version = "0.1.1rc3"
 source = { editable = "." }
 dependencies = [
     { name = "aiohttp" },
