@@ -10,7 +10,7 @@ from unittest.mock import patch
 import pytest
 from loguru import logger
 
-from office4ai.logging import InterceptHandler, setup_logging
+from office4ai.logging import InterceptHandler, get_log_dir, setup_logging
 
 # conftest.py sets OFFICE4AI_LOG_DIR="" to prevent accidental file creation.
 # Tests that verify file logging must temporarily remove it.
@@ -21,6 +21,35 @@ def _patch_no_log_dir_env() -> patch.dict:  # type: ignore[type-arg]
     env = os.environ.copy()
     env.pop("OFFICE4AI_LOG_DIR", None)
     return patch.dict(os.environ, env, clear=True)
+
+
+class TestGetLogDir:
+    """Tests for get_log_dir() path resolution."""
+
+    def test_default_uses_platformdirs(self) -> None:
+        """Without env var, should return platformdirs user_log_dir path."""
+        from platformdirs import user_log_dir
+
+        with _patch_no_log_dir_env():
+            result = get_log_dir()
+        assert result == user_log_dir("office4ai")
+
+    def test_env_var_overrides(self, tmp_path: Path) -> None:
+        """OFFICE4AI_LOG_DIR env var should override platformdirs default."""
+        custom = str(tmp_path / "custom_logs")
+        with patch.dict(os.environ, {"OFFICE4AI_LOG_DIR": custom}):
+            assert get_log_dir() == custom
+
+    def test_empty_env_var_disables(self) -> None:
+        """Empty string env var should return empty string (disables file logging)."""
+        with patch.dict(os.environ, {"OFFICE4AI_LOG_DIR": ""}):
+            assert get_log_dir() == ""
+
+    def test_default_path_is_absolute(self) -> None:
+        """Default path (from platformdirs) should be an absolute path."""
+        with _patch_no_log_dir_env():
+            result = get_log_dir()
+        assert os.path.isabs(result)
 
 
 class TestInterceptHandler:

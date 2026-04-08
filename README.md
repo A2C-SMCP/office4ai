@@ -108,6 +108,18 @@ office4ai-mcp <command>
 
 证书默认存储在 `~/.office4ai/certs/`，可通过 `OFFICE4AI_CERT_DIR` 环境变量覆盖。
 
+### 日志位置
+
+日志默认存储在平台标准目录，可通过 `OFFICE4AI_LOG_DIR` 环境变量覆盖：
+
+| 平台    | 默认路径                                         |
+|---------|--------------------------------------------------|
+| macOS   | `~/Library/Logs/office4ai`                       |
+| Linux   | `~/.local/state/office4ai/log`                   |
+| Windows | `C:\Users\<user>\AppData\Local\office4ai\Logs`   |
+
+设置 `OFFICE4AI_LOG_DIR=""` 可禁用文件日志。
+
 ## 系统要求
 
 - Python 3.10+

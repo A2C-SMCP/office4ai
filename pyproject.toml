@@ -37,6 +37,8 @@ dependencies = [
     "websockets>=12.0",
     # 证书生成 | Certificate generation
     "cryptography>=42.0",
+    # 平台标准路径 | Platform-standard paths
+    "platformdirs>=4.0.0",
 ]
 license = { text = "MIT" }
 keywords = ["ai", "office", "libreoffice", "document-management", "ai-agent", "docx", "xlsx", "pptx"]
