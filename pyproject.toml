@@ -1,6 +1,6 @@
 [project]
 name = "office4ai"
-version = "0.1.1"
+version = "0.1.2a1"
 description = "A powerful Office document management environment designed for AI agents to interact with Office documents"
 readme = "README.md"
 authors = [
