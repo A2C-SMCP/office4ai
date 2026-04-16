@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any, Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 from office4ai.a2c_smcp.tools.base import BaseTool
 
@@ -13,11 +13,17 @@ class PptReorderElementInput(BaseModel):
     """MCP 输入模型: 调整元素层叠顺序"""
 
     document_uri: str = Field(..., description="Target document URI (e.g. file:///path/to/presentation.pptx)")
-    elementId: str = Field(..., description="Element ID to reorder")
+    elementId: str | int = Field(..., description="Element ID to reorder")
     slideIndex: int | None = Field(None, description="Slide index (0-based), default: current slide", ge=0)
     action: Literal["bringToFront", "sendToBack", "bringForward", "sendBackward"] = Field(
         ..., description="Reorder action"
     )
+
+    # OF4AI-8: LLM 将纯数字字符串 ID（如 "5"）推断为 int，需强转回 str 以通过下游 DTO 校验
+    @field_validator("elementId", mode="before")
+    @classmethod
+    def _coerce_element_id(cls, v: Any) -> Any:
+        return str(v) if isinstance(v, int) else v
 
 
 class PptReorderElementTool(BaseTool):

@@ -888,3 +888,119 @@ class TestFormatResult:
 
         assert result["success"] is False
         assert "Slide index out of range" in result["error"]
+
+
+# ============================================================================
+# OF4AI-8: elementId int Coercion Tests
+# ============================================================================
+
+
+class TestElementIdIntCoercion:
+    """OF4AI-8: LLM 传入 int elementId 时应自动强转为 str"""
+
+    @pytest.mark.asyncio
+    async def test_int_element_id_coercion(self, mock_workspace):
+        """传入 elementId: 5 (int) 应被强转为 "5" (str)"""
+        mock_workspace.execute.return_value = OfficeObs(success=True, data={"deletedCount": 1})
+
+        tool = PptDeleteElementTool(mock_workspace)
+        await tool.execute(
+            {
+                "document_uri": "file:///test.pptx",
+                "elementId": 5,  # int, not str
+            }
+        )
+
+        mock_workspace.execute.assert_called_once()
+        action = mock_workspace.execute.call_args[0][0]
+        assert action.params["elementId"] == "5"
+        assert isinstance(action.params["elementId"], str)
+
+    @pytest.mark.asyncio
+    async def test_int_element_ids_coercion(self, mock_workspace):
+        """传入 elementIds: [5, 3] (int list) 应被强转为 ["5", "3"]"""
+        mock_workspace.execute.return_value = OfficeObs(success=True, data={"deletedCount": 2})
+
+        tool = PptDeleteElementTool(mock_workspace)
+        await tool.execute(
+            {
+                "document_uri": "file:///test.pptx",
+                "elementIds": [5, 3],  # int list, not str list
+            }
+        )
+
+        mock_workspace.execute.assert_called_once()
+        action = mock_workspace.execute.call_args[0][0]
+        assert action.params["elementIds"] == ["5", "3"]
+        assert all(isinstance(x, str) for x in action.params["elementIds"])
+
+    @pytest.mark.asyncio
+    async def test_str_element_id_unchanged(self, mock_workspace):
+        """传入 elementId: "shape-001" (str) 应保持不变"""
+        mock_workspace.execute.return_value = OfficeObs(success=True, data={"elementId": "shape-001"})
+
+        tool = PptUpdateTextBoxTool(mock_workspace)
+        await tool.execute(
+            {
+                "document_uri": "file:///test.pptx",
+                "elementId": "shape-001",
+                "updates": {"text": "Hello"},
+            }
+        )
+
+        action = mock_workspace.execute.call_args[0][0]
+        assert action.params["elementId"] == "shape-001"
+        assert isinstance(action.params["elementId"], str)
+
+    def test_json_schema_accepts_int(self, mock_workspace):
+        """验证 input_schema 的 elementId 包含 integer 类型"""
+        tool = PptDeleteElementTool(mock_workspace)
+        schema = tool.input_schema
+        element_id_schema = schema["properties"]["elementId"]
+        # Should have anyOf with both string and integer
+        type_strs = _extract_types_from_schema(element_id_schema)
+        assert "string" in type_strs
+        assert "integer" in type_strs
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "tool_cls,extra_params",
+        [
+            (PptUpdateElementTool, {"updates": {"left": 100}}),
+            (PptUpdateImageTool, {"image": {"base64": "abc=="}}),
+            (PptUpdateTextBoxTool, {"updates": {"text": "hi"}}),
+            (PptReorderElementTool, {"action": "bringToFront"}),
+            (PptUpdateTableCellTool, {"cells": [{"rowIndex": 0, "columnIndex": 0, "text": "A"}]}),
+            (PptUpdateTableRowColumnTool, {"rows": [{"rowIndex": 0, "values": ["A"]}]}),
+            (PptUpdateTableFormatTool, {"rowFormats": [{"rowIndex": 0, "bold": True}]}),
+        ],
+    )
+    async def test_all_tools_int_element_id(self, mock_workspace, tool_cls, extra_params):
+        """所有 8 个 PPT 工具都应接受 int elementId 并强转为 str"""
+        mock_workspace.execute.return_value = OfficeObs(success=True, data={})
+
+        tool = tool_cls(mock_workspace)
+        await tool.execute(
+            {
+                "document_uri": "file:///test.pptx",
+                "elementId": 42,  # int
+                **extra_params,
+            }
+        )
+
+        mock_workspace.execute.assert_called_once()
+        action = mock_workspace.execute.call_args[0][0]
+        assert action.params["elementId"] == "42"
+        assert isinstance(action.params["elementId"], str)
+
+
+def _extract_types_from_schema(schema: dict) -> set[str]:
+    """从 JSON Schema 中提取所有 type 值"""
+    types = set()
+    if "type" in schema:
+        types.add(schema["type"])
+    for key in ("anyOf", "oneOf"):
+        if key in schema:
+            for item in schema[key]:
+                types.update(_extract_types_from_schema(item))
+    return types

@@ -994,3 +994,39 @@ class TestFormatResult:
         action = mock_workspace.execute.call_args[0][0]
         assert action.params["resolved"] is True  # default value
         assert result["success"] is True
+
+
+# ============================================================================
+# OF4AI-8: comment_id int Coercion Tests
+# ============================================================================
+
+
+class TestCommentIdIntCoercion:
+    """OF4AI-8: LLM 传入 int comment_id 时应自动强转为 str"""
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "tool_cls,extra_params",
+        [
+            (WordDeleteCommentTool, {}),
+            (WordReplyCommentTool, {"text": "Reply text"}),
+            (WordResolveCommentTool, {}),
+        ],
+    )
+    async def test_int_comment_id_coercion(self, mock_workspace, tool_cls, extra_params):
+        """传入 comment_id: 42 (int) 应被强转为 "42" (str)"""
+        mock_workspace.execute.return_value = OfficeObs(success=True, data={})
+
+        tool = tool_cls(mock_workspace)
+        await tool.execute(
+            {
+                "document_uri": "file:///test.docx",
+                "comment_id": 42,  # int, not str
+                **extra_params,
+            }
+        )
+
+        mock_workspace.execute.assert_called_once()
+        action = mock_workspace.execute.call_args[0][0]
+        assert action.params["comment_id"] == "42"
+        assert isinstance(action.params["comment_id"], str)

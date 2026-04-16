@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any, Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 from office4ai.a2c_smcp.tools.base import BaseTool
 from office4ai.environment.workspace.dtos.ppt import TableCellUpdate
@@ -14,8 +14,14 @@ class PptUpdateTableCellInput(BaseModel):
     """MCP 输入模型: 更新表格单元格"""
 
     document_uri: str = Field(..., description="Target document URI (e.g. file:///path/to/presentation.pptx)")
-    elementId: str = Field(..., description="Table element ID")
+    elementId: str | int = Field(..., description="Table element ID")
     cells: list[TableCellUpdate] = Field(..., description="Cells to update", min_length=1)
+
+    # OF4AI-8: LLM 将纯数字字符串 ID（如 "5"）推断为 int，需强转回 str 以通过下游 DTO 校验
+    @field_validator("elementId", mode="before")
+    @classmethod
+    def _coerce_element_id(cls, v: Any) -> Any:
+        return str(v) if isinstance(v, int) else v
 
 
 class PptUpdateTableCellTool(BaseTool):
