@@ -29,7 +29,10 @@ class WordInsertTableTool(BaseTool):
         return (
             "Insert a table into a Word document. "
             "Specify the number of rows and columns, optionally provide cell data and table style. "
-            "Cell data is a 2D array of strings matching the rows x columns dimensions."
+            "Cell data is a 2D array of strings matching the rows x columns dimensions. "
+            "Use options.insertLocation to control placement: "
+            "'Start'/'End' (document boundaries), 'Before'/'After' (relative to current selection/cursor), "
+            "or 'Replace' (replace current selection). Defaults to 'End' when omitted."
         )
 
     @property

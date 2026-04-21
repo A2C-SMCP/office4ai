@@ -874,6 +874,8 @@ class TableInsertOptions(SocketIOBaseModel):
     Table insertion options.
 
     Uses Pydantic aliases for protocol compliance.
+
+    OASP Spec: https://a2c-smcp.github.io/oasp-protocol/specification/events-word/#wordinserttable
     """
 
     rows: int = Field(..., alias="rows", description="Number of rows", ge=1)
@@ -887,6 +889,15 @@ class TableInsertOptions(SocketIOBaseModel):
         default=None,
         alias="style",
         description="Table style name",
+    )
+    insert_location: Literal["Start", "End", "Before", "After", "Replace"] | None = Field(
+        default=None,
+        alias="insertLocation",
+        description=(
+            "Where to insert the table relative to the current selection. "
+            "Start/End: document start/end; Before/After: relative to current selection/cursor paragraph; "
+            "Replace: replace current selection. When omitted, Add-In defaults to 'End' (backward compatible)."
+        ),
     )
 
 

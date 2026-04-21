@@ -292,6 +292,43 @@ class TestExecuteFlow:
         assert action.params["options"]["columns"] == 2
 
     @pytest.mark.asyncio
+    async def test_insert_table_omitted_insert_location_is_excluded(self, mock_workspace):
+        """未传 insertLocation 时不应出现在 params 中（exclude_none），Add-In 侧回退默认 End"""
+        mock_workspace.execute.return_value = OfficeObs(success=True, data={})
+
+        tool = WordInsertTableTool(mock_workspace)
+        await tool.execute(
+            {
+                "document_uri": "file:///test.docx",
+                "options": {"rows": 2, "columns": 2},
+            }
+        )
+
+        action = mock_workspace.execute.call_args[0][0]
+        assert "insert_location" not in action.params["options"]
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("insert_location", ["Start", "End", "Before", "After", "Replace"])
+    async def test_insert_table_passes_through_insert_location(self, mock_workspace, insert_location: str):
+        """五种 insertLocation 枚举值均应透传到 OfficeAction.params"""
+        mock_workspace.execute.return_value = OfficeObs(success=True, data={})
+
+        tool = WordInsertTableTool(mock_workspace)
+        await tool.execute(
+            {
+                "document_uri": "file:///test.docx",
+                "options": {
+                    "rows": 2,
+                    "columns": 2,
+                    "insertLocation": insert_location,
+                },
+            }
+        )
+
+        action = mock_workspace.execute.call_args[0][0]
+        assert action.params["options"]["insert_location"] == insert_location
+
+    @pytest.mark.asyncio
     async def test_insert_equation_builds_correct_action(self, mock_workspace):
         """验证 insert_equation 构建正确的 OfficeAction"""
         mock_workspace.execute.return_value = OfficeObs(success=True, data={})

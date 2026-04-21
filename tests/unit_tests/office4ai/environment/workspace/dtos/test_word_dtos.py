@@ -26,6 +26,7 @@ from office4ai.environment.workspace.dtos.word import (
     SelectTextSearchOptions,
     StyleInfo,
     StylesResult,
+    TableInsertOptions,
     TextFormat,
     WordDeleteCommentRequest,
     WordGetCommentsRequest,
@@ -40,6 +41,7 @@ from office4ai.environment.workspace.dtos.word import (
     WordGetVisibleContentRequest,
     WordGetVisibleContentResponse,
     WordInsertCommentRequest,
+    WordInsertTableRequest,
     WordInsertTextRequest,
     WordReplaceSelectionRequest,
     WordReplaceSelectionResponse,
@@ -2850,3 +2852,61 @@ class TestWordResolveCommentRequest:
 
         assert payload["commentId"] == "c1"
         assert payload["resolved"] is True
+
+
+class TestTableInsertOptionsInsertLocation:
+    """TableInsertOptions 新增 insertLocation 字段覆盖（OF4AI-9）"""
+
+    @pytest.mark.parametrize("location", ["Start", "End", "Before", "After", "Replace"])
+    def test_all_enum_values_accepted(self, location: str) -> None:
+        """五种枚举值均应通过校验，并保留原值"""
+        options = TableInsertOptions(rows=2, columns=2, insertLocation=location)
+
+        assert options.insert_location == location
+
+    def test_default_omitted_means_none(self) -> None:
+        """未传 insertLocation 时内部值为 None，由 Add-In 侧回退默认 'End'"""
+        options = TableInsertOptions(rows=2, columns=2)
+
+        assert options.insert_location is None
+
+    def test_rejects_invalid_location(self) -> None:
+        """非枚举值应触发 ValidationError"""
+        with pytest.raises(ValidationError):
+            TableInsertOptions(rows=2, columns=2, insertLocation="Middle")
+
+    def test_accepts_snake_case_field_name(self) -> None:
+        """内部字段名 snake_case 也应被接受（populate_by_name）"""
+        options = TableInsertOptions(rows=2, columns=2, insert_location="After")
+
+        assert options.insert_location == "After"
+
+    def test_dump_by_alias_uses_camel_case(self) -> None:
+        """序列化到协议 wire format 时字段名为 camelCase"""
+        options = TableInsertOptions(rows=2, columns=2, insertLocation="Before")
+
+        payload = options.model_dump(by_alias=True, exclude_none=True)
+
+        assert "insertLocation" in payload
+        assert payload["insertLocation"] == "Before"
+        assert "insert_location" not in payload
+
+    def test_omitted_excluded_from_wire_payload(self) -> None:
+        """未设置 insertLocation 时，不应出现在按别名导出的 payload 中"""
+        options = TableInsertOptions(rows=1, columns=1)
+
+        payload = options.model_dump(by_alias=True, exclude_none=True)
+
+        assert "insertLocation" not in payload
+
+    def test_request_wraps_options_and_serializes_insert_location(self) -> None:
+        """WordInsertTableRequest 端到端：接受 camelCase 输入，输出 wire payload 含 insertLocation"""
+        request = WordInsertTableRequest(
+            requestId="req-insert-table-1",
+            documentUri="file:///test.docx",
+            options={"rows": 2, "columns": 2, "insertLocation": "Replace"},
+        )
+
+        payload = request.to_payload()
+
+        assert payload["options"]["insertLocation"] == "Replace"
