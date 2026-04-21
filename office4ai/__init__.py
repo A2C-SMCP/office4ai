@@ -16,7 +16,7 @@ Main Components:
 - PresentationHandler: PowerPoint presentation operations
 """
 
-__version__: str = "0.2.0rc1"
+__version__: str = "0.2.0"
 __all__ = [
     "__version__",
 ]
