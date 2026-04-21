@@ -15,8 +15,7 @@ import socketio  # type: ignore[import-untyped]
 from aiohttp import web
 
 from .config import SocketIOConfig, default_config
-from .namespaces.ppt import PptNamespace
-from .namespaces.word import WordNamespace
+from .factory import build_sio_server
 from .services.connection_manager import connection_manager
 
 logger = logging.getLogger(__name__)
@@ -26,39 +25,17 @@ def create_socketio_server(config: SocketIOConfig = default_config) -> socketio.
     """
     Create and configure Socket.IO server.
 
+    Thin wrapper over :func:`build_sio_server`, kept for backward compatibility
+    with tests and docs that import this symbol.
+
     Args:
         config: Server configuration
 
     Returns:
         Configured Socket.IO server instance
     """
-    # Create Socket.IO server
-    sio = socketio.AsyncServer(
-        async_mode="aiohttp",
-        cors_allowed_origins=config.cors_allowed_origins,
-        ping_timeout=config.ping_timeout,
-        ping_interval=config.ping_interval,
-        max_http_buffer_size=config.max_http_buffer_size,
-        logger=config.logger,
-        engineio_logger=config.engineio_logger,
-    )
-
-    # Register namespaces
-    word_namespace = WordNamespace()
-    sio.register_namespace(word_namespace)
-
-    ppt_namespace = PptNamespace()
-    sio.register_namespace(ppt_namespace)
-
-    # TODO: Register Excel namespace in future phases
-    # from .namespaces.excel import ExcelNamespace
-    # sio.register_namespace(ExcelNamespace())
-
-    # Log startup
-    logger.info("Socket.IO server created")
-    logger.info(f"Namespaces: {', '.join(config.namespaces)}")
+    sio = build_sio_server(config)
     logger.info(f"CORS origins: {config.cors_allowed_origins}")
-
     return sio
 
 

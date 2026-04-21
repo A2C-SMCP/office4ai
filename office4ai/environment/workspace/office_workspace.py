@@ -16,8 +16,7 @@ from aiohttp import web
 
 from .base import BaseWorkspace, DocumentStatus, OfficeAction, OfficeObs
 from .socketio.config import SocketIOConfig, default_config
-from .socketio.namespaces.ppt import PptNamespace
-from .socketio.namespaces.word import WordNamespace
+from .socketio.factory import build_sio_server
 from .socketio.services.connection_manager import connection_manager, normalize_document_uri
 
 logger = logging.getLogger(__name__)
@@ -139,25 +138,8 @@ class OfficeWorkspace(BaseWorkspace):
             # 注册断连回调清理缓存 | Register disconnect callback to clear caches
             connection_manager.register_disconnect_callback(self._clear_document_cache)
 
-            # 创建 Socket.IO 服务器
-            self.sio_server = socketio.AsyncServer(
-                async_mode="aiohttp",
-                cors_allowed_origins=self.config.cors_allowed_origins,
-                ping_timeout=self.config.ping_timeout // 1000,
-                ping_interval=self.config.ping_interval // 1000,
-                max_http_buffer_size=self.config.max_http_buffer_size,
-                logger=self.config.logger,
-                engineio_logger=self.config.engineio_logger,
-            )
-
-            # 注册命名空间
-            word_namespace = WordNamespace()
-            ppt_namespace = PptNamespace()
-            self.sio_server.register_namespace(word_namespace)
-            self.sio_server.register_namespace(ppt_namespace)
-
-            logger.info("Socket.IO Server created")
-            logger.info(f"Namespaces: {', '.join(self.config.namespaces)}")
+            # 创建 Socket.IO 服务器 + 注册命名空间（单一事实源：socketio.factory）
+            self.sio_server = build_sio_server(self.config)
 
             # 创建 aiohttp 应用
             self.app = web.Application()
