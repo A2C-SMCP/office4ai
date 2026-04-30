@@ -378,6 +378,7 @@ class ErrorCode:
     SEARCH_NO_MATCH = "3012"
     NO_TABLE_AT_CURSOR = "3013"
     ALREADY_MERGED = "3014"
+    INVALID_CHART_DATA = "3015"
     OFFICE_API_ERROR = "3999"
 
     # Validation errors (4xxx)

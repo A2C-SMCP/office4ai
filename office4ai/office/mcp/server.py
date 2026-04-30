@@ -112,18 +112,21 @@ class OfficeMCPServer(BaseMCPServer):
             PptAddSlideTool,
             PptDeleteElementTool,
             PptDeleteSlideTool,
+            PptGetChartTool,
             PptGetCurrentSlideElementsTool,
             PptGetSlideElementsTool,
             PptGetSlideInfoTool,
             PptGetSlideLayoutsTool,
             PptGetSlideScreenshotTool,
             PptGotoSlideTool,
+            PptInsertChartTool,
             PptInsertImageTool,
             PptInsertShapeTool,
             PptInsertTableTool,
             PptInsertTextTool,
             PptMoveSlideTool,
             PptReorderElementTool,
+            PptUpdateChartTool,
             PptUpdateElementTool,
             PptUpdateImageTool,
             PptUpdateTableCellTool,
@@ -151,6 +154,10 @@ class OfficeMCPServer(BaseMCPServer):
             PptUpdateTableRowColumnTool(self.workspace),
             PptUpdateTableFormatTool(self.workspace),
             PptUpdateElementTool(self.workspace),
+            # Chart tools (OASP /ppt Draft, v0.2.0 — Server OOXML)
+            PptInsertChartTool(self.workspace),
+            PptGetChartTool(self.workspace),
+            PptUpdateChartTool(self.workspace),
             # Delete & layout tools
             PptDeleteElementTool(self.workspace),
             PptReorderElementTool(self.workspace),
@@ -198,9 +205,14 @@ class OfficeMCPServer(BaseMCPServer):
         connection_manager.register_connect_callback(self._on_doc_connect)
         connection_manager.register_disconnect_callback_ns(self._on_doc_disconnect)
 
+        # Wire Server-side OOXML mutations (e.g. /ppt chart engine) to MCP
+        # resource_updated notifications so subscribers learn the file changed.
+        self.workspace.set_resource_update_callback(self.subscription_manager.notify_fire_and_forget)
+
     async def _async_shutdown(self) -> None:
         """停止 OfficeWorkspace (Socket.IO Server) | Stop OfficeWorkspace"""
         logger.info("停止 OfficeWorkspace | Stopping OfficeWorkspace...")
+        self.workspace.set_resource_update_callback(None)
         self.subscription_manager.clear()
         await self.workspace.stop()
 

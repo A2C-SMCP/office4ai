@@ -16,18 +16,21 @@ from office4ai.a2c_smcp.tools.ppt import (
     PptAddSlideTool,
     PptDeleteElementTool,
     PptDeleteSlideTool,
+    PptGetChartTool,
     PptGetCurrentSlideElementsTool,
     PptGetSlideElementsTool,
     PptGetSlideInfoTool,
     PptGetSlideLayoutsTool,
     PptGetSlideScreenshotTool,
     PptGotoSlideTool,
+    PptInsertChartTool,
     PptInsertImageTool,
     PptInsertShapeTool,
     PptInsertTableTool,
     PptInsertTextTool,
     PptMoveSlideTool,
     PptReorderElementTool,
+    PptUpdateChartTool,
     PptUpdateElementTool,
     PptUpdateImageTool,
     PptUpdateTableCellTool,
@@ -73,6 +76,10 @@ class TestToolMetadata:
         (PptUpdateTableRowColumnTool, "ppt_update_table_row_column", "ppt", "update:tableRowColumn"),
         (PptUpdateTableFormatTool, "ppt_update_table_format", "ppt", "update:tableFormat"),
         (PptUpdateElementTool, "ppt_update_element", "ppt", "update:element"),
+        # Chart tools (OASP /ppt Draft, v0.2.0 — Server OOXML)
+        (PptInsertChartTool, "ppt_insert_chart", "ppt", "insert:chart"),
+        (PptGetChartTool, "ppt_get_chart", "ppt", "get:chart"),
+        (PptUpdateChartTool, "ppt_update_chart", "ppt", "update:chart"),
         # Delete & layout tools
         (PptDeleteElementTool, "ppt_delete_element", "ppt", "delete:element"),
         (PptReorderElementTool, "ppt_reorder_element", "ppt", "reorder:element"),
@@ -1004,3 +1011,379 @@ def _extract_types_from_schema(schema: dict) -> set[str]:
             for item in schema[key]:
                 types.update(_extract_types_from_schema(item))
     return types
+
+
+# ============================================================================
+# Chart Tool Tests (OASP /ppt Draft, v0.2.0 — Server OOXML path)
+# ============================================================================
+# These tools override BaseTool.execute() to bypass workspace.execute() and
+# instead drive the OOXML chart engine directly (because Office.js does not
+# expose chart APIs). Tests use a real .pptx fixture so the engine path is
+# exercised end-to-end.
+
+
+class TestChartToolExecute:
+    """End-to-end execute() tests for the 3 chart tools (real .pptx fixture)."""
+
+    @pytest.fixture
+    def deck_uri(self, tmp_path):
+        from pptx import Presentation
+
+        path = tmp_path / "deck.pptx"
+        prs = Presentation()
+        prs.slides.add_slide(prs.slide_layouts[5])
+        prs.slides.add_slide(prs.slide_layouts[5])
+        prs.save(str(path))
+        return path.as_uri()
+
+    @pytest.fixture
+    def workspace_with_notify(self):
+        # Default: no Add-In holding the file → chart writes are allowed.
+        # Tests that exercise the CONNECTED-reject path override this per-test.
+        from office4ai.environment.workspace.base import DocumentStatus
+
+        ws = MagicMock()
+        ws.notify_resource_updated = MagicMock()
+        ws.update_last_activity = MagicMock()
+        ws.get_document_status = MagicMock(return_value=DocumentStatus.DISCONNECTED)
+        return ws
+
+    @pytest.mark.asyncio
+    async def test_insert_chart_returns_element_id_and_fires_notify(self, workspace_with_notify, deck_uri):
+        tool = PptInsertChartTool(workspace_with_notify)
+        result = await tool.execute(
+            {
+                "document_uri": deck_uri,
+                "chart": {
+                    "chartType": "ColumnClustered",
+                    "categories": ["A", "B"],
+                    "series": [{"name": "x", "values": [1, 2]}],
+                    "title": "T",
+                },
+                "options": {"slideIndex": 0},
+            }
+        )
+        assert result["success"] is True
+        assert result["data"]["elementId"].startswith("chart-")
+        assert result["data"]["requiresReload"] is True
+        # Server-OOXML mutations must trigger MCP resource_updated notifications.
+        workspace_with_notify.notify_resource_updated.assert_called_once_with(
+            ["window://office4ai/ppt", "window://office4ai"]
+        )
+        workspace_with_notify.update_last_activity.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_insert_scatter_chart(self, workspace_with_notify, deck_uri):
+        tool = PptInsertChartTool(workspace_with_notify)
+        result = await tool.execute(
+            {
+                "document_uri": deck_uri,
+                "chart": {
+                    "chartType": "Scatter",
+                    "series": [{"name": "ads", "points": [{"x": 1, "y": 2}, {"x": 3, "y": 4}]}],
+                },
+            }
+        )
+        assert result["success"] is True
+        assert result["data"]["chartType"] == "Scatter"
+
+    @pytest.mark.asyncio
+    async def test_insert_dimension_mismatch_returns_3015(self, workspace_with_notify, deck_uri):
+        tool = PptInsertChartTool(workspace_with_notify)
+        result = await tool.execute(
+            {
+                "document_uri": deck_uri,
+                "chart": {
+                    "chartType": "Pie",
+                    "categories": ["A", "B", "C"],
+                    "series": [{"name": "x", "values": [1, 2]}],  # 2 != 3
+                },
+            }
+        )
+        assert result["success"] is False
+        assert "3015" in result["error"]
+        # Failed insert should NOT fire reload notification.
+        workspace_with_notify.notify_resource_updated.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_insert_invalid_chart_type_rejected_at_validation(self, workspace_with_notify, deck_uri):
+        tool = PptInsertChartTool(workspace_with_notify)
+        result = await tool.execute(
+            {
+                "document_uri": deck_uri,
+                "chart": {"chartType": "Bogus", "categories": [], "series": []},
+            }
+        )
+        assert result["success"] is False
+        assert "error" in result
+
+    @pytest.mark.asyncio
+    async def test_get_chart_returns_data_without_notify(self, workspace_with_notify, deck_uri):
+        # Insert first to obtain an elementId.
+        i_tool = PptInsertChartTool(workspace_with_notify)
+        ins = await i_tool.execute(
+            {
+                "document_uri": deck_uri,
+                "chart": {
+                    "chartType": "Line",
+                    "categories": ["A", "B"],
+                    "series": [{"name": "x", "values": [1, 2]}],
+                    "title": "Trend",
+                },
+            }
+        )
+        eid = ins["data"]["elementId"]
+        workspace_with_notify.notify_resource_updated.reset_mock()
+
+        g_tool = PptGetChartTool(workspace_with_notify)
+        result = await g_tool.execute({"document_uri": deck_uri, "elementId": eid})
+        assert result["success"] is True
+        assert result["data"]["chart"]["chartType"] == "Line"
+        assert result["data"]["chart"]["title"] == "Trend"
+        # Read-only — must not fire reload notification.
+        workspace_with_notify.notify_resource_updated.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_get_chart_int_element_id_coerced(self, workspace_with_notify, deck_uri):
+        # Insert and grab the numeric portion.
+        i_tool = PptInsertChartTool(workspace_with_notify)
+        ins = await i_tool.execute(
+            {
+                "document_uri": deck_uri,
+                "chart": {
+                    "chartType": "Pie",
+                    "categories": ["A"],
+                    "series": [{"name": "x", "values": [1]}],
+                },
+            }
+        )
+        eid = ins["data"]["elementId"]  # "chart-N"
+        # Tool input model coerces int elementId — but here we test str works (default path).
+        g_tool = PptGetChartTool(workspace_with_notify)
+        result = await g_tool.execute({"document_uri": deck_uri, "elementId": eid})
+        assert result["success"] is True
+
+    @pytest.mark.asyncio
+    async def test_get_chart_unknown_element_returns_3010(self, workspace_with_notify, deck_uri):
+        g_tool = PptGetChartTool(workspace_with_notify)
+        result = await g_tool.execute({"document_uri": deck_uri, "elementId": "chart-99999"})
+        assert result["success"] is False
+        assert "3010" in result["error"]
+
+    @pytest.mark.asyncio
+    async def test_update_chart_title_only(self, workspace_with_notify, deck_uri):
+        i_tool = PptInsertChartTool(workspace_with_notify)
+        ins = await i_tool.execute(
+            {
+                "document_uri": deck_uri,
+                "chart": {
+                    "chartType": "BarClustered",
+                    "categories": ["A", "B"],
+                    "series": [{"name": "x", "values": [1, 2]}],
+                    "title": "Old",
+                },
+            }
+        )
+        eid = ins["data"]["elementId"]
+        workspace_with_notify.notify_resource_updated.reset_mock()
+
+        u_tool = PptUpdateChartTool(workspace_with_notify)
+        result = await u_tool.execute(
+            {
+                "document_uri": deck_uri,
+                "elementId": eid,
+                "chart": {"chartType": "BarClustered", "title": "New"},
+            }
+        )
+        assert result["success"] is True
+        assert "title" in result["data"]["updatedFields"]
+        assert result["data"]["requiresReload"] is True
+        workspace_with_notify.notify_resource_updated.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_update_chart_dimension_mismatch_returns_3015(self, workspace_with_notify, deck_uri):
+        i_tool = PptInsertChartTool(workspace_with_notify)
+        ins = await i_tool.execute(
+            {
+                "document_uri": deck_uri,
+                "chart": {
+                    "chartType": "ColumnClustered",
+                    "categories": ["A", "B"],
+                    "series": [{"name": "x", "values": [1, 2]}],
+                },
+            }
+        )
+        eid = ins["data"]["elementId"]
+
+        u_tool = PptUpdateChartTool(workspace_with_notify)
+        result = await u_tool.execute(
+            {
+                "document_uri": deck_uri,
+                "elementId": eid,
+                "chart": {
+                    "chartType": "ColumnClustered",
+                    "categories": ["X", "Y", "Z"],
+                    "series": [{"name": "t", "values": [10, 20]}],  # 2 != 3
+                },
+            }
+        )
+        assert result["success"] is False
+        assert "3015" in result["error"]
+
+    @pytest.mark.asyncio
+    async def test_update_cross_variant_returns_new_element_id(self, workspace_with_notify, deck_uri):
+        i_tool = PptInsertChartTool(workspace_with_notify)
+        ins = await i_tool.execute(
+            {
+                "document_uri": deck_uri,
+                "chart": {
+                    "chartType": "ColumnClustered",
+                    "categories": ["A", "B"],
+                    "series": [{"name": "x", "values": [1, 2]}],
+                },
+            }
+        )
+        old_eid = ins["data"]["elementId"]
+
+        u_tool = PptUpdateChartTool(workspace_with_notify)
+        result = await u_tool.execute(
+            {
+                "document_uri": deck_uri,
+                "elementId": old_eid,
+                "chart": {
+                    "chartType": "Scatter",
+                    "series": [{"name": "p", "points": [{"x": 1, "y": 2}, {"x": 3, "y": 4}]}],
+                },
+            }
+        )
+        assert result["success"] is True
+        assert result["data"]["chartType"] == "Scatter"
+        assert "chartType" in result["data"]["updatedFields"]
+        # New chart shape gets a new id; OASP spec returns the latest elementId.
+        new_eid = result["data"]["elementId"]
+        assert new_eid.startswith("chart-")
+
+    @pytest.mark.asyncio
+    async def test_update_unknown_element_returns_3010(self, workspace_with_notify, deck_uri):
+        u_tool = PptUpdateChartTool(workspace_with_notify)
+        result = await u_tool.execute(
+            {
+                "document_uri": deck_uri,
+                "elementId": "chart-99999",
+                "chart": {"chartType": "ColumnClustered", "title": "x"},
+            }
+        )
+        assert result["success"] is False
+        assert "3010" in result["error"]
+
+    @pytest.mark.asyncio
+    async def test_insert_missing_document_returns_3001(self, workspace_with_notify):
+        tool = PptInsertChartTool(workspace_with_notify)
+        result = await tool.execute(
+            {
+                "document_uri": "file:///does/not/exist.pptx",
+                "chart": {
+                    "chartType": "Line",
+                    "categories": ["A"],
+                    "series": [{"name": "x", "values": [1]}],
+                },
+            }
+        )
+        assert result["success"] is False
+        assert "3001" in result["error"]
+
+
+# ============================================================================
+# Defense: refuse chart writes when the Add-In holds the document open
+# ============================================================================
+# Empirically verified in manual_tests/ppt/test_chart_e2e.py --mode conflict:
+# when a user has the .pptx open in PowerPoint via the Add-In, any chart that
+# the Server writes to disk is silently overwritten on the next save. The
+# tools refuse the write up-front so the LLM gets a clear error to surface
+# to the user ("please close the document, then retry").
+
+
+class TestChartToolConnectedReject:
+    """Refuse insert/update when document_status == CONNECTED; allow get."""
+
+    @pytest.fixture
+    def deck_uri(self, tmp_path):
+        from pptx import Presentation
+
+        path = tmp_path / "deck.pptx"
+        prs = Presentation()
+        prs.slides.add_slide(prs.slide_layouts[5])
+        prs.save(str(path))
+        return path.as_uri()
+
+    @pytest.fixture
+    def workspace_connected(self):
+        from office4ai.environment.workspace.base import DocumentStatus
+
+        ws = MagicMock()
+        ws.notify_resource_updated = MagicMock()
+        ws.update_last_activity = MagicMock()
+        ws.get_document_status = MagicMock(return_value=DocumentStatus.CONNECTED)
+        return ws
+
+    @pytest.mark.asyncio
+    async def test_insert_chart_refuses_when_connected(self, workspace_connected, deck_uri):
+        tool = PptInsertChartTool(workspace_connected)
+        result = await tool.execute(
+            {
+                "document_uri": deck_uri,
+                "chart": {
+                    "chartType": "Pie",
+                    "categories": ["A", "B"],
+                    "series": [{"name": "x", "values": [1, 2]}],
+                },
+            }
+        )
+        assert result["success"] is False
+        assert "3003" in result["error"]
+        # Refuse path must NOT touch disk or fire reload notification.
+        workspace_connected.notify_resource_updated.assert_not_called()
+        workspace_connected.update_last_activity.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_update_chart_refuses_when_connected(self, workspace_connected, deck_uri):
+        tool = PptUpdateChartTool(workspace_connected)
+        result = await tool.execute(
+            {
+                "document_uri": deck_uri,
+                "elementId": "chart-0-3",
+                "chart": {"chartType": "Pie", "title": "x"},
+            }
+        )
+        assert result["success"] is False
+        assert "3003" in result["error"]
+        workspace_connected.notify_resource_updated.assert_not_called()
+        workspace_connected.update_last_activity.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_get_chart_NOT_blocked_when_connected(self, workspace_connected, deck_uri):
+        """Read-only tool stays available — at worst it returns stale data."""
+        # Insert via a separate (DISCONNECTED) workspace so we have something to read.
+        from office4ai.environment.workspace.base import DocumentStatus
+
+        writer = MagicMock()
+        writer.notify_resource_updated = MagicMock()
+        writer.update_last_activity = MagicMock()
+        writer.get_document_status = MagicMock(return_value=DocumentStatus.DISCONNECTED)
+        ins = await PptInsertChartTool(writer).execute(
+            {
+                "document_uri": deck_uri,
+                "chart": {
+                    "chartType": "Line",
+                    "categories": ["A"],
+                    "series": [{"name": "x", "values": [1]}],
+                },
+            }
+        )
+        assert ins["success"]
+        eid = ins["data"]["elementId"]
+
+        # Now flip to CONNECTED state and confirm get_chart still works.
+        result = await PptGetChartTool(workspace_connected).execute({"document_uri": deck_uri, "elementId": eid})
+        assert result["success"] is True
+        assert result["data"]["chart"]["chartType"] == "Line"

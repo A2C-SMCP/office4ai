@@ -10,11 +10,46 @@ Field naming convention (aligned with Word DTOs):
 - model_dump(by_alias=True): always output camelCase for Socket.IO transmission
 """
 
-from typing import ClassVar, Literal, Optional
+from typing import Annotated, ClassVar, Literal, Optional
 
 from pydantic import Field
 
 from .common import BaseRequest, SocketIOBaseModel
+
+# ============================================================================
+# Chart Type Enumerations (OASP /ppt Draft, v0.2.0)
+# ============================================================================
+# Chart types align with `Excel.ChartType` so callers can cast directly.
+# Two shape variants:
+#   - Categorical (9 types): use `categories` + `series.values`
+#   - Scatter (1 type): use `series.points` (each point is { x, y })
+
+CategoricalChartType = Literal[
+    "ColumnClustered",
+    "ColumnStacked",
+    "BarClustered",
+    "Line",
+    "LineMarkers",
+    "Pie",
+    "Doughnut",
+    "Area",
+    "Radar",
+]
+
+ScatterChartType = Literal["Scatter"]
+
+ChartType = Literal[
+    "ColumnClustered",
+    "ColumnStacked",
+    "BarClustered",
+    "Line",
+    "LineMarkers",
+    "Pie",
+    "Doughnut",
+    "Area",
+    "Radar",
+    "Scatter",
+]
 
 # ============================================================================
 # Content Retrieval DTOs
@@ -496,6 +531,152 @@ class PptGotoSlideRequest(BaseRequest):
     slide_index: int = Field(..., alias="slideIndex", description="Target slide index (0-based)", ge=0)
 
 
+# ============================================================================
+# Chart DTOs (OASP /ppt Draft, v0.2.0)
+# ============================================================================
+# Server-handled OOXML path: these events are intercepted by office4ai Server
+# (python-pptx) and do NOT round-trip through Office.js. See OASP events-ppt
+# admonition for save()/reload constraints.
+
+
+class CategoricalSeries(SocketIOBaseModel):
+    """A single data series in a categorical chart (one value per category)."""
+
+    name: str = Field(..., description="Series name shown in the legend")
+    values: list[float] = Field(
+        ...,
+        description="Numeric Y values; length must equal CategoricalChartData.categories.length",
+    )
+    color: str | None = Field(default=None, description="Optional series color (hex, e.g. '#1F4E79')")
+
+
+class ScatterPoint(SocketIOBaseModel):
+    """One (x, y) sample in a scatter series."""
+
+    x: float = Field(..., description="X coordinate (must be finite)")
+    y: float = Field(..., description="Y coordinate (must be finite)")
+
+
+class ScatterSeries(SocketIOBaseModel):
+    """A single data series in a scatter chart (each point carries its own (x, y))."""
+
+    name: str = Field(..., description="Series name shown in the legend")
+    points: list[ScatterPoint] = Field(..., description="Sample points; length ≥ 1", min_length=1)
+    color: str | None = Field(default=None, description="Optional series color (hex, e.g. '#1F4E79')")
+
+
+class CategoricalChartData(SocketIOBaseModel):
+    """Logical data + display options for categorical charts (column / bar / line / pie / ...)."""
+
+    chart_type: CategoricalChartType = Field(
+        ...,
+        alias="chartType",
+        description="Discriminator selecting the categorical shape",
+    )
+    categories: list[str] = Field(..., description="Discrete X-axis labels (e.g. ['Jan','Feb','Mar'])")
+    series: list[CategoricalSeries] = Field(..., description="Data series (≥ 1)", min_length=1)
+    title: str | None = Field(default=None, description="Optional chart title")
+    show_legend: bool | None = Field(default=None, alias="showLegend", description="Show legend (default true)")
+    show_data_labels: bool | None = Field(
+        default=None, alias="showDataLabels", description="Show data labels (default false)"
+    )
+
+
+class ScatterChartData(SocketIOBaseModel):
+    """Logical data + display options for scatter charts (continuous X, no categories)."""
+
+    chart_type: ScatterChartType = Field(
+        ...,
+        alias="chartType",
+        description="Discriminator literal 'Scatter'",
+    )
+    series: list[ScatterSeries] = Field(..., description="Data series (≥ 1)", min_length=1)
+    title: str | None = Field(default=None, description="Optional chart title")
+    show_legend: bool | None = Field(default=None, alias="showLegend", description="Show legend (default true)")
+    show_data_labels: bool | None = Field(
+        default=None, alias="showDataLabels", description="Show data labels (default false)"
+    )
+
+
+# Discriminated union over chart_type → schema shape.
+# Pydantic / FastMCP idiom: Annotated[Union[...], Field(discriminator=<alias>)].
+# The discriminator uses the wire alias 'chartType' since populate_by_name=True and the
+# nested models declare alias='chartType' on the discriminator field.
+ChartData = Annotated[
+    CategoricalChartData | ScatterChartData,
+    Field(discriminator="chart_type"),
+]
+
+
+class CategoricalChartUpdate(SocketIOBaseModel):
+    """Partial update payload for categorical charts (chartType is required as discriminator)."""
+
+    chart_type: CategoricalChartType = Field(..., alias="chartType", description="Required discriminator")
+    categories: list[str] | None = Field(default=None, description="Replace categories (full overwrite)")
+    series: list[CategoricalSeries] | None = Field(default=None, description="Replace series (full overwrite)")
+    title: str | None = Field(default=None, description="New title; explicit null deletes title")
+    show_legend: bool | None = Field(default=None, alias="showLegend")
+    show_data_labels: bool | None = Field(default=None, alias="showDataLabels")
+
+
+class ScatterChartUpdate(SocketIOBaseModel):
+    """Partial update payload for scatter charts (chartType literal 'Scatter')."""
+
+    chart_type: ScatterChartType = Field(..., alias="chartType", description="Required discriminator")
+    series: list[ScatterSeries] | None = Field(default=None, description="Replace series (full overwrite)")
+    title: str | None = Field(default=None, description="New title; explicit null deletes title")
+    show_legend: bool | None = Field(default=None, alias="showLegend")
+    show_data_labels: bool | None = Field(default=None, alias="showDataLabels")
+
+
+ChartUpdate = Annotated[
+    CategoricalChartUpdate | ScatterChartUpdate,
+    Field(discriminator="chart_type"),
+]
+
+
+class ChartInsertOptions(SocketIOBaseModel):
+    """Geometry + target slide for chart insertion (all optional)."""
+
+    slide_index: int | None = Field(default=None, alias="slideIndex", description="Slide index (default current)", ge=0)
+    left: float | None = Field(default=None, description="X position in points (default centered)")
+    top: float | None = Field(default=None, description="Y position in points (default centered)")
+    width: float | None = Field(default=None, description="Width in points (default 480)", gt=0)
+    height: float | None = Field(default=None, description="Height in points (default 320)", gt=0)
+
+
+class PptInsertChartRequest(BaseRequest):
+    """Request to insert a new chart on a slide (Server-handled OOXML)."""
+
+    event_name: ClassVar[str] = "ppt:insert:chart"
+
+    chart: ChartData = Field(..., description="Chart data (discriminated by chartType)")
+    options: Optional["ChartInsertOptions"] = Field(default=None, description="Geometry + target slide")
+
+
+class PptGetChartRequest(BaseRequest):
+    """Request to read an existing chart's data (Server-handled OOXML)."""
+
+    event_name: ClassVar[str] = "ppt:get:chart"
+
+    element_id: str = Field(..., alias="elementId", description="Chart element ID")
+    slide_index: int | None = Field(
+        default=None,
+        alias="slideIndex",
+        description="Optional slide hint; elementId is authoritative",
+        ge=0,
+    )
+
+
+class PptUpdateChartRequest(BaseRequest):
+    """Request to update an existing chart (Server-handled OOXML)."""
+
+    event_name: ClassVar[str] = "ppt:update:chart"
+
+    element_id: str = Field(..., alias="elementId", description="Chart element ID")
+    chart: ChartUpdate = Field(..., description="Update payload (discriminated by chartType)")
+
+
 # Resolve forward references
 SlideElementsOptions.model_rebuild()
 ScreenshotOptions.model_rebuild()
@@ -515,3 +696,11 @@ RowFormat.model_rebuild()
 ColumnFormat.model_rebuild()
 ElementUpdates.model_rebuild()
 AddSlideOptions.model_rebuild()
+CategoricalSeries.model_rebuild()
+ScatterPoint.model_rebuild()
+ScatterSeries.model_rebuild()
+CategoricalChartData.model_rebuild()
+ScatterChartData.model_rebuild()
+CategoricalChartUpdate.model_rebuild()
+ScatterChartUpdate.model_rebuild()
+ChartInsertOptions.model_rebuild()
