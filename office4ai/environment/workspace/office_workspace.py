@@ -7,6 +7,7 @@ Office Workspace Implementation
 import asyncio
 import logging
 import time
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -85,6 +86,11 @@ class OfficeWorkspace(BaseWorkspace):
         self._content_cache: dict[str, str] = {}  # document_uri → visible content
         self._structure_cache: dict[str, str] = {}  # document_uri → document structure
 
+        # Server-side OOXML mutations (e.g. chart engine) need to tell MCP
+        # subscribers that the underlying file changed. The owning MCP server
+        # wires this callback at startup; until then it stays None.
+        self._resource_update_callback: Callable[[list[str]], None] | None = None
+
     # ── 活动追踪 API | Activity tracking API ──
 
     def update_last_activity(self, document_uri: str, tool_name: str, result_data: dict[str, Any]) -> None:
@@ -123,6 +129,26 @@ class OfficeWorkspace(BaseWorkspace):
         self._structure_cache.pop(document_uri, None)
         if self._last_activity and self._last_activity.document_uri == document_uri:
             self._last_activity = None
+
+    # ── Resource-update notifications | Resource update notification API ──
+
+    def set_resource_update_callback(self, callback: Callable[[list[str]], None] | None) -> None:
+        """Wire a callback the workspace fires after Server-side OOXML mutations.
+
+        OASP /ppt chart events bypass Office.js and modify .pptx OOXML directly;
+        we use this hook to push MCP ``resource_updated`` notifications so subscribers
+        (window resources for /ppt etc.) know to refetch.
+        """
+        self._resource_update_callback = callback
+
+    def notify_resource_updated(self, uris: list[str]) -> None:
+        """Fire the resource-update callback if one is registered."""
+        if not uris or self._resource_update_callback is None:
+            return
+        try:
+            self._resource_update_callback(uris)
+        except Exception:
+            logger.exception("Resource update callback raised")
 
     async def start(self) -> None:
         """

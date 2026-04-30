@@ -38,8 +38,8 @@ class TestOfficeMCPServer:
             config = MCPServerConfig()
             server = OfficeMCPServer(config)
 
-            # 25 Word (21 + 4 OASP v0.2.0 table tools) + 21 PPT = 46 tools
-            assert len(server.tools) == 46
+            # 25 Word (21 + 4 OASP v0.2.0 table tools) + 24 PPT (21 + 3 OASP v0.2.0 chart tools) = 49
+            assert len(server.tools) == 49
 
             expected_tools = [
                 # Word Get tools
@@ -91,6 +91,10 @@ class TestOfficeMCPServer:
                 "ppt_update_table_row_column",
                 "ppt_update_table_format",
                 "ppt_update_element",
+                # PPT Chart tools (OASP /ppt Draft, v0.2.0 — Server OOXML)
+                "ppt_insert_chart",
+                "ppt_get_chart",
+                "ppt_update_chart",
                 # PPT Delete & layout tools
                 "ppt_delete_element",
                 "ppt_reorder_element",
