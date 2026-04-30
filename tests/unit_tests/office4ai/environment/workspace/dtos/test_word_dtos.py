@@ -9,8 +9,10 @@ from __future__ import annotations
 import pytest
 from pydantic import ValidationError
 
+from office4ai.environment.workspace.dtos.common import request_registry
 from office4ai.environment.workspace.dtos.word import (
     AnyContentElement,
+    CellFormat,
     CommentData,
     CommentReplyData,
     ContentMetadata,
@@ -26,7 +28,14 @@ from office4ai.environment.workspace.dtos.word import (
     SelectTextSearchOptions,
     StyleInfo,
     StylesResult,
+    TableBorderOptions,
+    TableCellPadding,
+    TableCellUpdate,
+    TableColumnUpdate,
     TableInsertOptions,
+    TableRowUpdate,
+    TableStyleOptions,
+    TableSummary,
     TextFormat,
     WordDeleteCommentRequest,
     WordGetCommentsRequest,
@@ -43,12 +52,16 @@ from office4ai.environment.workspace.dtos.word import (
     WordInsertCommentRequest,
     WordInsertTableRequest,
     WordInsertTextRequest,
+    WordMergeCellsRequest,
     WordReplaceSelectionRequest,
     WordReplaceSelectionResponse,
     WordReplyCommentRequest,
     WordResolveCommentRequest,
     WordSelectTextRequest,
     WordSelectTextResponse,
+    WordUpdateTableCellRequest,
+    WordUpdateTableFormatRequest,
+    WordUpdateTableRowColumnRequest,
 )
 
 
@@ -2910,3 +2923,254 @@ class TestTableInsertOptionsInsertLocation:
         payload = request.to_payload()
 
         assert payload["options"]["insertLocation"] == "Replace"
+
+
+# ============================================================================
+# Table Operation DTOs (OASP /word Draft, v0.2.0)
+# ============================================================================
+
+
+class TestCellFormat:
+    """CellFormat 枚举值校验 + 别名往返"""
+
+    def test_centered_horizontal_alignment_accepted(self) -> None:
+        fmt = CellFormat(horizontalAlignment="Centered")
+        assert fmt.horizontal_alignment == "Centered"
+
+    def test_justified_horizontal_alignment_accepted(self) -> None:
+        fmt = CellFormat(horizontalAlignment="Justified")
+        assert fmt.horizontal_alignment == "Justified"
+
+    def test_center_horizontal_alignment_rejected(self) -> None:
+        """horizontalAlignment='Center' 必须被拒绝（应是 'Centered'）"""
+        with pytest.raises(ValidationError):
+            CellFormat(horizontalAlignment="Center")
+
+    def test_center_vertical_alignment_accepted(self) -> None:
+        fmt = CellFormat(verticalAlignment="Center")
+        assert fmt.vertical_alignment == "Center"
+
+    def test_middle_vertical_alignment_rejected(self) -> None:
+        """verticalAlignment='Middle' 必须被拒绝（应是 'Center'）"""
+        with pytest.raises(ValidationError):
+            CellFormat(verticalAlignment="Middle")
+
+    def test_zero_font_size_rejected(self) -> None:
+        with pytest.raises(ValidationError):
+            CellFormat(fontSize=0)
+
+    def test_alias_round_trip(self) -> None:
+        """snake_case 输入 + camelCase 输出"""
+        fmt = CellFormat(
+            horizontal_alignment="Centered",
+            background_color="#1F4E79",
+            font_color="#FFFFFF",
+            bold=True,
+        )
+        payload = fmt.model_dump(by_alias=True, exclude_none=True)
+        assert payload["horizontalAlignment"] == "Centered"
+        assert payload["backgroundColor"] == "#1F4E79"
+        assert payload["fontColor"] == "#FFFFFF"
+        assert payload["bold"] is True
+
+
+class TestTableSummary:
+    """TableSummary (word:get:documentStructure 配套)"""
+
+    def test_camelcase_input_with_optional_heading(self) -> None:
+        s = TableSummary(
+            tableId="table-0",
+            rowCount=5,
+            columnCount=4,
+            precedingHeading="甲方信息",
+        )
+        assert s.table_id == "table-0"
+        assert s.preceding_heading == "甲方信息"
+        payload = s.model_dump(by_alias=True, exclude_none=True)
+        assert payload["tableId"] == "table-0"
+        assert payload["precedingHeading"] == "甲方信息"
+
+    def test_omitted_heading_excluded_from_wire(self) -> None:
+        s = TableSummary(tableId="table-1", rowCount=2, columnCount=3)
+        payload = s.model_dump(by_alias=True, exclude_none=True)
+        assert "precedingHeading" not in payload
+
+
+class TestWordMergeCellsRequest:
+    """word:merge:cells DTO"""
+
+    def test_event_registered(self) -> None:
+        assert request_registry.contains("word:merge:cells")
+        assert request_registry.get("word:merge:cells") is WordMergeCellsRequest
+
+    def test_build_with_explicit_table_id_serializes_camelcase(self) -> None:
+        req = WordMergeCellsRequest.build(
+            document_uri="file:///t.docx",
+            tableId="table-0",
+            startRowIndex=0,
+            startColumnIndex=0,
+            endRowIndex=0,
+            endColumnIndex=4,
+        )
+        payload = req.to_payload()
+        assert payload["tableId"] == "table-0"
+        assert payload["startRowIndex"] == 0
+        assert payload["endColumnIndex"] == 4
+
+    def test_optional_table_id_omitted_from_wire(self) -> None:
+        req = WordMergeCellsRequest.build(
+            document_uri="file:///t.docx",
+            startRowIndex=1,
+            startColumnIndex=1,
+            endRowIndex=2,
+            endColumnIndex=3,
+        )
+        payload = req.to_payload()
+        assert "tableId" not in payload
+
+    def test_negative_index_rejected(self) -> None:
+        with pytest.raises(ValidationError):
+            WordMergeCellsRequest.build(
+                document_uri="file:///t.docx",
+                startRowIndex=-1,
+                startColumnIndex=0,
+                endRowIndex=0,
+                endColumnIndex=2,
+            )
+
+
+class TestWordUpdateTableCellRequest:
+    """word:update:tableCell DTO"""
+
+    def test_event_registered(self) -> None:
+        assert request_registry.contains("word:update:tableCell")
+
+    def test_build_with_format_and_alias_round_trip(self) -> None:
+        req = WordUpdateTableCellRequest.build(
+            document_uri="file:///t.docx",
+            tableId="table-0",
+            cells=[
+                {
+                    "rowIndex": 0,
+                    "columnIndex": 0,
+                    "text": "甲方信息",
+                    "format": {
+                        "horizontalAlignment": "Centered",
+                        "verticalAlignment": "Center",
+                        "backgroundColor": "#1F4E79",
+                        "fontColor": "#FFFFFF",
+                        "bold": True,
+                    },
+                }
+            ],
+        )
+        payload = req.to_payload()
+        assert payload["tableId"] == "table-0"
+        cell = payload["cells"][0]
+        assert cell["rowIndex"] == 0
+        assert cell["text"] == "甲方信息"
+        assert cell["format"]["horizontalAlignment"] == "Centered"
+        assert cell["format"]["backgroundColor"] == "#1F4E79"
+
+    def test_empty_cells_rejected(self) -> None:
+        with pytest.raises(ValidationError):
+            WordUpdateTableCellRequest.build(
+                document_uri="file:///t.docx",
+                cells=[],
+            )
+
+    def test_table_cell_update_accepts_text_only(self) -> None:
+        upd = TableCellUpdate(rowIndex=1, columnIndex=2, text="hello")
+        assert upd.text == "hello"
+        assert upd.format is None
+
+    def test_table_cell_update_accepts_format_only(self) -> None:
+        upd = TableCellUpdate(
+            rowIndex=1,
+            columnIndex=2,
+            format={"backgroundColor": "#EEEEEE"},
+        )
+        assert upd.text is None
+        assert upd.format is not None
+        assert upd.format.background_color == "#EEEEEE"
+
+
+class TestWordUpdateTableRowColumnRequest:
+    """word:update:tableRowColumn DTO"""
+
+    def test_event_registered(self) -> None:
+        assert request_registry.contains("word:update:tableRowColumn")
+
+    def test_rows_only_round_trip(self) -> None:
+        req = WordUpdateTableRowColumnRequest.build(
+            document_uri="file:///t.docx",
+            rows=[
+                TableRowUpdate(rowIndex=1, values=["甲方", "ACME"]),
+                TableRowUpdate(rowIndex=2, values=["地址", "上海"]),
+            ],
+        )
+        payload = req.to_payload()
+        assert len(payload["rows"]) == 2
+        assert payload["rows"][0]["rowIndex"] == 1
+        assert payload["rows"][0]["values"] == ["甲方", "ACME"]
+        assert "columns" not in payload
+
+    def test_columns_only_round_trip(self) -> None:
+        req = WordUpdateTableRowColumnRequest.build(
+            document_uri="file:///t.docx",
+            columns=[TableColumnUpdate(columnIndex=0, values=["甲方", "地址"])],
+        )
+        payload = req.to_payload()
+        assert payload["columns"][0]["columnIndex"] == 0
+        assert "rows" not in payload
+
+
+class TestWordUpdateTableFormatRequest:
+    """word:update:tableFormat DTO"""
+
+    def test_event_registered(self) -> None:
+        assert request_registry.contains("word:update:tableFormat")
+
+    def test_full_format_round_trip(self) -> None:
+        req = WordUpdateTableFormatRequest.build(
+            document_uri="file:///t.docx",
+            tableId="table-0",
+            styleOptions=TableStyleOptions(
+                styleType="Grid Table 4 - Accent 1",
+                bandedRows=True,
+                cellPadding=TableCellPadding(top=4, bottom=4, left=6, right=6),
+            ),
+            borderOptions=TableBorderOptions(location="inside", style="Single", width=0.5),
+            columnWidths=[120, 80, 80, 80],
+            alignment="Centered",
+        )
+        payload = req.to_payload()
+        assert payload["tableId"] == "table-0"
+        assert payload["alignment"] == "Centered"
+        assert payload["columnWidths"] == [120, 80, 80, 80]
+        assert payload["borderOptions"]["location"] == "inside"
+        assert payload["borderOptions"]["style"] == "Single"
+        assert payload["styleOptions"]["styleType"] == "Grid Table 4 - Accent 1"
+        assert payload["styleOptions"]["bandedRows"] is True
+        assert payload["styleOptions"]["cellPadding"]["top"] == 4
+
+    def test_alignment_center_rejected(self) -> None:
+        """alignment='Center' 必须被拒绝（应是 'Centered'）"""
+        with pytest.raises(ValidationError):
+            WordUpdateTableFormatRequest.build(
+                document_uri="file:///t.docx",
+                alignment="Center",
+            )
+
+    def test_border_location_invalid_rejected(self) -> None:
+        with pytest.raises(ValidationError):
+            TableBorderOptions(location="diagonal")
+
+    def test_border_width_zero_rejected(self) -> None:
+        with pytest.raises(ValidationError):
+            TableBorderOptions(width=0)
+
+    def test_border_style_none_accepted(self) -> None:
+        """style='None' 是合法枚举值（用于清除边框）"""
+        b = TableBorderOptions(style="None")
+        assert b.style == "None"

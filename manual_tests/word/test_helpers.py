@@ -327,6 +327,186 @@ async def replace_selection(
         return observation.success if observation else False
 
 
+async def insert_table(
+    workspace: OfficeWorkspace,
+    document_uri: str,
+    rows: int,
+    columns: int,
+    data: list[list[str]] | None = None,
+    style: str | None = None,
+    insert_location: str | None = None,
+    wait_seconds: int = 3,
+) -> tuple[bool, dict | None, str | None]:
+    """插入表格。"""
+    print(f"\n📝 插入表格: rows={rows}, columns={columns}, insert_location={insert_location}")
+    options: dict[str, Any] = {"rows": rows, "columns": columns}
+    if data is not None:
+        options["data"] = data
+    if style is not None:
+        options["style"] = style
+    if insert_location is not None:
+        options["insertLocation"] = insert_location
+
+    action = OfficeAction(
+        category="word",
+        action_name="insert:table",
+        params={"document_uri": document_uri, "options": options},
+    )
+    result = await workspace.execute(action)
+    if result.success:
+        print(f"✅ 插入表格成功: {result.data}")
+    else:
+        print(f"❌ 插入表格失败: {result.error}")
+
+    print(f"\n⏳ 等待 {wait_seconds} 秒...")
+    await asyncio.sleep(wait_seconds)
+    return result.success, result.data, result.error
+
+
+async def merge_cells(
+    workspace: OfficeWorkspace,
+    document_uri: str,
+    start_row_index: int,
+    start_column_index: int,
+    end_row_index: int,
+    end_column_index: int,
+    table_id: str | None = None,
+    wait_seconds: int = 2,
+) -> tuple[bool, dict | None, str | None]:
+    """合并表格单元格 (OASP /word Draft, v0.2.0)。"""
+    print(
+        f"\n📝 合并单元格: tableId={table_id} "
+        f"({start_row_index},{start_column_index}) → ({end_row_index},{end_column_index})"
+    )
+    params: dict[str, Any] = {
+        "document_uri": document_uri,
+        "start_row_index": start_row_index,
+        "start_column_index": start_column_index,
+        "end_row_index": end_row_index,
+        "end_column_index": end_column_index,
+    }
+    if table_id is not None:
+        params["table_id"] = table_id
+
+    action = OfficeAction(
+        category="word",
+        action_name="merge:cells",
+        params=params,
+    )
+    result = await workspace.execute(action)
+    if result.success:
+        print(f"✅ 合并成功: {result.data}")
+    else:
+        print(f"❌ 合并失败: {result.error}")
+
+    print(f"\n⏳ 等待 {wait_seconds} 秒...")
+    await asyncio.sleep(wait_seconds)
+    return result.success, result.data, result.error
+
+
+async def update_table_cell(
+    workspace: OfficeWorkspace,
+    document_uri: str,
+    cells: list[dict],
+    table_id: str | None = None,
+    wait_seconds: int = 2,
+) -> tuple[bool, dict | None, str | None]:
+    """更新表格单元格的文本和/或格式 (OASP /word Draft, v0.2.0)。"""
+    print(f"\n📝 更新单元格: tableId={table_id}, cells={len(cells)}")
+    params: dict[str, Any] = {"document_uri": document_uri, "cells": cells}
+    if table_id is not None:
+        params["table_id"] = table_id
+
+    action = OfficeAction(
+        category="word",
+        action_name="update:tableCell",
+        params=params,
+    )
+    result = await workspace.execute(action)
+    if result.success:
+        print(f"✅ 更新单元格成功: {result.data}")
+    else:
+        print(f"❌ 更新单元格失败: {result.error}")
+
+    print(f"\n⏳ 等待 {wait_seconds} 秒...")
+    await asyncio.sleep(wait_seconds)
+    return result.success, result.data, result.error
+
+
+async def update_table_row_column(
+    workspace: OfficeWorkspace,
+    document_uri: str,
+    rows: list[dict] | None = None,
+    columns: list[dict] | None = None,
+    table_id: str | None = None,
+    wait_seconds: int = 2,
+) -> tuple[bool, dict | None, str | None]:
+    """按行/列批量写入表格文本 (OASP /word Draft, v0.2.0)。"""
+    print(f"\n📝 批量行/列写入: tableId={table_id}, rows={len(rows or [])}, columns={len(columns or [])}")
+    params: dict[str, Any] = {"document_uri": document_uri}
+    if table_id is not None:
+        params["table_id"] = table_id
+    if rows is not None:
+        params["rows"] = rows
+    if columns is not None:
+        params["columns"] = columns
+
+    action = OfficeAction(
+        category="word",
+        action_name="update:tableRowColumn",
+        params=params,
+    )
+    result = await workspace.execute(action)
+    if result.success:
+        print(f"✅ 批量写入成功: {result.data}")
+    else:
+        print(f"❌ 批量写入失败: {result.error}")
+
+    print(f"\n⏳ 等待 {wait_seconds} 秒...")
+    await asyncio.sleep(wait_seconds)
+    return result.success, result.data, result.error
+
+
+async def update_table_format(
+    workspace: OfficeWorkspace,
+    document_uri: str,
+    table_id: str | None = None,
+    style_options: dict | None = None,
+    border_options: dict | None = None,
+    column_widths: list[float] | None = None,
+    alignment: str | None = None,
+    wait_seconds: int = 2,
+) -> tuple[bool, dict | None, str | None]:
+    """更新整表格式 (OASP /word Draft, v0.2.0)。"""
+    print(f"\n📝 更新整表格式: tableId={table_id}, alignment={alignment}, columnWidths={column_widths}")
+    params: dict[str, Any] = {"document_uri": document_uri}
+    if table_id is not None:
+        params["table_id"] = table_id
+    if style_options is not None:
+        params["style_options"] = style_options
+    if border_options is not None:
+        params["border_options"] = border_options
+    if column_widths is not None:
+        params["column_widths"] = column_widths
+    if alignment is not None:
+        params["alignment"] = alignment
+
+    action = OfficeAction(
+        category="word",
+        action_name="update:tableFormat",
+        params=params,
+    )
+    result = await workspace.execute(action)
+    if result.success:
+        print(f"✅ 更新表格格式成功: {result.data}")
+    else:
+        print(f"❌ 更新表格格式失败: {result.error}")
+
+    print(f"\n⏳ 等待 {wait_seconds} 秒...")
+    await asyncio.sleep(wait_seconds)
+    return result.success, result.data, result.error
+
+
 async def replace_text(
     workspace: OfficeWorkspace,
     document_uri: str,

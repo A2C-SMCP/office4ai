@@ -58,11 +58,15 @@ class OfficeMCPServer(BaseMCPServer):
             WordInsertTableTool,
             WordInsertTextTool,
             WordInsertTOCTool,
+            WordMergeCellsTool,
             WordReplaceSelectionTool,
             WordReplaceTextTool,
             WordReplyCommentTool,
             WordResolveCommentTool,
             WordSelectTextTool,
+            WordUpdateTableCellTool,
+            WordUpdateTableFormatTool,
+            WordUpdateTableRowColumnTool,
         )
 
         word_tools = [
@@ -84,6 +88,11 @@ class OfficeMCPServer(BaseMCPServer):
             WordInsertTableTool(self.workspace),
             WordInsertEquationTool(self.workspace),
             WordInsertTOCTool(self.workspace),
+            # Table operation tools (OASP /word Draft, v0.2.0)
+            WordMergeCellsTool(self.workspace),
+            WordUpdateTableCellTool(self.workspace),
+            WordUpdateTableRowColumnTool(self.workspace),
+            WordUpdateTableFormatTool(self.workspace),
             # Export tool
             WordExportContentTool(self.workspace),
             # Comment tools
