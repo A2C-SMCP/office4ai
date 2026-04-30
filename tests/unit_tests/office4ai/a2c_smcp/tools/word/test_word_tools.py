@@ -29,11 +29,15 @@ from office4ai.a2c_smcp.tools.word import (
     WordInsertTableTool,
     WordInsertTextTool,
     WordInsertTOCTool,
+    WordMergeCellsTool,
     WordReplaceSelectionTool,
     WordReplaceTextTool,
     WordReplyCommentTool,
     WordResolveCommentTool,
     WordSelectTextTool,
+    WordUpdateTableCellTool,
+    WordUpdateTableFormatTool,
+    WordUpdateTableRowColumnTool,
 )
 from office4ai.environment.workspace.base import OfficeObs
 
@@ -79,6 +83,11 @@ class TestToolMetadata:
         (WordDeleteCommentTool, "word_delete_comment", "word", "delete:comment"),
         (WordReplyCommentTool, "word_reply_comment", "word", "reply:comment"),
         (WordResolveCommentTool, "word_resolve_comment", "word", "resolve:comment"),
+        # Phase 3: 4 table operation tools (OASP /word Draft, v0.2.0)
+        (WordMergeCellsTool, "word_merge_cells", "word", "merge:cells"),
+        (WordUpdateTableCellTool, "word_update_table_cell", "word", "update:tableCell"),
+        (WordUpdateTableRowColumnTool, "word_update_table_row_column", "word", "update:tableRowColumn"),
+        (WordUpdateTableFormatTool, "word_update_table_format", "word", "update:tableFormat"),
     ]
 
     @pytest.mark.parametrize("tool_cls,expected_name,expected_category,expected_event", TOOL_SPECS)
@@ -1067,3 +1076,426 @@ class TestCommentIdIntCoercion:
         action = mock_workspace.execute.call_args[0][0]
         assert action.params["comment_id"] == "42"
         assert isinstance(action.params["comment_id"], str)
+
+
+# ============================================================================
+# Word Table Operation Tools (OASP /word Draft, v0.2.0)
+# Covers: word_merge_cells, word_update_table_cell,
+#         word_update_table_row_column, word_update_table_format
+# ============================================================================
+
+
+class TestWordMergeCellsTool:
+    """word_merge_cells normal path + tableId resolution + error code propagation."""
+
+    @pytest.mark.asyncio
+    async def test_merge_cells_with_explicit_table_id(self, mock_workspace):
+        """显式传 table_id → action.params 透传 tableId 与四个边界索引"""
+        mock_workspace.execute.return_value = OfficeObs(
+            success=True,
+            data={"tableId": "table-0", "requestedRange": {"rowCount": 1, "columnCount": 5}},
+        )
+
+        tool = WordMergeCellsTool(mock_workspace)
+        result = await tool.execute(
+            {
+                "document_uri": "file:///test.docx",
+                "table_id": "table-0",
+                "start_row_index": 0,
+                "start_column_index": 0,
+                "end_row_index": 0,
+                "end_column_index": 4,
+            }
+        )
+
+        action = mock_workspace.execute.call_args[0][0]
+        assert action.category == "word"
+        assert action.action_name == "merge:cells"
+        assert action.params["table_id"] == "table-0"
+        assert action.params["start_row_index"] == 0
+        assert action.params["end_column_index"] == 4
+        assert result["success"] is True
+        assert result["data"]["requestedRange"] == {"rowCount": 1, "columnCount": 5}
+
+    @pytest.mark.asyncio
+    async def test_merge_cells_omitted_table_id_excluded_from_params(self, mock_workspace):
+        """缺省 table_id 时应通过 exclude_none 从 params 中省略，由 Add-In 解析当前光标表格"""
+        mock_workspace.execute.return_value = OfficeObs(
+            success=True,
+            data={"tableId": "table-0", "requestedRange": {"rowCount": 1, "columnCount": 3}},
+        )
+
+        tool = WordMergeCellsTool(mock_workspace)
+        await tool.execute(
+            {
+                "document_uri": "file:///test.docx",
+                "start_row_index": 0,
+                "start_column_index": 0,
+                "end_row_index": 0,
+                "end_column_index": 2,
+            }
+        )
+
+        action = mock_workspace.execute.call_args[0][0]
+        assert "table_id" not in action.params
+
+    @pytest.mark.asyncio
+    async def test_merge_cells_negative_index_rejected(self, mock_workspace):
+        """负数行/列索引应被 Pydantic 拦截 (ge=0)，不会触达 workspace.execute"""
+        tool = WordMergeCellsTool(mock_workspace)
+        result = await tool.execute(
+            {
+                "document_uri": "file:///test.docx",
+                "start_row_index": -1,
+                "start_column_index": 0,
+                "end_row_index": 0,
+                "end_column_index": 2,
+            }
+        )
+
+        assert result["success"] is False
+        mock_workspace.execute.assert_not_called()
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "code,scenario",
+        [
+            ("3010", "tableId 在文档中未找到"),
+            ("3013", "缺省 tableId + 光标不在表格内"),
+            ("3014", "目标区域已存在合并冲突"),
+        ],
+    )
+    async def test_merge_cells_propagates_error_codes(self, mock_workspace, code, scenario):
+        """3010 / 3013 / 3014 等错误码应通过 OfficeObs.error 透传到工具返回值"""
+        mock_workspace.execute.return_value = OfficeObs(
+            success=False,
+            data={},
+            error=f"{code} {scenario}",
+        )
+
+        tool = WordMergeCellsTool(mock_workspace)
+        result = await tool.execute(
+            {
+                "document_uri": "file:///test.docx",
+                "start_row_index": 0,
+                "start_column_index": 0,
+                "end_row_index": 0,
+                "end_column_index": 2,
+            }
+        )
+
+        assert result["success"] is False
+        assert code in result["error"]
+
+
+class TestWordUpdateTableCellTool:
+    """word_update_table_cell normal path + CellFormat enum validation + missing format/text rejection."""
+
+    @pytest.mark.asyncio
+    async def test_update_table_cell_with_format(self, mock_workspace):
+        """正常路径：单元格文本 + 完整 CellFormat（蓝底居中白字加粗表头场景）"""
+        mock_workspace.execute.return_value = OfficeObs(
+            success=True,
+            data={"tableId": "table-0", "cellsUpdated": 1, "rowCount": 5, "columnCount": 4},
+        )
+
+        tool = WordUpdateTableCellTool(mock_workspace)
+        result = await tool.execute(
+            {
+                "document_uri": "file:///test.docx",
+                "table_id": "table-0",
+                "cells": [
+                    {
+                        "rowIndex": 0,
+                        "columnIndex": 0,
+                        "text": "甲方信息",
+                        "format": {
+                            "horizontalAlignment": "Centered",
+                            "verticalAlignment": "Center",
+                            "backgroundColor": "#1F4E79",
+                            "fontColor": "#FFFFFF",
+                            "bold": True,
+                        },
+                    }
+                ],
+            }
+        )
+
+        action = mock_workspace.execute.call_args[0][0]
+        assert action.action_name == "update:tableCell"
+        assert action.params["table_id"] == "table-0"
+        cell = action.params["cells"][0]
+        assert cell["row_index"] == 0
+        assert cell["text"] == "甲方信息"
+        # snake_case is expected internally because DTO field names are snake_case
+        assert cell["format"]["horizontal_alignment"] == "Centered"
+        assert cell["format"]["background_color"] == "#1F4E79"
+        assert cell["format"]["bold"] is True
+        assert result["success"] is True
+
+    @pytest.mark.asyncio
+    async def test_update_table_cell_rejects_invalid_alignment_value(self, mock_workspace):
+        """horizontalAlignment 必须是 Word.Alignment 枚举值: 'Center' 应被拒绝, 'Centered' 才合法"""
+        tool = WordUpdateTableCellTool(mock_workspace)
+        result = await tool.execute(
+            {
+                "document_uri": "file:///test.docx",
+                "cells": [
+                    {
+                        "rowIndex": 0,
+                        "columnIndex": 0,
+                        "format": {"horizontalAlignment": "Center"},  # ✗ 应该是 Centered
+                    }
+                ],
+            }
+        )
+
+        assert result["success"] is False
+        mock_workspace.execute.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_update_table_cell_accepts_justified_alignment(self, mock_workspace):
+        """horizontalAlignment='Justified' 是 Word.Alignment 合法值"""
+        mock_workspace.execute.return_value = OfficeObs(
+            success=True,
+            data={"tableId": "table-0", "cellsUpdated": 1, "rowCount": 5, "columnCount": 4},
+        )
+
+        tool = WordUpdateTableCellTool(mock_workspace)
+        result = await tool.execute(
+            {
+                "document_uri": "file:///test.docx",
+                "cells": [
+                    {
+                        "rowIndex": 1,
+                        "columnIndex": 1,
+                        "text": "long paragraph",
+                        "format": {"horizontalAlignment": "Justified"},
+                    }
+                ],
+            }
+        )
+        assert result["success"] is True
+
+    @pytest.mark.asyncio
+    async def test_update_table_cell_rejects_invalid_vertical_alignment(self, mock_workspace):
+        """verticalAlignment 必须是 'Top' | 'Center' | 'Bottom'，'Middle' 应被拒绝"""
+        tool = WordUpdateTableCellTool(mock_workspace)
+        result = await tool.execute(
+            {
+                "document_uri": "file:///test.docx",
+                "cells": [
+                    {
+                        "rowIndex": 0,
+                        "columnIndex": 0,
+                        "format": {"verticalAlignment": "Middle"},  # ✗ 应该是 Center
+                    }
+                ],
+            }
+        )
+        assert result["success"] is False
+        mock_workspace.execute.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_update_table_cell_empty_cells_rejected(self, mock_workspace):
+        """cells 必须 min_length=1，空数组应被拒绝"""
+        tool = WordUpdateTableCellTool(mock_workspace)
+        result = await tool.execute(
+            {
+                "document_uri": "file:///test.docx",
+                "cells": [],
+            }
+        )
+        assert result["success"] is False
+        mock_workspace.execute.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_update_table_cell_propagates_3010(self, mock_workspace):
+        """tableId 不存在 → 3010 ELEMENT_NOT_FOUND 通过 error 透传"""
+        mock_workspace.execute.return_value = OfficeObs(success=False, data={}, error="3010 tableId not found")
+        tool = WordUpdateTableCellTool(mock_workspace)
+        result = await tool.execute(
+            {
+                "document_uri": "file:///test.docx",
+                "table_id": "table-99",
+                "cells": [{"rowIndex": 0, "columnIndex": 0, "text": "x"}],
+            }
+        )
+        assert result["success"] is False
+        assert "3010" in result["error"]
+
+
+class TestWordUpdateTableRowColumnTool:
+    """word_update_table_row_column 正常路径 + rows/columns 必须至少二选一."""
+
+    @pytest.mark.asyncio
+    async def test_update_table_row_column_with_rows(self, mock_workspace):
+        """正常路径：批量按行写入 4 行数据"""
+        mock_workspace.execute.return_value = OfficeObs(
+            success=True,
+            data={"tableId": "table-0", "cellsUpdated": 8, "rowCount": 5, "columnCount": 4},
+        )
+
+        tool = WordUpdateTableRowColumnTool(mock_workspace)
+        result = await tool.execute(
+            {
+                "document_uri": "file:///test.docx",
+                "table_id": "table-0",
+                "rows": [
+                    {"rowIndex": 1, "values": ["甲方", "ACME Corp"]},
+                    {"rowIndex": 2, "values": ["地址", "上海市"]},
+                    {"rowIndex": 3, "values": ["联系人", "张三"]},
+                    {"rowIndex": 4, "values": ["日期", "2026-04-30"]},
+                ],
+            }
+        )
+
+        action = mock_workspace.execute.call_args[0][0]
+        assert action.action_name == "update:tableRowColumn"
+        assert len(action.params["rows"]) == 4
+        assert action.params["rows"][0]["values"] == ["甲方", "ACME Corp"]
+        # columns 缺省时应通过 exclude_none 省略
+        assert "columns" not in action.params
+        assert result["success"] is True
+
+    @pytest.mark.asyncio
+    async def test_update_table_row_column_with_columns(self, mock_workspace):
+        """正常路径：按列写入"""
+        mock_workspace.execute.return_value = OfficeObs(
+            success=True,
+            data={"tableId": "table-0", "cellsUpdated": 3, "rowCount": 5, "columnCount": 4},
+        )
+
+        tool = WordUpdateTableRowColumnTool(mock_workspace)
+        result = await tool.execute(
+            {
+                "document_uri": "file:///test.docx",
+                "columns": [{"columnIndex": 0, "values": ["甲方", "地址", "联系人"]}],
+            }
+        )
+
+        action = mock_workspace.execute.call_args[0][0]
+        assert "rows" not in action.params
+        assert action.params["columns"][0]["column_index"] == 0
+        assert result["success"] is True
+
+    @pytest.mark.asyncio
+    async def test_update_table_row_column_requires_rows_or_columns(self, mock_workspace):
+        """rows 和 columns 都缺省应被 model_validator 拦截"""
+        tool = WordUpdateTableRowColumnTool(mock_workspace)
+        result = await tool.execute(
+            {
+                "document_uri": "file:///test.docx",
+            }
+        )
+        assert result["success"] is False
+        mock_workspace.execute.assert_not_called()
+
+
+class TestWordUpdateTableFormatTool:
+    """word_update_table_format 正常路径 + Word.Alignment 枚举校验 + 错误码透传."""
+
+    @pytest.mark.asyncio
+    async def test_update_table_format_full(self, mock_workspace):
+        """正常路径：内边距 + 边框 + 列宽 + 整表对齐"""
+        mock_workspace.execute.return_value = OfficeObs(
+            success=True,
+            data={"tableId": "table-0", "rowCount": 5, "columnCount": 4},
+        )
+
+        tool = WordUpdateTableFormatTool(mock_workspace)
+        result = await tool.execute(
+            {
+                "document_uri": "file:///test.docx",
+                "table_id": "table-0",
+                "style_options": {
+                    "cellPadding": {"top": 4, "bottom": 4, "left": 6, "right": 6},
+                },
+                "border_options": {
+                    "location": "inside",
+                    "style": "Single",
+                    "width": 0.5,
+                },
+                "column_widths": [120, 80, 80, 80],
+                "alignment": "Centered",
+            }
+        )
+
+        action = mock_workspace.execute.call_args[0][0]
+        assert action.action_name == "update:tableFormat"
+        assert action.params["alignment"] == "Centered"
+        assert action.params["column_widths"] == [120, 80, 80, 80]
+        assert action.params["border_options"]["location"] == "inside"
+        assert action.params["style_options"]["cell_padding"]["top"] == 4
+        assert result["success"] is True
+
+    @pytest.mark.asyncio
+    async def test_update_table_format_rejects_invalid_alignment(self, mock_workspace):
+        """alignment='Center' 应被拒绝（必须用 'Centered'）"""
+        tool = WordUpdateTableFormatTool(mock_workspace)
+        result = await tool.execute(
+            {
+                "document_uri": "file:///test.docx",
+                "alignment": "Center",  # ✗
+            }
+        )
+        assert result["success"] is False
+        mock_workspace.execute.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_update_table_format_rejects_invalid_border_location(self, mock_workspace):
+        """borderOptions.location 必须是 'all' | 'inside' | 'outside'"""
+        tool = WordUpdateTableFormatTool(mock_workspace)
+        result = await tool.execute(
+            {
+                "document_uri": "file:///test.docx",
+                "border_options": {"location": "diagonal"},
+            }
+        )
+        assert result["success"] is False
+        mock_workspace.execute.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_update_table_format_rejects_zero_border_width(self, mock_workspace):
+        """borderOptions.width 必须 > 0"""
+        tool = WordUpdateTableFormatTool(mock_workspace)
+        result = await tool.execute(
+            {
+                "document_uri": "file:///test.docx",
+                "border_options": {"width": 0},
+            }
+        )
+        assert result["success"] is False
+        mock_workspace.execute.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_update_table_format_propagates_3011_style_not_found(self, mock_workspace):
+        """styleType 不存在 → 3011 STYLE_NOT_FOUND 通过 error 透传"""
+        mock_workspace.execute.return_value = OfficeObs(success=False, data={}, error="3011 The style does not exist.")
+
+        tool = WordUpdateTableFormatTool(mock_workspace)
+        result = await tool.execute(
+            {
+                "document_uri": "file:///test.docx",
+                "style_options": {"styleType": "NoSuchStyle"},
+            }
+        )
+        assert result["success"] is False
+        assert "3011" in result["error"]
+
+    @pytest.mark.asyncio
+    async def test_update_table_format_propagates_4002_invalid_column_widths(self, mock_workspace):
+        """columnWidths 长度超出列数 → 4002 INVALID_PARAM 通过 error 透传 (Add-In 校验)"""
+        mock_workspace.execute.return_value = OfficeObs(
+            success=False, data={}, error="4002 columnWidths length exceeds column count"
+        )
+
+        tool = WordUpdateTableFormatTool(mock_workspace)
+        result = await tool.execute(
+            {
+                "document_uri": "file:///test.docx",
+                "column_widths": [60, 60, 60, 60, 60, 60, 60, 60, 60, 60, 60, 60],
+            }
+        )
+        assert result["success"] is False
+        assert "4002" in result["error"]

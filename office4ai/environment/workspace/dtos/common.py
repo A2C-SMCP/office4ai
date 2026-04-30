@@ -376,6 +376,9 @@ class ErrorCode:
     ELEMENT_NOT_FOUND = "3010"
     STYLE_NOT_FOUND = "3011"
     SEARCH_NO_MATCH = "3012"
+    NO_TABLE_AT_CURSOR = "3013"
+    ALREADY_MERGED = "3014"
+    OFFICE_API_ERROR = "3999"
 
     # Validation errors (4xxx)
     VALIDATION_ERROR = "4000"

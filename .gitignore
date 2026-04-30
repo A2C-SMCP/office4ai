@@ -223,6 +223,7 @@ __marimo__/
 manual_tests/.test_working/
 
 # Auto-generated fixture files (recreated by ensure_fixtures / create_*_fixtures.py)
+manual_tests/fixtures/
 manual_tests/word/fixtures/*/
 manual_tests/ppt/fixtures/*/
 

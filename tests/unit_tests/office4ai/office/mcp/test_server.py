@@ -38,8 +38,8 @@ class TestOfficeMCPServer:
             config = MCPServerConfig()
             server = OfficeMCPServer(config)
 
-            # 21 Word + 21 PPT = 42 tools
-            assert len(server.tools) == 42
+            # 25 Word (21 + 4 OASP v0.2.0 table tools) + 21 PPT = 46 tools
+            assert len(server.tools) == 46
 
             expected_tools = [
                 # Word Get tools
@@ -60,6 +60,11 @@ class TestOfficeMCPServer:
                 "word_insert_table",
                 "word_insert_equation",
                 "word_insert_toc",
+                # Word Table operation tools (OASP /word Draft, v0.2.0)
+                "word_merge_cells",
+                "word_update_table_cell",
+                "word_update_table_row_column",
+                "word_update_table_format",
                 # Word Export tool
                 "word_export_content",
                 # Word Comment tools

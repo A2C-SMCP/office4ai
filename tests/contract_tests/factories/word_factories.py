@@ -563,3 +563,74 @@ class WordDataFactory:
                 "message": message,
             },
         }
+
+    # ------------------------------------------------------------------
+    # Table Operation Responses (OASP /word Draft, v0.2.0)
+    # ------------------------------------------------------------------
+
+    def merge_cells_response(
+        self,
+        table_id: str = "table-0",
+        row_count: int = 1,
+        column_count: int = 5,
+    ) -> dict[str, Any]:
+        """生成 word:merge:cells 响应数据。
+
+        Args:
+            table_id: 目标表格 ID
+            row_count: 合并区域行数
+            column_count: 合并区域列数
+
+        Returns:
+            协议响应数据 {tableId, requestedRange: {rowCount, columnCount}}
+        """
+        return {
+            "tableId": table_id,
+            "requestedRange": {
+                "rowCount": row_count,
+                "columnCount": column_count,
+            },
+        }
+
+    def update_table_cell_response(
+        self,
+        table_id: str = "table-0",
+        cells_updated: int = 1,
+        row_count: int = 5,
+        column_count: int = 4,
+    ) -> dict[str, Any]:
+        """生成 word:update:tableCell 响应数据 (OASP v0.2.0)。"""
+        return {
+            "tableId": table_id,
+            "cellsUpdated": cells_updated,
+            "rowCount": row_count,
+            "columnCount": column_count,
+        }
+
+    def update_table_row_column_response(
+        self,
+        table_id: str = "table-0",
+        cells_updated: int = 0,
+        row_count: int = 5,
+        column_count: int = 4,
+    ) -> dict[str, Any]:
+        """生成 word:update:tableRowColumn 响应数据 (OASP v0.2.0)。"""
+        return {
+            "tableId": table_id,
+            "cellsUpdated": cells_updated,
+            "rowCount": row_count,
+            "columnCount": column_count,
+        }
+
+    def update_table_format_response(
+        self,
+        table_id: str = "table-0",
+        row_count: int = 5,
+        column_count: int = 4,
+    ) -> dict[str, Any]:
+        """生成 word:update:tableFormat 响应数据 (OASP v0.2.0)。"""
+        return {
+            "tableId": table_id,
+            "rowCount": row_count,
+            "columnCount": column_count,
+        }

@@ -1317,6 +1317,479 @@ class WordResolveCommentRequest(BaseRequest):
     )
 
 
+# ============================================================================
+# Table Operation DTOs (OASP /word Draft, v0.2.0)
+#
+# OASP Spec: https://doc.turingfocus.cn/oasp/0.2.0/specification/events-word/
+# Data structures: https://doc.turingfocus.cn/oasp/0.2.0/specification/data-structures/
+#
+# 4 events newly published in OASP v0.2.0 (2026-04-30, commit 77d5ffb):
+#   - word:merge:cells
+#   - word:update:tableCell
+#   - word:update:tableRowColumn
+#   - word:update:tableFormat
+#
+# Stability: Draft. DTOs use lenient parsing — extra fields tolerated, optional
+# fields default to None. Pin protocol references to v0.2.0 (NOT main HEAD).
+# ============================================================================
+
+
+class CellFormat(SocketIOBaseModel):
+    """
+    Word table cell formatting options (shared by word:update:tableCell and similar).
+
+    Field names align strictly with Word.Alignment / Word.VerticalAlignment enums:
+      - horizontalAlignment: "Centered" / "Justified" (NOT "Center" / "Justify")
+      - verticalAlignment: "Center" (NOT "Middle")
+
+    Note: cellPadding is NOT in CellFormat — Word.js padding API is table-level,
+    so it lives in UpdateTableFormatRequest.styleOptions.cellPadding.
+
+    OASP Spec: https://doc.turingfocus.cn/oasp/0.2.0/specification/data-structures/
+    """
+
+    horizontal_alignment: Literal["Left", "Centered", "Right", "Justified"] | None = Field(
+        default=None,
+        alias="horizontalAlignment",
+        description="Horizontal alignment (Word.Alignment enum value)",
+    )
+    vertical_alignment: Literal["Top", "Center", "Bottom"] | None = Field(
+        default=None,
+        alias="verticalAlignment",
+        description="Vertical alignment (Word.VerticalAlignment enum value)",
+    )
+    background_color: str | None = Field(
+        default=None,
+        alias="backgroundColor",
+        description="Cell background color (hex, e.g. '#1F4E79')",
+    )
+    font_name: str | None = Field(
+        default=None,
+        alias="fontName",
+        description="Font family name",
+    )
+    font_size: float | None = Field(
+        default=None,
+        alias="fontSize",
+        description="Font size (points), positive number",
+        gt=0,
+    )
+    font_color: str | None = Field(
+        default=None,
+        alias="fontColor",
+        description="Font color (hex)",
+    )
+    bold: bool | None = Field(default=None, alias="bold", description="Bold text")
+    italic: bool | None = Field(default=None, alias="italic", description="Italic text")
+
+
+class TableSummary(SocketIOBaseModel):
+    """
+    Compact summary of a table for word:get:documentStructure response (v0.2.0+).
+
+    Allows AI to re-discover existing tables and mitigate the temporary-index
+    fragility of `tableId` (kept as "table-{i}" until Content Control IDs land
+    via oasp-protocol#3).
+
+    OASP Spec: https://doc.turingfocus.cn/oasp/0.2.0/specification/data-structures/
+    """
+
+    table_id: str = Field(
+        ...,
+        alias="tableId",
+        description="Table identifier (e.g. 'table-0'), iteration order of body.tables",
+    )
+    row_count: int = Field(
+        ...,
+        alias="rowCount",
+        description="Number of rows",
+        ge=0,
+    )
+    column_count: int = Field(
+        ...,
+        alias="columnCount",
+        description="Number of columns",
+        ge=0,
+    )
+    preceding_heading: str | None = Field(
+        default=None,
+        alias="precedingHeading",
+        description="Nearest heading paragraph text preceding this table (heuristic locator)",
+    )
+
+
+# ---------- word:merge:cells ----------
+
+
+class WordMergeCellsRequest(BaseRequest):
+    """
+    Request to merge a rectangular range of cells in a Word table.
+
+    Stability: Draft (OASP /word Draft, v0.2.0). When tableId is omitted,
+    the Add-In resolves it from the current cursor location; if the cursor is
+    not inside a table, the Add-In responds with error 3013 NO_TABLE_AT_CURSOR.
+
+    OASP Spec: https://doc.turingfocus.cn/oasp/0.2.0/specification/events-word/
+    """
+
+    event_name: ClassVar[str] = "word:merge:cells"
+
+    table_id: str | None = Field(
+        default=None,
+        alias="tableId",
+        description="Target table identifier; defaults to the table containing the cursor",
+    )
+    start_row_index: int = Field(
+        ...,
+        alias="startRowIndex",
+        description="Start row index (0-based, inclusive)",
+        ge=0,
+    )
+    start_column_index: int = Field(
+        ...,
+        alias="startColumnIndex",
+        description="Start column index (0-based, inclusive)",
+        ge=0,
+    )
+    end_row_index: int = Field(
+        ...,
+        alias="endRowIndex",
+        description="End row index (0-based, inclusive)",
+        ge=0,
+    )
+    end_column_index: int = Field(
+        ...,
+        alias="endColumnIndex",
+        description="End column index (0-based, inclusive)",
+        ge=0,
+    )
+
+
+class MergeCellsRequestedRange(SocketIOBaseModel):
+    """Dimension summary of the requested merge range."""
+
+    row_count: int = Field(..., alias="rowCount", description="Number of rows merged", ge=0)
+    column_count: int = Field(..., alias="columnCount", description="Number of columns merged", ge=0)
+
+
+class MergeCellsResult(SocketIOBaseModel):
+    """Result for word:merge:cells operation."""
+
+    table_id: str = Field(
+        ...,
+        alias="tableId",
+        description="Table identifier the merge was applied to",
+    )
+    requested_range: MergeCellsRequestedRange = Field(
+        ...,
+        alias="requestedRange",
+        description="Dimensions of the merged region",
+    )
+
+
+class WordMergeCellsResponse(SocketIOBaseModel):
+    """Response for word:merge:cells operation."""
+
+    request_id: str = Field(..., alias="requestId", description="Request ID being responded to")
+    success: bool = Field(..., alias="success", description="Whether the operation succeeded")
+    data: MergeCellsResult | None = Field(default=None, alias="data", description="Merge result")
+    error: Optional["ErrorResponse"] = Field(default=None, alias="error", description="Error details if failed")
+    timestamp: int = Field(..., alias="timestamp", description="Server timestamp in milliseconds")
+
+
+# ---------- word:update:tableCell ----------
+
+
+class TableCellUpdate(SocketIOBaseModel):
+    """
+    Single cell update for word:update:tableCell.
+
+    `text` and `format` are both optional, but at least one must be provided.
+    """
+
+    row_index: int = Field(..., alias="rowIndex", description="Row index (0-based)", ge=0)
+    column_index: int = Field(..., alias="columnIndex", description="Column index (0-based)", ge=0)
+    text: str | None = Field(default=None, alias="text", description="New text content for the cell")
+    format: CellFormat | None = Field(
+        default=None,
+        alias="format",
+        description="Cell-level format (alignment, background, font, ...)",
+    )
+
+
+class WordUpdateTableCellRequest(BaseRequest):
+    """
+    Request to update specific cells in a Word table (text and/or format).
+
+    Stability: Draft (OASP /word Draft, v0.2.0).
+
+    OASP Spec: https://doc.turingfocus.cn/oasp/0.2.0/specification/events-word/
+    """
+
+    event_name: ClassVar[str] = "word:update:tableCell"
+
+    table_id: str | None = Field(
+        default=None,
+        alias="tableId",
+        description="Target table identifier; defaults to the table containing the cursor",
+    )
+    cells: list[TableCellUpdate] = Field(
+        ...,
+        alias="cells",
+        description="Cells to update (at least one)",
+        min_length=1,
+    )
+
+
+class UpdateTableCellResult(SocketIOBaseModel):
+    """Result for word:update:tableCell operation.
+
+    OASP v0.2.0 wire shape: {tableId, cellsUpdated, rowCount, columnCount}.
+    rowCount / columnCount reflect the table's current dimensions after the update.
+    """
+
+    table_id: str = Field(..., alias="tableId", description="Table identifier")
+    cells_updated: int = Field(
+        ...,
+        alias="cellsUpdated",
+        description="Number of cells successfully updated",
+        ge=0,
+    )
+    row_count: int = Field(
+        ...,
+        alias="rowCount",
+        description="Total row count of the table after update",
+        ge=0,
+    )
+    column_count: int = Field(
+        ...,
+        alias="columnCount",
+        description="Total column count of the table after update",
+        ge=0,
+    )
+
+
+class WordUpdateTableCellResponse(SocketIOBaseModel):
+    """Response for word:update:tableCell operation."""
+
+    request_id: str = Field(..., alias="requestId", description="Request ID being responded to")
+    success: bool = Field(..., alias="success", description="Whether the operation succeeded")
+    data: UpdateTableCellResult | None = Field(default=None, alias="data", description="Update result")
+    error: Optional["ErrorResponse"] = Field(default=None, alias="error", description="Error details if failed")
+    timestamp: int = Field(..., alias="timestamp", description="Server timestamp in milliseconds")
+
+
+# ---------- word:update:tableRowColumn ----------
+
+
+class TableRowUpdate(SocketIOBaseModel):
+    """Row-level batch update for word:update:tableRowColumn."""
+
+    row_index: int = Field(..., alias="rowIndex", description="Row index (0-based)", ge=0)
+    values: list[str] = Field(..., alias="values", description="Text values for each column in the row")
+
+
+class TableColumnUpdate(SocketIOBaseModel):
+    """Column-level batch update for word:update:tableRowColumn."""
+
+    column_index: int = Field(..., alias="columnIndex", description="Column index (0-based)", ge=0)
+    values: list[str] = Field(..., alias="values", description="Text values for each row in the column")
+
+
+class WordUpdateTableRowColumnRequest(BaseRequest):
+    """
+    Request to batch-update Word table cells by entire row(s) or column(s).
+
+    Stability: Draft (OASP /word Draft, v0.2.0). Provide `rows`, `columns`, or
+    both; the Add-In writes them in document order.
+
+    OASP Spec: https://doc.turingfocus.cn/oasp/0.2.0/specification/events-word/
+    """
+
+    event_name: ClassVar[str] = "word:update:tableRowColumn"
+
+    table_id: str | None = Field(
+        default=None,
+        alias="tableId",
+        description="Target table identifier; defaults to the table containing the cursor",
+    )
+    rows: list[TableRowUpdate] | None = Field(
+        default=None,
+        alias="rows",
+        description="Row updates (each writes a full row of values)",
+    )
+    columns: list[TableColumnUpdate] | None = Field(
+        default=None,
+        alias="columns",
+        description="Column updates (each writes a full column of values)",
+    )
+
+
+class UpdateTableRowColumnResult(SocketIOBaseModel):
+    """Result for word:update:tableRowColumn operation.
+
+    OASP v0.2.0 wire shape: {tableId, cellsUpdated, rowCount, columnCount}.
+    cellsUpdated is the total cells written across all rows + columns.
+    """
+
+    table_id: str = Field(..., alias="tableId", description="Table identifier")
+    cells_updated: int = Field(
+        ...,
+        alias="cellsUpdated",
+        description="Total cells written across all rows + columns",
+        ge=0,
+    )
+    row_count: int = Field(
+        ...,
+        alias="rowCount",
+        description="Total row count of the table after update",
+        ge=0,
+    )
+    column_count: int = Field(
+        ...,
+        alias="columnCount",
+        description="Total column count of the table after update",
+        ge=0,
+    )
+
+
+class WordUpdateTableRowColumnResponse(SocketIOBaseModel):
+    """Response for word:update:tableRowColumn operation."""
+
+    request_id: str = Field(..., alias="requestId", description="Request ID being responded to")
+    success: bool = Field(..., alias="success", description="Whether the operation succeeded")
+    data: UpdateTableRowColumnResult | None = Field(default=None, alias="data", description="Update result")
+    error: Optional["ErrorResponse"] = Field(default=None, alias="error", description="Error details if failed")
+    timestamp: int = Field(..., alias="timestamp", description="Server timestamp in milliseconds")
+
+
+# ---------- word:update:tableFormat ----------
+
+
+class TableCellPadding(SocketIOBaseModel):
+    """Table-level uniform cell padding (Word.js padding API is table-level)."""
+
+    top: float | None = Field(default=None, alias="top", description="Top padding (points)", ge=0)
+    bottom: float | None = Field(default=None, alias="bottom", description="Bottom padding (points)", ge=0)
+    left: float | None = Field(default=None, alias="left", description="Left padding (points)", ge=0)
+    right: float | None = Field(default=None, alias="right", description="Right padding (points)", ge=0)
+
+
+class TableStyleOptions(SocketIOBaseModel):
+    """Style options for Word table (table-style preset + cellPadding)."""
+
+    style_type: str | None = Field(
+        default=None,
+        alias="styleType",
+        description="Built-in or custom Word table style name (e.g. 'Grid Table 4 - Accent 1')",
+    )
+    first_column: bool | None = Field(default=None, alias="firstColumn", description="Apply first-column style")
+    last_column: bool | None = Field(default=None, alias="lastColumn", description="Apply last-column style")
+    total_row: bool | None = Field(default=None, alias="totalRow", description="Apply total-row style")
+    banded_rows: bool | None = Field(default=None, alias="bandedRows", description="Apply banded-row style")
+    banded_columns: bool | None = Field(default=None, alias="bandedColumns", description="Apply banded-column style")
+    cell_padding: TableCellPadding | None = Field(
+        default=None,
+        alias="cellPadding",
+        description="Table-level uniform cell padding",
+    )
+
+
+class TableBorderOptions(SocketIOBaseModel):
+    """Border options for Word table."""
+
+    location: Literal["all", "inside", "outside"] | None = Field(
+        default=None,
+        alias="location",
+        description="Border location (default: 'all')",
+    )
+    style: Literal["Single", "Double", "Dashed", "Dotted", "None"] | None = Field(
+        default=None,
+        alias="style",
+        description="Border line style",
+    )
+    width: float | None = Field(
+        default=None,
+        alias="width",
+        description="Border width (points), positive number",
+        gt=0,
+    )
+    color: str | None = Field(default=None, alias="color", description="Border color (hex)")
+
+
+class WordUpdateTableFormatRequest(BaseRequest):
+    """
+    Request to update overall Word table format (style preset, borders, column
+    widths, alignment, cell padding).
+
+    Stability: Draft (OASP /word Draft, v0.2.0). Note: the original draft's
+    `data` field has been removed — use word:update:tableRowColumn for cell text.
+
+    OASP Spec: https://doc.turingfocus.cn/oasp/0.2.0/specification/events-word/
+    """
+
+    event_name: ClassVar[str] = "word:update:tableFormat"
+
+    table_id: str | None = Field(
+        default=None,
+        alias="tableId",
+        description="Target table identifier; defaults to the table containing the cursor",
+    )
+    style_options: TableStyleOptions | None = Field(
+        default=None,
+        alias="styleOptions",
+        description="Table style preset + table-level cell padding",
+    )
+    border_options: TableBorderOptions | None = Field(
+        default=None,
+        alias="borderOptions",
+        description="Border location/style/width/color",
+    )
+    column_widths: list[float] | None = Field(
+        default=None,
+        alias="columnWidths",
+        description=(
+            "Column widths in points; length must be ≤ table column count (over-length triggers 4002 INVALID_PARAM)"
+        ),
+    )
+    alignment: Literal["Left", "Centered", "Right"] | None = Field(
+        default=None,
+        alias="alignment",
+        description="Whole-table horizontal alignment (Word.Alignment enum value)",
+    )
+
+
+class UpdateTableFormatResult(SocketIOBaseModel):
+    """Result for word:update:tableFormat operation.
+
+    OASP v0.2.0 wire shape: {tableId, rowCount, columnCount}.
+    """
+
+    table_id: str = Field(..., alias="tableId", description="Table identifier")
+    row_count: int = Field(
+        ...,
+        alias="rowCount",
+        description="Total row count of the table",
+        ge=0,
+    )
+    column_count: int = Field(
+        ...,
+        alias="columnCount",
+        description="Total column count of the table",
+        ge=0,
+    )
+
+
+class WordUpdateTableFormatResponse(SocketIOBaseModel):
+    """Response for word:update:tableFormat operation."""
+
+    request_id: str = Field(..., alias="requestId", description="Request ID being responded to")
+    success: bool = Field(..., alias="success", description="Whether the operation succeeded")
+    data: UpdateTableFormatResult | None = Field(default=None, alias="data", description="Format result")
+    error: Optional["ErrorResponse"] = Field(default=None, alias="error", description="Error details if failed")
+    timestamp: int = Field(..., alias="timestamp", description="Server timestamp in milliseconds")
+
+
 # Resolve forward references
 GetCommentsOptions.model_rebuild()
 CommentReplyData.model_rebuild()
@@ -1353,3 +1826,22 @@ DocumentStructure.model_rebuild()
 WordGetDocumentStructureResponse.model_rebuild()
 DocumentStats.model_rebuild()
 WordGetDocumentStatsResponse.model_rebuild()
+
+# Table operation DTOs (v0.2.0)
+CellFormat.model_rebuild()
+TableSummary.model_rebuild()
+MergeCellsRequestedRange.model_rebuild()
+MergeCellsResult.model_rebuild()
+WordMergeCellsResponse.model_rebuild()
+TableCellUpdate.model_rebuild()
+UpdateTableCellResult.model_rebuild()
+WordUpdateTableCellResponse.model_rebuild()
+TableRowUpdate.model_rebuild()
+TableColumnUpdate.model_rebuild()
+UpdateTableRowColumnResult.model_rebuild()
+WordUpdateTableRowColumnResponse.model_rebuild()
+TableCellPadding.model_rebuild()
+TableStyleOptions.model_rebuild()
+TableBorderOptions.model_rebuild()
+UpdateTableFormatResult.model_rebuild()
+WordUpdateTableFormatResponse.model_rebuild()
