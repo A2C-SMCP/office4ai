@@ -380,6 +380,7 @@ class ErrorCode:
     NO_TABLE_AT_CURSOR = "3013"
     ALREADY_MERGED = "3014"
     INVALID_CHART_DATA = "3015"
+    API_NOT_SUPPORTED = "3016"  # OASP 0.3.0: required capability/requirement set unavailable on client/platform
     OFFICE_API_ERROR = "3999"
 
     # Validation errors (4xxx)

@@ -677,6 +677,67 @@ class PptUpdateChartRequest(BaseRequest):
     chart: ChartUpdate = Field(..., description="Update payload (discriminated by chartType)")
 
 
+# ============================================================================
+# OOXML Carrier DTOs (OASP /ppt Draft, v0.3.0)
+# ============================================================================
+# Low-level whole-slide OOXML transport primitives backing the dual-path chart
+# implementation (open-document Office.js round-trip). These are transport
+# primitives, NOT for routine AI use.
+# Spec: events-ppt.md §ppt:get:slideOoxml / §ppt:insert:slidesOoxml.
+
+# camelCase on the wire (consistent with other ppt events); the Add-In maps to the
+# PascalCase PowerPoint.InsertSlideFormatting enum internally.
+SlideFormatting = Literal["keepSourceFormatting", "useDestinationTheme"]
+
+
+class PptGetSlideOoxmlRequest(BaseRequest):
+    """Export one slide's live OOXML as a base64 .pptx package (ppt:get:slideOoxml).
+
+    Reflects the document's live state (including unsaved local edits). The response
+    carries an opaque slideId for subsequent insert:slidesOoxml positioning/replacement.
+    """
+
+    event_name: ClassVar[str] = "ppt:get:slideOoxml"
+
+    slide_index: int = Field(..., alias="slideIndex", description="Target slide index (0-based)", ge=0)
+
+
+class PptInsertSlidesOoxmlRequest(BaseRequest):
+    """Apply an OOXML slide package (>=1 slide), optionally replacing + repositioning (ppt:insert:slidesOoxml).
+
+    When replace_slide_id / final_slide_index are provided, the [insert -> delete old -> move]
+    composite runs as one sequential best-effort round-trip (NOT atomic; no rollback guarantee).
+    """
+
+    event_name: ClassVar[str] = "ppt:insert:slidesOoxml"
+
+    base64: str = Field(
+        ...,
+        description="Slide package (>=1 slide) as base64 .pptx (no data URL prefix)",
+    )
+    formatting: SlideFormatting | None = Field(
+        default=None,
+        description="Keep source formatting or apply destination theme (consumer default: keepSourceFormatting)",
+    )
+    target_slide_index: int | None = Field(
+        default=None,
+        alias="targetSlideIndex",
+        description="Insert after this 0-based index; default = end of document",
+        ge=0,
+    )
+    replace_slide_id: str | None = Field(
+        default=None,
+        alias="replaceSlideId",
+        description="Opaque slideId (from ppt:get:slideOoxml) to delete after insert (round-trip)",
+    )
+    final_slide_index: int | None = Field(
+        default=None,
+        alias="finalSlideIndex",
+        description="Move the inserted slide to this 0-based index to reposition (round-trip)",
+        ge=0,
+    )
+
+
 # Resolve forward references
 SlideElementsOptions.model_rebuild()
 ScreenshotOptions.model_rebuild()
