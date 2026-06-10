@@ -3,10 +3,32 @@ OOXML chart engine for OASP /ppt chart events (insert / get / update).
 
 PowerPoint Office.js does not expose chart creation or data-update APIs (see
 office-js#5463). The OASP protocol therefore routes ppt:insert:chart /
-ppt:get:chart / ppt:update:chart through this Server-side engine, which mutates
-the .pptx OOXML directly via ``python-pptx``.
+ppt:get:chart / ppt:update:chart through this Server-side engine, which builds
+and mutates the .pptx OOXML directly via ``python-pptx``.
 
-Operational constraints (mirrored from the OASP events-ppt admonition):
+Two execution modes share one OOXML core
+========================================
+- **Path A — on-disk (closed document):** load/modify/save a ``.pptx`` file on
+  disk. This is the original 0.2.0 behaviour and is preserved unchanged (the
+  CONNECTED-document 3003 guard still lives in the tools, not here).
+- **Path B — in-memory base64 (open document, OASP 0.3.0):** the Server never
+  touches disk; it exchanges single-slide ``.pptx`` packages as base64 over the
+  wire with the Add-In (which exports the live slide via
+  ``Slide.exportAsBase64`` and re-inserts via ``insertSlidesFromBase64``). The
+  engine offers two in-memory shapes:
+
+  * *generate standalone single page* — build a fresh 1-slide deck containing the
+    chart and return it as base64 (used by "insert → new page"; needs no input
+    package);
+  * *modify a single page* — load a base64 single-slide package, locate/add/edit
+    the chart, return the package back as base64 (used by get / update /
+    insert-into-existing-page).
+
+  All chart OOXML logic stays here in python-pptx; the Add-In only carries
+  generic, chart-agnostic primitives. Routing between Path A and Path B is the
+  responsibility of the chart tools (#15), not this module.
+
+Operational constraints (Path A only; mirrored from the OASP events-ppt admonition):
 
 - The Add-In must ``save()`` the document before calling — unsaved client edits
   will be overwritten when this engine rewrites the .pptx on disk.
@@ -18,19 +40,29 @@ Operational constraints (mirrored from the OASP events-ppt admonition):
 
 Element identity
 ================
-We expose ``elementId = "chart-<slide_index>-<shape_id>"`` where ``shape_id``
-is the python-pptx integer (== OOXML ``<p:nvSpPr><p:cNvPr id="...">``). The
-shape id is only unique within a slide, so we prefix the slide index to make
-the wire identifier globally addressable. Backwards-compatible parsing also
-accepts the legacy ``"chart-<shape_id>"`` form (best-effort lookup across all
-slides).
+The wire ``elementId`` is an **opaque, server-assigned string** of the form
+``"oasp-chart-<uuid>"`` (per OASP ``data-structures.md#element-id-opacity``).
+Consumers must not parse it — they round-trip it verbatim. The engine stores the
+id in the chart shape's OOXML ``<p:cNvPr name="...">`` (python-pptx
+``graphic_frame.name``), which survives both ``save()``/reload and the Add-In's
+whole-slide round-trip (spike office-editor4ai#34: ``@name`` survives, geometry
+readable, ``masterLeak: 0``). Charts are therefore relocated by ``shape.name``.
+
+For backward compatibility we also accept the legacy ``"chart-<slide>-<shape>"``
+(or ``"chart-<shape>"``) form emitted by 0.2.0, resolving it by native
+python-pptx ``shape_id``. A legacy chart that is recreated during an update is
+migrated to a fresh opaque id.
 """
 
 from __future__ import annotations
 
 import asyncio
+import base64
+import binascii
+import io
 import math
 import urllib.parse
+import uuid
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -163,12 +195,22 @@ def _validate_scatter(data: ScatterChartData) -> None:
                 )
 
 
+def _validate_chart_data(chart_data: CategoricalChartData | ScatterChartData) -> None:
+    if isinstance(chart_data, CategoricalChartData):
+        _validate_categorical(chart_data)
+    else:
+        _validate_scatter(chart_data)
+
+
 # ---------------------------------------------------------------------------
 # python-pptx helpers — chart construction / extraction / mutation
 # ---------------------------------------------------------------------------
 
 _DEFAULT_WIDTH_PT = 480.0
 _DEFAULT_HEIGHT_PT = 320.0
+
+#: python-pptx default template "Blank" layout index (no placeholders).
+_BLANK_LAYOUT_INDEX = 6
 
 
 def _resolve_geometry(prs: Any, options: ChartInsertOptions | None) -> tuple[Any, Any, Any, Any]:
@@ -239,16 +281,28 @@ def _slide_index(prs: Any, slide: Any) -> int:
     return -1
 
 
-def _parse_element_id(element_id: str) -> tuple[int | None, int]:
-    """Parse ``chart-<slide>-<shape>`` (preferred) or legacy ``chart-<shape>``.
+# ---------------------------------------------------------------------------
+# Element identity — opaque ``oasp-chart-<uuid>`` + legacy ``chart-<slide>-<shape>``
+# ---------------------------------------------------------------------------
 
-    Returns ``(slide_index_or_None, shape_id)``. Raises 3010 on malformed input.
+_OPAQUE_PREFIX = "oasp-chart-"
+
+
+def _new_element_id() -> str:
+    """Mint a fresh opaque, server-assigned chart id (``oasp-chart-<uuid4>``)."""
+    return f"{_OPAQUE_PREFIX}{uuid.uuid4()}"
+
+
+def _is_opaque_id(element_id: str) -> bool:
+    return element_id.startswith(_OPAQUE_PREFIX)
+
+
+def _parse_legacy_element_id(element_id: str) -> tuple[int | None, int]:
+    """Parse legacy ``chart-<slide>-<shape>`` (preferred) or ``chart-<shape>``.
+
+    Only called for ids that start with ``"chart-"``. Returns
+    ``(slide_index_or_None, shape_id)``. Raises 3010 on malformed input.
     """
-    if not element_id.startswith("chart-"):
-        raise ChartEngineError(
-            code=ErrorCode.ELEMENT_NOT_FOUND,
-            message=f"Invalid chart elementId format: {element_id!r}",
-        )
     rest = element_id[len("chart-") :]
     parts = rest.split("-")
     try:
@@ -264,31 +318,40 @@ def _parse_element_id(element_id: str) -> tuple[int | None, int]:
     )
 
 
-def _format_element_id(slide_index: int, shape_id: int) -> str:
-    return f"chart-{slide_index}-{shape_id}"
+def _ordered_slides(prs: Any, hint_index: int | None) -> list[Any]:
+    """Slides with ``hint_index`` (if valid) searched first, then the rest in order."""
+    slides = list(prs.slides)
+    if hint_index is not None and 0 <= hint_index < len(slides):
+        return [slides[hint_index]] + [s for i, s in enumerate(slides) if i != hint_index]
+    return slides
 
 
 def _find_chart(prs: Any, element_id: str, hint_index: int | None = None) -> tuple[Any, Any, int]:
     """Return (slide, chart_shape, slide_index) for the chart with this elementId.
 
+    Primary lookup is by opaque ``shape.name`` (== OOXML ``cNvPr/@name``). If the
+    id is in the legacy ``chart-<slide>-<shape>`` form and no shape carries that
+    name, fall back to matching the native python-pptx ``shape_id``.
+
     Raises 3010 ELEMENT_NOT_FOUND if no chart shape matches.
     """
-    parsed_slide, shape_id = _parse_element_id(element_id)
-    slides = list(prs.slides)
-    target_slide = parsed_slide if parsed_slide is not None else hint_index
-
-    # Search the qualified slide first, then fall back to the rest.
-    if target_slide is not None and 0 <= target_slide < len(slides):
-        slides_iter = [slides[target_slide]] + [s for i, s in enumerate(slides) if i != target_slide]
-    else:
-        slides_iter = slides
-
-    for slide in slides_iter:
+    # 1. Primary: opaque id written to cNvPr/@name (survives save/reload + round-trip).
+    #    First match wins. opaque UUID ids make same-name collisions improbable in normal
+    #    operation; a stronger guard (customXmlParts registry, design §5) is deferred to the
+    #    routing work (#15) where the open-document registry becomes the source of truth.
+    for slide in _ordered_slides(prs, hint_index):
         for shape in slide.shapes:
-            if not getattr(shape, "has_chart", False):
-                continue
-            if int(shape.shape_id) == shape_id:
+            if getattr(shape, "has_chart", False) and shape.name == element_id:
                 return slide, shape, _slide_index(prs, slide)
+
+    # 2. Legacy fallback: chart-<slide>-<shape> / chart-<shape> by native shape id.
+    if element_id.startswith("chart-"):
+        parsed_slide, shape_id = _parse_legacy_element_id(element_id)
+        target = parsed_slide if parsed_slide is not None else hint_index
+        for slide in _ordered_slides(prs, target):
+            for shape in slide.shapes:
+                if getattr(shape, "has_chart", False) and int(shape.shape_id) == shape_id:
+                    return slide, shape, _slide_index(prs, slide)
 
     raise ChartEngineError(
         code=ErrorCode.ELEMENT_NOT_FOUND,
@@ -386,30 +449,36 @@ def _extract_chart_data(chart: Any) -> dict[str, Any]:
     }
 
 
+def _is_categorical(chart_type: str) -> bool:
+    return chart_type in _CATEGORICAL_TYPES
+
+
 # ---------------------------------------------------------------------------
-# Public engine functions
+# OOXML core — operate on an already-loaded ``Presentation`` (Path A + Path B share these)
 # ---------------------------------------------------------------------------
 
 
-def _insert_chart_blocking(
-    document_path: Path,
+def _geometry_dict(shape: Any) -> dict[str, float]:
+    return {
+        "left": Emu(int(shape.left or 0)).pt,
+        "top": Emu(int(shape.top or 0)).pt,
+        "width": Emu(int(shape.width or 0)).pt,
+        "height": Emu(int(shape.height or 0)).pt,
+    }
+
+
+def _add_chart_to_slide(
+    prs: Any,
+    slide: Any,
     chart_data: CategoricalChartData | ScatterChartData,
     options: ChartInsertOptions | None,
-) -> dict[str, Any]:
-    prs = Presentation(str(document_path))
-
-    slide_index_target = options.slide_index if options and options.slide_index is not None else None
-    if slide_index_target is None:
-        slide_index_target = 0
-    if slide_index_target < 0 or slide_index_target >= len(prs.slides):
-        raise ChartEngineError(
-            code=ErrorCode.INVALID_PARAM,
-            message=(f"slideIndex {slide_index_target} out of range [0, {len(prs.slides) - 1}]"),
-        )
-    slide = prs.slides[slide_index_target]
-
+) -> tuple[Any, str]:
+    """Add a chart shape to ``slide``, tag it with a fresh opaque id, return (shape, id)."""
     x, y, cx, cy = _resolve_geometry(prs, options)
 
+    # Core invariant: never build a chart from invalid data. The public async wrappers
+    # also validate up-front (fast-fail before the expensive Presentation parse / disk read);
+    # this re-validation guards direct core callers and is idempotent.
     if isinstance(chart_data, CategoricalChartData):
         _validate_categorical(chart_data)
         xl_type = _xl_chart_type(chart_data.chart_type)
@@ -429,47 +498,38 @@ def _insert_chart_blocking(
         show_data_labels=chart_data.show_data_labels,
     )
 
-    prs.save(str(document_path))
+    element_id = _new_element_id()
+    chart_shape.name = element_id  # → OOXML <p:cNvPr name="oasp-chart-..."> (relocatable token)
+    return chart_shape, element_id
 
-    element_id = _format_element_id(slide_index_target, int(chart_shape.shape_id))
+
+def _insert_result(
+    element_id: str,
+    slide_index: int,
+    chart_data: CategoricalChartData | ScatterChartData,
+    chart_shape: Any,
+) -> dict[str, Any]:
     return {
         "elementId": element_id,
-        "slideIndex": slide_index_target,
+        "slideIndex": slide_index,
         "chartType": chart_data.chart_type,
         "seriesCount": len(chart_data.series),
-        "left": Emu(int(chart_shape.left or 0)).pt,
-        "top": Emu(int(chart_shape.top or 0)).pt,
-        "width": Emu(int(chart_shape.width or 0)).pt,
-        "height": Emu(int(chart_shape.height or 0)).pt,
+        **_geometry_dict(chart_shape),
     }
 
 
-def _get_chart_blocking(document_path: Path, element_id: str, hint_index: int | None) -> dict[str, Any]:
-    prs = Presentation(str(document_path))
-    _slide, shape, slide_idx = _find_chart(prs, element_id, hint_index)
-    chart = shape.chart
-    return {
-        "elementId": element_id,
-        "slideIndex": slide_idx,
-        "chart": _extract_chart_data(chart),
-        "left": Emu(int(shape.left or 0)).pt,
-        "top": Emu(int(shape.top or 0)).pt,
-        "width": Emu(int(shape.width or 0)).pt,
-        "height": Emu(int(shape.height or 0)).pt,
-    }
-
-
-def _is_categorical(chart_type: str) -> bool:
-    return chart_type in _CATEGORICAL_TYPES
-
-
-def _update_chart_blocking(
-    document_path: Path,
+def _modify_chart_in_prs(
+    slide: Any,
+    shape: Any,
     element_id: str,
     update: CategoricalChartUpdate | ScatterChartUpdate,
-) -> dict[str, Any]:
-    prs = Presentation(str(document_path))
-    slide, shape, slide_idx = _find_chart(prs, element_id, None)
+) -> tuple[str, list[str]]:
+    """Apply a partial update to a located chart shape (no save). Returns (elementId, updatedFields).
+
+    Type changes (cross-variant or same-variant) are delete-and-recreate at the
+    same geometry; the recreated shape inherits the same opaque id (legacy ids
+    are migrated to a fresh opaque id). Pure data/display updates mutate in place.
+    """
     chart = shape.chart
 
     # Determine current chartType string (best-effort) for variant comparison.
@@ -532,7 +592,8 @@ def _update_chart_blocking(
         new_xl = _xl_chart_type(target_type)
         new_shape = slide.shapes.add_chart(new_xl, x, y, cx, cy, cd)
         chart = new_shape.chart
-        element_id = _format_element_id(slide_idx, int(new_shape.shape_id))
+        element_id = element_id if _is_opaque_id(element_id) else _new_element_id()
+        new_shape.name = element_id  # preserve / migrate the opaque id onto the recreated shape
         updated_fields.extend(["chartType", "series"])
         if isinstance(update, CategoricalChartUpdate) and update.categories is not None:
             updated_fields.append("categories")
@@ -621,7 +682,8 @@ def _update_chart_blocking(
             new_xl = _xl_chart_type(update.chart_type)
             new_shape = slide.shapes.add_chart(new_xl, x, y, cx, cy, cd)
             chart = new_shape.chart
-            element_id = _format_element_id(slide_idx, int(new_shape.shape_id))
+            element_id = element_id if _is_opaque_id(element_id) else _new_element_id()
+            new_shape.name = element_id  # preserve / migrate the opaque id onto the recreated shape
             updated_fields.append("chartType")
             if isinstance(update, CategoricalChartUpdate):
                 if update.categories is not None:
@@ -699,17 +761,165 @@ def _update_chart_blocking(
         if update.show_data_labels is not None:
             updated_fields.append("showDataLabels")
 
-    prs.save(str(document_path))
+    return element_id, updated_fields
 
+
+# ---------------------------------------------------------------------------
+# base64 single-slide package helpers (Path B)
+# ---------------------------------------------------------------------------
+
+
+def _encode_prs_b64(prs: Any) -> str:
+    """Serialize a ``Presentation`` to a base64-encoded .pptx package string."""
+    buf = io.BytesIO()
+    prs.save(buf)
+    return base64.b64encode(buf.getvalue()).decode("ascii")
+
+
+def _load_prs_from_b64(slide_b64: str) -> Any:
+    """Decode a base64 single-slide package into a ``Presentation``. Raises 4002 if invalid."""
+    try:
+        raw = base64.b64decode(slide_b64, validate=True)
+    except (binascii.Error, ValueError) as exc:
+        raise ChartEngineError(
+            code=ErrorCode.INVALID_PARAM,
+            message="Invalid base64 slide package",
+        ) from exc
+    try:
+        return Presentation(io.BytesIO(raw))
+    except Exception as exc:  # python-pptx raises PackageNotFoundError / BadZipFile / KeyError
+        raise ChartEngineError(
+            code=ErrorCode.INVALID_PARAM,
+            message=f"Not a valid .pptx package: {exc}",
+        ) from exc
+
+
+def _first_slide(prs: Any) -> Any:
+    if len(prs.slides) == 0:
+        raise ChartEngineError(
+            code=ErrorCode.INVALID_PARAM,
+            message="Slide package contains no slides",
+        )
+    return prs.slides[0]
+
+
+# ---------------------------------------------------------------------------
+# Path A — on-disk blocking implementations
+# ---------------------------------------------------------------------------
+
+
+def _insert_chart_blocking(
+    document_path: Path,
+    chart_data: CategoricalChartData | ScatterChartData,
+    options: ChartInsertOptions | None,
+) -> dict[str, Any]:
+    prs = Presentation(str(document_path))
+
+    slide_index_target = options.slide_index if options and options.slide_index is not None else None
+    if slide_index_target is None:
+        slide_index_target = 0
+    if slide_index_target < 0 or slide_index_target >= len(prs.slides):
+        raise ChartEngineError(
+            code=ErrorCode.INVALID_PARAM,
+            message=(f"slideIndex {slide_index_target} out of range [0, {len(prs.slides) - 1}]"),
+        )
+    slide = prs.slides[slide_index_target]
+
+    chart_shape, element_id = _add_chart_to_slide(prs, slide, chart_data, options)
+    prs.save(str(document_path))
+    return _insert_result(element_id, slide_index_target, chart_data, chart_shape)
+
+
+def _get_chart_blocking(document_path: Path, element_id: str, hint_index: int | None) -> dict[str, Any]:
+    prs = Presentation(str(document_path))
+    _slide, shape, slide_idx = _find_chart(prs, element_id, hint_index)
     return {
         "elementId": element_id,
-        "chartType": target_type,
+        "slideIndex": slide_idx,
+        "chart": _extract_chart_data(shape.chart),
+        **_geometry_dict(shape),
+    }
+
+
+def _update_chart_blocking(
+    document_path: Path,
+    element_id: str,
+    update: CategoricalChartUpdate | ScatterChartUpdate,
+) -> dict[str, Any]:
+    prs = Presentation(str(document_path))
+    slide, shape, _slide_idx = _find_chart(prs, element_id, None)
+    returned_id, updated_fields = _modify_chart_in_prs(slide, shape, element_id, update)
+    prs.save(str(document_path))
+    return {
+        "elementId": returned_id,
+        "chartType": update.chart_type,
         "updatedFields": updated_fields,
     }
 
 
 # ---------------------------------------------------------------------------
-# Async wrappers (offload blocking I/O to a worker thread)
+# Path B — in-memory base64 blocking implementations
+# ---------------------------------------------------------------------------
+
+
+def _generate_chart_slide_b64_blocking(
+    chart_data: CategoricalChartData | ScatterChartData,
+    options: ChartInsertOptions | None,
+) -> dict[str, Any]:
+    """Build a fresh standalone 1-slide deck containing the chart → base64 (no input package)."""
+    prs = Presentation()  # default template, zero slides
+    slide = prs.slides.add_slide(prs.slide_layouts[_BLANK_LAYOUT_INDEX])
+    chart_shape, element_id = _add_chart_to_slide(prs, slide, chart_data, options)
+    result = _insert_result(element_id, 0, chart_data, chart_shape)
+    result["slideBase64"] = _encode_prs_b64(prs)
+    return result
+
+
+def _insert_chart_into_slide_b64_blocking(
+    slide_b64: str,
+    chart_data: CategoricalChartData | ScatterChartData,
+    options: ChartInsertOptions | None,
+) -> dict[str, Any]:
+    """Add a chart onto the single slide of a base64 package → base64."""
+    prs = _load_prs_from_b64(slide_b64)
+    slide = _first_slide(prs)
+    chart_shape, element_id = _add_chart_to_slide(prs, slide, chart_data, options)
+    result = _insert_result(element_id, 0, chart_data, chart_shape)
+    result["slideBase64"] = _encode_prs_b64(prs)
+    return result
+
+
+def _get_chart_from_slide_b64_blocking(slide_b64: str, element_id: str) -> dict[str, Any]:
+    """Read a chart's data from a base64 single-slide package."""
+    prs = _load_prs_from_b64(slide_b64)
+    _slide, shape, slide_idx = _find_chart(prs, element_id, 0)
+    return {
+        "elementId": element_id,
+        "slideIndex": slide_idx,
+        "chart": _extract_chart_data(shape.chart),
+        **_geometry_dict(shape),
+    }
+
+
+def _update_chart_in_slide_b64_blocking(
+    slide_b64: str,
+    element_id: str,
+    update: CategoricalChartUpdate | ScatterChartUpdate,
+) -> dict[str, Any]:
+    """Apply a partial update to a chart in a base64 single-slide package → base64."""
+    prs = _load_prs_from_b64(slide_b64)
+    slide, shape, _slide_idx = _find_chart(prs, element_id, 0)
+    returned_id, updated_fields = _modify_chart_in_prs(slide, shape, element_id, update)
+    return {
+        "elementId": returned_id,
+        "chartType": update.chart_type,
+        "updatedFields": updated_fields,
+        "slideBase64": _encode_prs_b64(prs),
+    }
+
+
+# ---------------------------------------------------------------------------
+# Async wrappers — Path A (on-disk; offload blocking I/O to a worker thread)
 # ---------------------------------------------------------------------------
 
 
@@ -723,10 +933,7 @@ async def insert_chart(
     Raises ``ChartEngineError`` (carrying an OASP code) on validation / IO failure.
     """
     path = _uri_to_path(document_uri)
-    if isinstance(chart_data, CategoricalChartData):
-        _validate_categorical(chart_data)
-    else:
-        _validate_scatter(chart_data)
+    _validate_chart_data(chart_data)
     return await asyncio.to_thread(_insert_chart_blocking, path, chart_data, options)
 
 
@@ -744,3 +951,49 @@ async def update_chart(
     """Apply a partial update to an existing chart."""
     path = _uri_to_path(document_uri)
     return await asyncio.to_thread(_update_chart_blocking, path, element_id, update)
+
+
+# ---------------------------------------------------------------------------
+# Async wrappers — Path B (in-memory base64; no disk access)
+# ---------------------------------------------------------------------------
+
+
+async def generate_chart_slide_base64(
+    chart_data: CategoricalChartData | ScatterChartData,
+    options: ChartInsertOptions | None = None,
+) -> dict[str, Any]:
+    """Generate a standalone single-slide .pptx containing ``chart_data`` → base64.
+
+    Used by the open-document "insert → new page" path (no existing page needed).
+    Returns ``{slideBase64, elementId, slideIndex, chartType, seriesCount, left, top, width, height}``.
+    """
+    _validate_chart_data(chart_data)
+    return await asyncio.to_thread(_generate_chart_slide_b64_blocking, chart_data, options)
+
+
+async def insert_chart_into_slide_base64(
+    slide_base64: str,
+    chart_data: CategoricalChartData | ScatterChartData,
+    options: ChartInsertOptions | None = None,
+) -> dict[str, Any]:
+    """Add ``chart_data`` onto the single slide of ``slide_base64`` → base64.
+
+    Used by the open-document "insert → existing page" path (the Add-In exports the
+    live slide via ``Slide.exportAsBase64`` and re-inserts the returned package).
+    """
+    _validate_chart_data(chart_data)
+    return await asyncio.to_thread(_insert_chart_into_slide_b64_blocking, slide_base64, chart_data, options)
+
+
+async def get_chart_from_slide_base64(slide_base64: str, element_id: str) -> dict[str, Any]:
+    """Read a chart's data from a base64 single-slide package (open-document get)."""
+    return await asyncio.to_thread(_get_chart_from_slide_b64_blocking, slide_base64, element_id)
+
+
+async def update_chart_in_slide_base64(
+    slide_base64: str,
+    element_id: str,
+    update: CategoricalChartUpdate | ScatterChartUpdate,
+) -> dict[str, Any]:
+    """Apply a partial update to a chart in a base64 single-slide package → base64 (open-document update)."""
+    return await asyncio.to_thread(_update_chart_in_slide_b64_blocking, slide_base64, element_id, update)

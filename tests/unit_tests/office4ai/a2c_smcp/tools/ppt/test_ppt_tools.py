@@ -1064,7 +1064,7 @@ class TestChartToolExecute:
             }
         )
         assert result["success"] is True
-        assert result["data"]["elementId"].startswith("chart-")
+        assert result["data"]["elementId"].startswith("oasp-chart-")
         assert result["data"]["requiresReload"] is True
         # Server-OOXML mutations must trigger MCP resource_updated notifications.
         workspace_with_notify.notify_resource_updated.assert_called_once_with(
@@ -1259,9 +1259,10 @@ class TestChartToolExecute:
         assert result["success"] is True
         assert result["data"]["chartType"] == "Scatter"
         assert "chartType" in result["data"]["updatedFields"]
-        # New chart shape gets a new id; OASP spec returns the latest elementId.
+        # Recreate preserves the opaque id (written to cNvPr/@name); OASP returns the latest elementId.
         new_eid = result["data"]["elementId"]
-        assert new_eid.startswith("chart-")
+        assert new_eid.startswith("oasp-chart-")
+        assert new_eid == old_eid
 
     @pytest.mark.asyncio
     async def test_update_unknown_element_returns_3010(self, workspace_with_notify, deck_uri):
