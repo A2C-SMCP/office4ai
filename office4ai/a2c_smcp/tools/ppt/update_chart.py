@@ -12,19 +12,9 @@ from office4ai.environment.workspace.dtos.ppt import (
     CategoricalChartUpdate,
     ScatterChartUpdate,
 )
-from office4ai.environment.workspace.services import chart_engine
+from office4ai.environment.workspace.services import chart_engine, chart_router
 from office4ai.environment.workspace.services.chart_engine import ChartEngineError
 from office4ai.environment.workspace.services.document_lock import document_lock_manager
-
-# Same fail-loud rationale as insert_chart — see that file for the empirical link.
-_CONNECTED_REJECT_MESSAGE = (
-    "3003: Document is currently open in PowerPoint via the Add-In. "
-    "Server-side OOXML chart writes will be silently overwritten by the next "
-    "PowerPoint save (verified empirically — see docs/manual_tests/"
-    "ppt_chart_v0.2.0.md). Please ask the user to close the document in "
-    "PowerPoint, then retry. A future ppt:notify:reload OASP event will lift "
-    "this restriction."
-)
 
 
 class PptUpdateChartInput(BaseModel):
@@ -46,6 +36,16 @@ class PptUpdateChartInput(BaseModel):
             "Tip: call ppt_get_chart first and reuse its chartType to pick the right variant."
         ),
     )
+    slide_index: int | None = Field(
+        default=None,
+        alias="slideIndex",
+        description=(
+            "Slide index (0-based) of the chart. Optional on disk (elementId locates the chart), "
+            "but REQUIRED to update a chart while the document is open in PowerPoint — the live "
+            "round-trip exports that slide. Reuse the slideIndex returned by ppt_get_chart."
+        ),
+        ge=0,
+    )
 
     model_config = {"populate_by_name": True}
 
@@ -66,12 +66,14 @@ class PptUpdateChartTool(BaseTool):
     def description(self) -> str:
         return (
             "Update an existing PowerPoint chart in-place via OOXML rewriting "
-            "(OASP /ppt Draft, Server-side path — bypasses Office.js). "
-            "REFUSES with 3003 if the document is currently open in PowerPoint via the Add-In — "
-            "PowerPoint's in-memory model would silently overwrite the update on the next save. "
-            "When 3003 is returned, ask the user to close the document in PowerPoint, then retry. "
+            "(OASP /ppt Draft, dual-path — all chart OOXML is built Server-side). "
+            "When the document is CLOSED, the Server edits the .pptx on disk; when it is OPEN in "
+            "PowerPoint via the Add-In, the Server applies the change to the live slide through a "
+            "client round-trip (pass slideIndex — reuse the one from ppt_get_chart). While the Add-In "
+            "round-trip handler is not yet available it may return 3003 (close the document, then "
+            "retry); this lifts automatically once it ships. "
             "Expect >1s latency; concurrent updates on the same document are serialized. "
-            "After success an MCP resource_updated notification is fired; reopen the deck to see the change. "
+            "After an on-disk write an MCP resource_updated notification is fired; reopen the deck to see it. "
             "chartType is the REQUIRED discriminator — call ppt_get_chart first to read it. "
             "title=null deletes the title; explicit null is preserved on the wire. "
             "Cross-variant switches (e.g. Pie → Scatter) MUST include compatible series, "
@@ -96,7 +98,7 @@ class PptUpdateChartTool(BaseTool):
         return PptUpdateChartInput
 
     async def execute(self, arguments: dict[str, Any]) -> dict[str, Any]:
-        """Override to route through the OOXML chart engine instead of Socket.IO."""
+        """Dual-path route (#15): CONNECTED → client round-trip; DISCONNECTED → on-disk OOXML."""
         try:
             validated = self.validate_input(arguments, PptUpdateChartInput)
         except ValueError as e:
@@ -104,21 +106,32 @@ class PptUpdateChartTool(BaseTool):
 
         document_uri = validated.document_uri
         element_id = str(validated.element_id)
-        if self.workspace.get_document_status(document_uri) == DocumentStatus.CONNECTED:
-            return {"success": False, "error": _CONNECTED_REJECT_MESSAGE}
+        connected = self.workspace.get_document_status(document_uri) == DocumentStatus.CONNECTED
         async with document_lock_manager.acquire(document_uri):
             try:
-                result_data = await chart_engine.update_chart(
-                    document_uri=document_uri,
-                    element_id=element_id,
-                    update=validated.chart,
-                )
+                if connected:
+                    # Path B needs the slide to export; without it we cannot safely route an
+                    # open-document write (on-disk would be overwritten) → degrade up-front.
+                    if validated.slide_index is None:
+                        return {"success": False, "error": chart_router.DEGRADE_MESSAGE_WRITE}
+                    result_data = await chart_router.update_chart_path_b(
+                        self.workspace, document_uri, element_id, validated.chart, validated.slide_index
+                    )
+                else:
+                    result_data = await chart_engine.update_chart(
+                        document_uri=document_uri,
+                        element_id=element_id,
+                        update=validated.chart,
+                    )
+            except chart_router.PathBUnavailable:
+                # Reactive degradation: path B not available yet → flipped 3003 guidance.
+                return {"success": False, "error": chart_router.DEGRADE_MESSAGE_WRITE}
             except ChartEngineError as e:
                 return {"success": False, "error": str(e)}
             except Exception as e:  # noqa: BLE001
                 return {"success": False, "error": f"3004: {e}"}
 
-        result_data["requiresReload"] = True
+        result_data["requiresReload"] = not connected
         self.workspace.update_last_activity(
             document_uri=document_uri,
             tool_name=self.name,

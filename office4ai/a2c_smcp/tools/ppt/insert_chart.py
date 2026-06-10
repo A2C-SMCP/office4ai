@@ -13,23 +13,9 @@ from office4ai.environment.workspace.dtos.ppt import (
     ChartInsertOptions,
     ScatterChartData,
 )
-from office4ai.environment.workspace.services import chart_engine
+from office4ai.environment.workspace.services import chart_engine, chart_router
 from office4ai.environment.workspace.services.chart_engine import ChartEngineError
 from office4ai.environment.workspace.services.document_lock import document_lock_manager
-
-# Empirically verified (manual_tests/ppt/test_chart_e2e.py --mode conflict):
-# when the Add-In holds the .pptx open in PowerPoint, the next save() flushes
-# PowerPoint's in-memory model to disk and SILENTLY OVERWRITES any chart this
-# tool just wrote. Until OASP defines a ppt:notify:reload event, refuse the
-# write up-front and surface a clear error so the LLM can prompt the user.
-_CONNECTED_REJECT_MESSAGE = (
-    "3003: Document is currently open in PowerPoint via the Add-In. "
-    "Server-side OOXML chart writes will be silently overwritten by the next "
-    "PowerPoint save (verified empirically — see docs/manual_tests/"
-    "ppt_chart_v0.2.0.md). Please ask the user to close the document in "
-    "PowerPoint, then retry. A future ppt:notify:reload OASP event will lift "
-    "this restriction."
-)
 
 
 class PptInsertChartInput(BaseModel):
@@ -61,12 +47,13 @@ class PptInsertChartTool(BaseTool):
     def description(self) -> str:
         return (
             "Insert a chart (column/bar/line/pie/scatter/...) into a PowerPoint slide "
-            "(OASP /ppt Draft, Server-side OOXML path — bypasses Office.js). "
-            "REFUSES with 3003 if the document is currently open in PowerPoint via the Add-In — "
-            "PowerPoint's in-memory model would silently overwrite the chart on the next save. "
-            "When 3003 is returned, ask the user to close the document in PowerPoint, then retry. "
-            "Expect >1s latency. After success the document needs to be reopened to render the new chart "
-            "(an MCP resource_updated notification is fired to /ppt subscribers). "
+            "(OASP /ppt Draft, dual-path — all chart OOXML is built Server-side). "
+            "When the document is CLOSED, the Server edits the .pptx on disk; when it is OPEN in "
+            "PowerPoint via the Add-In, the Server applies the chart to the live slide through a "
+            "client round-trip. While the Add-In round-trip handler is not yet available it may "
+            "return 3003 (close the document, then retry); this lifts automatically once it ships. "
+            "Expect >1s latency. After an on-disk write the document must be reopened to render the new "
+            "chart (an MCP resource_updated notification is fired to /ppt subscribers). "
             "ChartType discriminates the schema: categorical types (ColumnClustered/ColumnStacked/"
             "BarClustered/Line/LineMarkers/Pie/Doughnut/Area/Radar) require categories + "
             "series[].values; Scatter requires series[].points = [{x, y}]. "
@@ -90,28 +77,36 @@ class PptInsertChartTool(BaseTool):
         return PptInsertChartInput
 
     async def execute(self, arguments: dict[str, Any]) -> dict[str, Any]:
-        """Override to route through the OOXML chart engine instead of Socket.IO."""
+        """Dual-path route (#15): CONNECTED → client round-trip; DISCONNECTED → on-disk OOXML."""
         try:
             validated = self.validate_input(arguments, PptInsertChartInput)
         except ValueError as e:
             return {"success": False, "error": str(e)}
 
         document_uri = validated.document_uri
-        if self.workspace.get_document_status(document_uri) == DocumentStatus.CONNECTED:
-            return {"success": False, "error": _CONNECTED_REJECT_MESSAGE}
+        connected = self.workspace.get_document_status(document_uri) == DocumentStatus.CONNECTED
         async with document_lock_manager.acquire(document_uri):
             try:
-                result_data = await chart_engine.insert_chart(
-                    document_uri=document_uri,
-                    chart_data=validated.chart,
-                    options=validated.options,
-                )
+                if connected:
+                    result_data = await chart_router.insert_chart_path_b(
+                        self.workspace, document_uri, validated.chart, validated.options
+                    )
+                else:
+                    result_data = await chart_engine.insert_chart(
+                        document_uri=document_uri,
+                        chart_data=validated.chart,
+                        options=validated.options,
+                    )
+            except chart_router.PathBUnavailable:
+                # Reactive degradation: path B not available yet → flipped 3003 guidance.
+                return {"success": False, "error": chart_router.DEGRADE_MESSAGE_WRITE}
             except ChartEngineError as e:
                 return {"success": False, "error": str(e)}
             except Exception as e:  # noqa: BLE001 - surface unexpected I/O errors as 3004
                 return {"success": False, "error": f"3004: {e}"}
 
-        result_data["requiresReload"] = True
+        # On-disk writes change the file (reopen to render); live round-trips already updated it.
+        result_data["requiresReload"] = not connected
         self.workspace.update_last_activity(
             document_uri=document_uri,
             tool_name=self.name,

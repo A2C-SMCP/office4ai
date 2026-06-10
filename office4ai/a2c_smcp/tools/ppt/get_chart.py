@@ -7,7 +7,8 @@ from typing import Any, Literal
 from pydantic import BaseModel, Field, field_validator
 
 from office4ai.a2c_smcp.tools.base import BaseTool
-from office4ai.environment.workspace.services import chart_engine
+from office4ai.environment.workspace.base import DocumentStatus
+from office4ai.environment.workspace.services import chart_engine, chart_router
 from office4ai.environment.workspace.services.chart_engine import ChartEngineError
 from office4ai.environment.workspace.services.document_lock import document_lock_manager
 
@@ -48,11 +49,13 @@ class PptGetChartTool(BaseTool):
     def description(self) -> str:
         return (
             "Read an existing PowerPoint chart's logical data and display options "
-            "(OASP /ppt Draft, Server-side OOXML path). "
+            "(OASP /ppt Draft, dual-path — chart OOXML is parsed Server-side). "
+            "When the document is OPEN in PowerPoint and slideIndex is supplied, the Server reads the "
+            "live (possibly unsaved) slide via a client round-trip; otherwise it reads the .pptx on disk. "
             "Returns chartType, categories/points, series, title, showLegend, showDataLabels, "
             "and geometry (left/top/width/height in points). Inspect chartType FIRST: "
             "categorical types expose 'categories' + 'series[].values'; Scatter exposes 'series[].points'. "
-            "Recommended call before ppt_update_chart so chartType can be supplied as the discriminator."
+            "Recommended call before ppt_update_chart so chartType (and slideIndex) can be supplied."
         )
 
     @property
@@ -72,7 +75,11 @@ class PptGetChartTool(BaseTool):
         return PptGetChartInput
 
     async def execute(self, arguments: dict[str, Any]) -> dict[str, Any]:
-        """Override to route through the OOXML chart engine (read-only — still locked to be safe)."""
+        """Dual-path route (#15): CONNECTED + slideIndex → live round-trip; else on-disk read.
+
+        Read-only, so reactive degradation falls back to the on-disk read (at worst stale data)
+        rather than erroring — the same behaviour as reading a connected document in 0.2.0.
+        """
         try:
             validated = self.validate_input(arguments, PptGetChartInput)
         except ValueError as e:
@@ -80,13 +87,27 @@ class PptGetChartTool(BaseTool):
 
         document_uri = validated.document_uri
         element_id = str(validated.element_id)
+        connected = self.workspace.get_document_status(document_uri) == DocumentStatus.CONNECTED
         async with document_lock_manager.acquire(document_uri):
             try:
-                result_data = await chart_engine.get_chart(
-                    document_uri=document_uri,
-                    element_id=element_id,
-                    slide_index=validated.slide_index,
-                )
+                if connected and validated.slide_index is not None:
+                    try:
+                        result_data = await chart_router.get_chart_path_b(
+                            self.workspace, document_uri, element_id, validated.slide_index
+                        )
+                    except chart_router.PathBUnavailable:
+                        # Read-only degradation: fall back to the on-disk read.
+                        result_data = await chart_engine.get_chart(
+                            document_uri=document_uri,
+                            element_id=element_id,
+                            slide_index=validated.slide_index,
+                        )
+                else:
+                    result_data = await chart_engine.get_chart(
+                        document_uri=document_uri,
+                        element_id=element_id,
+                        slide_index=validated.slide_index,
+                    )
             except ChartEngineError as e:
                 return {"success": False, "error": str(e)}
             except Exception as e:  # noqa: BLE001
