@@ -361,6 +361,7 @@ class ErrorCode:
     HANDSHAKE_FAILED = "2003"
     SESSION_INVALID = "2004"
     CONNECTION_LOST = "2005"
+    PROTOCOL_VERSION_MISMATCH = "2006"  # OASP 0.3.0: oaspVersion incompatible at handshake
 
     # Document errors (3xxx)
     DOCUMENT_ERROR = "3000"

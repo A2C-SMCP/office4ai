@@ -13,6 +13,8 @@ from collections.abc import Awaitable, Callable
 
 from socketio import AsyncClient  # type: ignore[import-untyped]
 
+from office4ai.environment.workspace.socketio.versioning import SERVER_VERSION
+
 logger = logging.getLogger(__name__)
 
 
@@ -59,6 +61,7 @@ class MockAddInClient:
         namespace: str,
         client_id: str,
         document_uri: str,
+        oasp_version: str | None = None,
     ) -> None:
         """
         初始化 Mock Add-In 客户端。
@@ -68,11 +71,15 @@ class MockAddInClient:
             namespace: 命名空间 (/word, /ppt, /excel)
             client_id: 客户端 ID（用于握手）
             document_uri: 文档 URI（用于握手）
+            oasp_version: 握手声明的 OASP 协议版本（OASP 0.3.0 起强制）。
+                默认与 Server 同版本（``SERVER_VERSION``，单一事实源，避免漂移）；
+                传入不兼容版本可用于测试 PROTOCOL_VERSION_MISMATCH 拒绝路径。
         """
         self.server_url = server_url
         self.namespace = namespace
         self.client_id = client_id
         self.document_uri = document_uri
+        self.oasp_version = oasp_version if oasp_version is not None else str(SERVER_VERSION)
 
         # Socket.IO 客户端
         self._client = AsyncClient()
@@ -102,6 +109,7 @@ class MockAddInClient:
                 auth={
                     "clientId": self.client_id,
                     "documentUri": self.document_uri,
+                    "oaspVersion": self.oasp_version,
                 },
             )
 

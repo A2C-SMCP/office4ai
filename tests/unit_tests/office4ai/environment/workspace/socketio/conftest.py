@@ -61,26 +61,29 @@ def mock_client_info() -> ClientInfo:
 
 @pytest.fixture
 def valid_handshake_data() -> dict[str, Any]:
-    """有效的握手数据"""
+    """有效的握手数据（含 OASP 0.3.0 强制的 oaspVersion）"""
     return {
         "clientId": "test_client_123",
         "documentUri": "file:///tmp/test.docx",
+        "oaspVersion": "0.3.0",
     }
 
 
 @pytest.fixture
 def invalid_handshake_data_missing_client_id() -> dict[str, Any]:
-    """缺少 clientId 的无效握手数据"""
+    """缺少 clientId 的无效握手数据（oaspVersion 合法，确保停在业务参数校验）"""
     return {
         "documentUri": "file:///tmp/test.docx",
+        "oaspVersion": "0.3.0",
     }
 
 
 @pytest.fixture
 def invalid_handshake_data_missing_document_uri() -> dict[str, Any]:
-    """缺少 documentUri 的无效握手数据"""
+    """缺少 documentUri 的无效握手数据（oaspVersion 合法，确保停在业务参数校验）"""
     return {
         "clientId": "test_client_123",
+        "oaspVersion": "0.3.0",
     }
 
 
@@ -90,6 +93,36 @@ def invalid_handshake_data_invalid_uri() -> dict[str, Any]:
     return {
         "clientId": "test_client_123",
         "documentUri": "invalid-uri-format",
+        "oaspVersion": "0.3.0",
+    }
+
+
+@pytest.fixture
+def handshake_data_missing_version() -> dict[str, Any]:
+    """缺少 oaspVersion 的握手数据（应 HANDSHAKE_FAILED）"""
+    return {
+        "clientId": "test_client_123",
+        "documentUri": "file:///tmp/test.docx",
+    }
+
+
+@pytest.fixture
+def handshake_data_invalid_version() -> dict[str, Any]:
+    """oaspVersion 格式非法的握手数据（应 HANDSHAKE_FAILED）"""
+    return {
+        "clientId": "test_client_123",
+        "documentUri": "file:///tmp/test.docx",
+        "oaspVersion": "0.3",
+    }
+
+
+@pytest.fixture
+def handshake_data_incompatible_version() -> dict[str, Any]:
+    """oaspVersion 不兼容的握手数据（v0.x 严格 MINOR；应 PROTOCOL_VERSION_MISMATCH 2006）"""
+    return {
+        "clientId": "test_client_123",
+        "documentUri": "file:///tmp/test.docx",
+        "oaspVersion": "0.2.0",
     }
 
 

@@ -48,12 +48,26 @@ async def socketio_server() -> AsyncServer:
     await runner.cleanup()
 
 
+# OASP 0.3.0 起 Server 在握手阶段强制校验 oaspVersion（version-first），
+# 集成测试客户端必须在 auth 中注入与 Server 同 MAJOR.MINOR 的版本，否则连接被拒。
+INTEGRATION_AUTH: dict[str, Any] = {
+    "clientId": "integration_test_client",
+    "documentUri": "file:///tmp/integration_test.docx",
+    "oaspVersion": "0.3.0",
+}
+
+
 @pytest_asyncio.fixture
 async def socketio_client(socketio_server: AsyncServer) -> AsyncClient:
-    """创建连接到测试服务器的客户端"""
+    """创建连接到测试服务器的客户端（携带 OASP 0.3.0 强制的 oaspVersion）"""
     client = AsyncClient()
 
-    await client.connect("http://127.0.0.1:3001", transports=["websocket"], namespaces=["/word"])
+    await client.connect(
+        "http://127.0.0.1:3001",
+        transports=["websocket"],
+        namespaces=["/word"],
+        auth=INTEGRATION_AUTH,
+    )
 
     yield client
 
@@ -62,8 +76,5 @@ async def socketio_client(socketio_server: AsyncServer) -> AsyncClient:
 
 @pytest.fixture
 def valid_handshake_data() -> dict[str, Any]:
-    """有效的握手数据"""
-    return {
-        "clientId": "integration_test_client",
-        "documentUri": "file:///tmp/integration_test.docx",
-    }
+    """有效的握手数据（含 OASP 0.3.0 强制的 oaspVersion）"""
+    return dict(INTEGRATION_AUTH)

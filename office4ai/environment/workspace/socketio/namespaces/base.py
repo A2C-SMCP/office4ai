@@ -9,6 +9,12 @@ from typing import Any
 
 from socketio import AsyncNamespace  # type: ignore[import-untyped]
 
+from office4ai.environment.workspace.dtos.common import ErrorCode
+from office4ai.environment.workspace.socketio.middleware.handshake import (
+    build_connection_established,
+    handshake_rejection,
+    validate_oasp_version,
+)
 from office4ai.environment.workspace.socketio.services.connection_manager import ClientInfo, connection_manager
 
 logger = logging.getLogger(__name__)
@@ -37,23 +43,31 @@ class BaseNamespace(AsyncNamespace):
         """
         Handle client connection.
 
+        校验顺序遵循 OASP 0.3.0 协议版本握手（connection.md#protocol-version-handshake）：
+        协议版本（``oaspVersion``）**先于**业务参数（``clientId`` / ``documentUri``）校验。
+        任何拒绝都抛 ``ConnectionRefusedError``，其结构化数据原样送达客户端 ``connect_error``。
+
         Args:
             sid: Session ID
             environ: Connection environment dict (contains HTTP headers, query params, etc.)
-            auth: Auth data from client (contains clientId, documentUri)
+            auth: Auth data from client (contains oaspVersion, clientId, documentUri)
+
+        Raises:
+            ConnectionRefusedError: 版本缺失/非法/不兼容，或业务握手参数缺失
         """
-        # Get handshake data from auth parameter
         data = auth if auth else {}
+
+        # ① 协议版本先行校验：缺失/非法 → HANDSHAKE_FAILED(2003)；不兼容 → PROTOCOL_VERSION_MISMATCH(2006)
+        client_version = validate_oasp_version(data)
+
+        # ② 业务参数校验（版本兼容后再查）
         client_id = data.get("clientId")
         document_uri = data.get("documentUri")
-
         if not client_id or not document_uri:
-            logger.error(f"Connection failed: missing handshake data from {sid}")
-            # Disconnect client
-            await self.disconnect(sid)
-            return
+            logger.error(f"Connection refused: missing handshake params from {sid}")
+            raise handshake_rejection("Missing required auth parameters", ErrorCode.HANDSHAKE_FAILED)
 
-        # Register client
+        # ③ 注册连接
         try:
             connection_manager.register_client(
                 socket_id=sid,
@@ -61,23 +75,17 @@ class BaseNamespace(AsyncNamespace):
                 document_uri=document_uri,
                 namespace=self.namespace_name,
             )
-
-            # Send confirmation
-            await self.emit(
-                "connection:established",
-                {
-                    "sessionId": sid,
-                    "status": "ready",
-                    "serverTime": int(connection_manager.get_connection_count() * 1000),
-                },
-                to=sid,
-            )
-
-            logger.info(f"Client connected: {client_id} ({sid}) for {document_uri} on {self.namespace_name}")
-
         except Exception as e:
             logger.error(f"Error registering client: {e}", exc_info=True)
-            await self.disconnect(sid)
+            raise handshake_rejection("Internal error during connection registration", ErrorCode.UNKNOWN) from e
+
+        # ④ 发送确认（含 serverVersion，仅供诊断）
+        await self.emit("connection:established", build_connection_established(sid), to=sid)
+
+        logger.info(
+            f"Client connected: {client_id} ({sid}) for {document_uri} "
+            f"on {self.namespace_name} (oaspVersion={client_version})"
+        )
 
     async def on_disconnect(self, sid: str) -> None:
         """

@@ -8,11 +8,14 @@ from typing import Any
 from unittest.mock import AsyncMock
 
 import pytest
+from socketio.exceptions import ConnectionRefusedError  # type: ignore[import-untyped]
 
+from office4ai.environment.workspace.dtos.common import ErrorCode
 from office4ai.environment.workspace.socketio.namespaces.base import BaseNamespace
 from office4ai.environment.workspace.socketio.services.connection_manager import (
     connection_manager,
 )
+from office4ai.environment.workspace.socketio.versioning import SERVER_VERSION
 
 
 class TestBaseNamespace:
@@ -40,11 +43,15 @@ class TestBaseNamespace:
         # Verify client registered
         assert connection_manager.get_client_info(sid) is not None
 
-        # Verify confirmation sent
+        # Verify confirmation sent with spec-compliant {socketId, serverVersion, timestamp}
         base_namespace.emit.assert_called_once()
         call_args = base_namespace.emit.call_args
         assert call_args[0][0] == "connection:established"
         assert call_args[1]["to"] == sid
+        payload = call_args[0][1]
+        assert payload["socketId"] == sid
+        assert payload["serverVersion"] == str(SERVER_VERSION)
+        assert "timestamp" in payload
 
         # Cleanup
         connection_manager.unregister_client(sid)
@@ -55,14 +62,15 @@ class TestBaseNamespace:
         base_namespace: BaseNamespace,
         invalid_handshake_data_missing_client_id: dict[str, Any],
     ) -> None:
-        """Test connection fails without clientId"""
+        """Test connection refused without clientId (version OK → fails business param check)"""
         sid = "test_socket_123"
-        base_namespace.disconnect = AsyncMock()  # type: ignore[method-assign]
 
-        await base_namespace.on_connect(sid, invalid_handshake_data_missing_client_id)
-
-        # Should disconnect client
-        base_namespace.disconnect.assert_called_once_with(sid)
+        # on_connect signature: (sid, environ, auth)
+        with pytest.raises(ConnectionRefusedError) as exc_info:
+            await base_namespace.on_connect(sid, {}, invalid_handshake_data_missing_client_id)
+        assert exc_info.value.error_args["data"]["code"] == ErrorCode.HANDSHAKE_FAILED
+        # Not registered
+        assert connection_manager.get_client_info(sid) is None
 
     @pytest.mark.asyncio
     async def test_on_connect_missing_document_uri(
@@ -70,14 +78,59 @@ class TestBaseNamespace:
         base_namespace: BaseNamespace,
         invalid_handshake_data_missing_document_uri: dict[str, Any],
     ) -> None:
-        """Test connection fails without documentUri"""
+        """Test connection refused without documentUri (version OK → fails business param check)"""
         sid = "test_socket_123"
-        base_namespace.disconnect = AsyncMock()  # type: ignore[method-assign]
 
-        await base_namespace.on_connect(sid, invalid_handshake_data_missing_document_uri)
+        with pytest.raises(ConnectionRefusedError) as exc_info:
+            await base_namespace.on_connect(sid, {}, invalid_handshake_data_missing_document_uri)
+        assert exc_info.value.error_args["data"]["code"] == ErrorCode.HANDSHAKE_FAILED
+        assert connection_manager.get_client_info(sid) is None
 
-        # Should disconnect client
-        base_namespace.disconnect.assert_called_once_with(sid)
+    @pytest.mark.asyncio
+    async def test_on_connect_missing_version(
+        self,
+        base_namespace: BaseNamespace,
+        handshake_data_missing_version: dict[str, Any],
+    ) -> None:
+        """Version-first: missing oaspVersion → HANDSHAKE_FAILED before business check"""
+        sid = "test_socket_123"
+
+        with pytest.raises(ConnectionRefusedError) as exc_info:
+            await base_namespace.on_connect(sid, {}, handshake_data_missing_version)
+        assert exc_info.value.error_args["data"]["code"] == ErrorCode.HANDSHAKE_FAILED
+        assert connection_manager.get_client_info(sid) is None
+
+    @pytest.mark.asyncio
+    async def test_on_connect_invalid_version(
+        self,
+        base_namespace: BaseNamespace,
+        handshake_data_invalid_version: dict[str, Any],
+    ) -> None:
+        """Version-first: malformed oaspVersion → HANDSHAKE_FAILED"""
+        sid = "test_socket_123"
+
+        with pytest.raises(ConnectionRefusedError) as exc_info:
+            await base_namespace.on_connect(sid, {}, handshake_data_invalid_version)
+        assert exc_info.value.error_args["data"]["code"] == ErrorCode.HANDSHAKE_FAILED
+        assert connection_manager.get_client_info(sid) is None
+
+    @pytest.mark.asyncio
+    async def test_on_connect_incompatible_version(
+        self,
+        base_namespace: BaseNamespace,
+        handshake_data_incompatible_version: dict[str, Any],
+    ) -> None:
+        """Version-first: incompatible oaspVersion → PROTOCOL_VERSION_MISMATCH (2006)"""
+        sid = "test_socket_123"
+
+        with pytest.raises(ConnectionRefusedError) as exc_info:
+            await base_namespace.on_connect(sid, {}, handshake_data_incompatible_version)
+        data = exc_info.value.error_args["data"]
+        assert data["code"] == ErrorCode.PROTOCOL_VERSION_MISMATCH
+        assert data["serverVersion"] == str(SERVER_VERSION)
+        assert data["clientVersion"] == "0.2.0"
+        # Not registered
+        assert connection_manager.get_client_info(sid) is None
 
     @pytest.mark.asyncio
     async def test_on_disconnect(self, base_namespace: BaseNamespace, valid_handshake_data: dict[str, Any]) -> None:

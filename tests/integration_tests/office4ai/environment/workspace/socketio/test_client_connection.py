@@ -7,6 +7,13 @@ Test client connection flow
 import pytest
 from socketio import AsyncClient  # type: ignore[import-untyped]
 
+# OASP 0.3.0 起握手强制校验 oaspVersion（version-first），客户端必须注入同 MAJOR.MINOR 版本
+INTEGRATION_AUTH = {
+    "clientId": "integration_test_client",
+    "documentUri": "file:///tmp/integration_test.docx",
+    "oaspVersion": "0.3.0",
+}
+
 
 @pytest.mark.asyncio
 @pytest.mark.integration
@@ -52,9 +59,15 @@ async def test_multiple_clients(socketio_server) -> None:
     clients = []
 
     try:
-        for _i in range(3):
+        for i in range(3):
             client = AsyncClient()
-            await client.connect("http://127.0.0.1:3001", namespaces=["/word"], transports=["websocket"])
+            await client.connect(
+                "http://127.0.0.1:3001",
+                namespaces=["/word"],
+                transports=["websocket"],
+                # 每个客户端唯一 clientId，携带 OASP 0.3.0 强制的 oaspVersion
+                auth={**INTEGRATION_AUTH, "clientId": f"integration_test_client_{i}"},
+            )
             clients.append(client)
 
         # All clients should be connected
