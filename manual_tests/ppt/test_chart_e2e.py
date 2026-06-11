@@ -4,7 +4,7 @@ PPT Chart End-to-End Test (OASP /ppt Draft, v0.2.0 — Server OOXML)
 Issue #9 验收：依次驱动 3 个新 chart MCP 工具并用 python-pptx 双重验证 OOXML 结构。
 Chart 类事件由 OASP Server 端通过 python-pptx 直接修改 .pptx。
 
-两种运行模式：
+三种运行模式：
 
 ────────────────────────────────────────────────────────────────────
   --mode offline (默认)
@@ -23,6 +23,24 @@ Chart 类事件由 OASP Server 端通过 python-pptx 直接修改 .pptx。
 - ✅ 3015 INVALID_CHART_DATA — categorical 维度不匹配 / scatter 非有限值
 - ✅ 3010 ELEMENT_NOT_FOUND — 不存在的 chart-N
 - ✅ requiresReload 标志 + notify_resource_updated 调用次数
+
+────────────────────────────────────────────────────────────────────
+  --mode pathb  (#16 — 打开态路径 B，模拟 Add-In)
+────────────────────────────────────────────────────────────────────
+忠实模拟 office-editor4ai 的两条 OASP 0.3.0 搬运事件（进程内 FakeAddIn），
+把 #15 双路径路由器在 CONNECTED 下的整条 path-B 编排跑通，并用 python-pptx
+验证「live 单页包」里的图表。不依赖真实设备。
+
+    uv run python manual_tests/ppt/test_chart_e2e.py --mode pathb
+
+覆盖：
+- ✅ insert/get/update 三工具走 CONNECTED → 客户端 round-trip
+     （事件序列 ppt:get:slideOoxml → ppt:insert:slidesOoxml）
+- ✅ requiresReload=False（live 已就地更新，无需重开）
+- ✅ path B 不碰盘（磁盘副本图表数恒为 0）
+- ✅ 反应式降级：写超时 → 翻转后的 3003 文案 + 磁盘字节不变；读超时 → 回退读盘
+⚠️  真机全链路联调 / Web·Windows 边界 / masterLeak 累积仍需真实 Add-In
+    （office-editor4ai Task 2，#38/#39，尚 OPEN）——属阻塞项，不在本模式内。
 
 ────────────────────────────────────────────────────────────────────
   --mode conflict
@@ -51,7 +69,7 @@ import sys
 import time
 from pathlib import Path
 from typing import Any
-from unittest.mock import MagicMock
+from unittest.mock import AsyncMock, MagicMock
 
 # Make this script runnable both as `python -m` and as a path
 _PROJECT_ROOT = Path(__file__).resolve().parents[2]
@@ -112,6 +130,108 @@ def _chart_titles(path: Path) -> list[str]:
             else:
                 titles.append("")
     return titles
+
+
+# ============================================================================
+# Path B simulation (#16) — in-process stand-in for office-editor4ai Task 2
+# ============================================================================
+
+
+def _encode_b64(prs: Any) -> str:
+    """Serialize a ``Presentation`` to a base64 .pptx package (mirrors chart_engine)."""
+    import base64
+    import io
+
+    buf = io.BytesIO()
+    prs.save(buf)
+    return base64.b64encode(buf.getvalue()).decode("ascii")
+
+
+def _decode_b64_to_prs(slide_b64: str) -> Any:
+    import base64
+    import io
+
+    return Presentation(io.BytesIO(base64.b64decode(slide_b64)))
+
+
+def _chart_titles_in_b64(slide_b64: str) -> list[str]:
+    """Chart titles found inside a base64 single-slide package."""
+    prs = _decode_b64_to_prs(slide_b64)
+    titles: list[str] = []
+    for slide in prs.slides:
+        for shape in slide.shapes:
+            if not getattr(shape, "has_chart", False):
+                continue
+            chart = shape.chart
+            titles.append(chart.chart_title.text_frame.text if chart.has_title else "")
+    return titles
+
+
+class FakeAddIn:
+    """In-process stand-in for office-editor4ai's path-B carrier-event handlers (#16).
+
+    The real Add-In (office-editor4ai Task 2 — issues #38/#39, still OPEN) exports a live
+    slide via Office.js ``Slide.exportAsBase64`` and re-applies a rebuilt slide via
+    ``insertSlidesFromBase64``. Until it ships we model that contract faithfully in-process:
+    a *live* (open, possibly-unsaved) deck = a dict of single-slide base64 packages keyed by
+    slide index. This lets the Server's #15 router run its full path-B orchestration
+    (``ppt:get:slideOoxml`` → chart_engine base64 work → ``ppt:insert:slidesOoxml``) against
+    real OOXML, with python-pptx verification of the resulting live slide — no real device.
+
+    NOT a substitute for the real-device joint debug / Web·Windows boundary / masterLeak
+    spot-checks (those need a real Add-In and stay blocked on office-editor4ai Task 2).
+    """
+
+    def __init__(self) -> None:
+        self._slides: dict[int, str] = {}
+        self.events: list[str] = []
+
+    def live_slide_b64(self, slide_index: int) -> str:
+        """Current base64 package for a slide; a fresh blank slide if never written."""
+        if slide_index not in self._slides:
+            prs = Presentation()
+            prs.slides.add_slide(prs.slide_layouts[6])  # blank
+            self._slides[slide_index] = _encode_b64(prs)
+        return self._slides[slide_index]
+
+    def emit(self, document_uri: str, event: str, data: dict[str, Any]) -> dict[str, Any]:
+        """Sync side_effect for ``AsyncMock`` — the two OASP 0.3.0 carrier events."""
+        self.events.append(event)
+        if event == "ppt:get:slideOoxml":
+            idx = data["slideIndex"]
+            return {
+                "success": True,
+                "data": {"slideIndex": idx, "slideId": f"sid-{idx}", "base64": self.live_slide_b64(idx)},
+            }
+        if event == "ppt:insert:slidesOoxml":
+            idx = data["targetSlideIndex"]
+            # #15 in-place replace contract: the router MUST echo the exported opaque slideId
+            # (else the old slide is left behind → duplicate page). Assert it round-trips.
+            assert data.get("replaceSlideId") == f"sid-{idx}", (
+                f"router must echo the exported opaque slideId; got {data.get('replaceSlideId')!r}"
+            )
+            self._slides[idx] = data["base64"]  # apply the rebuilt slide in place
+            final = data.get("finalSlideIndex", idx)
+            return {"success": True, "data": {"insertedSlideIndices": [final], "insertedSlideIds": [f"sid-{idx}"]}}
+        raise AssertionError(f"unexpected path-B event: {event!r}")
+
+
+def _build_connected_workspace_mock(emit_side_effect: Any) -> tuple[Any, list[list[str]]]:
+    """A CONNECTED workspace whose ``emit_to_document`` runs ``emit_side_effect``.
+
+    Mirrors the #15 unit-test rig (``_connected_ws`` + ``_make_path_b_emit``) but the fake
+    is *stateful*, so insert → get → update form a coherent live round-trip. Pass a
+    :class:`FakeAddIn`'s ``emit`` for the happy path, or an exception to drive degradation.
+    """
+    from office4ai.environment.workspace.base import DocumentStatus
+
+    notified: list[list[str]] = []
+    ws = MagicMock()
+    ws.notify_resource_updated = lambda uris: notified.append(list(uris))
+    ws.update_last_activity = MagicMock()
+    ws.get_document_status = MagicMock(return_value=DocumentStatus.CONNECTED)
+    ws.emit_to_document = AsyncMock(side_effect=emit_side_effect)
+    return ws, notified
 
 
 # ============================================================================
@@ -339,6 +459,191 @@ async def offline_main() -> int:
 
 
 # ============================================================================
+# PATH-B MODE (#16) — open-document client round-trip against a simulated Add-In
+# ============================================================================
+# Drives the #15 dual-path router (insert / get / update) end-to-end through the
+# real OASP 0.3.0 wire DTOs against an in-process FakeAddIn that synthesizes and
+# applies real single-slide OOXML. Fully unblocked (no real device); the real
+# Add-In joint debug / Web·Win / masterLeak spot-checks remain blocked on
+# office-editor4ai Task 2 and are listed in docs/manual_tests/ppt_chart_v0.3.0.md.
+
+
+async def pathb_main() -> int:
+    # Lazy imports — keep offline mode lightweight (mirrors conflict_main).
+    from office4ai.environment.workspace.dtos.ppt import (
+        CategoricalChartData,
+        CategoricalSeries,
+        ChartInsertOptions,
+    )
+    from office4ai.environment.workspace.services import chart_engine
+
+    print("=" * 70)
+    print("PPT Chart MCP Tools — OPEN-DOCUMENT PATH B (simulated Add-In, OASP 0.3.0)")
+    print("=" * 70)
+    print()
+    print("路径 B = 打开态客户端 round-trip。真实 Add-In（office-editor4ai Task 2，")
+    print("issues #38/#39）尚未发布——这里用进程内 FakeAddIn 忠实模拟两条 OASP 0.3.0")
+    print("搬运事件，把 #15 路由器整条 path-B 编排跑通并用 python-pptx 验证 live slide。")
+    print("⚠️  真机联调 / Web·Windows 边界 / masterLeak 累积仍需真实 Add-In（阻塞项）。")
+
+    WORKING_ROOT.mkdir(parents=True, exist_ok=True)
+    open_deck = WORKING_ROOT / f"pathb_open_{int(time.time())}.pptx"
+    _create_blank_deck(open_deck)  # disk stays blank — path B is entirely in-memory
+    open_uri = open_deck.as_uri()
+    print(f"\n📄 打开态工作副本（磁盘保持空，用于证明 path B 不碰盘）: {open_deck}")
+
+    fake = FakeAddIn()
+    workspace, notified = _build_connected_workspace_mock(fake.emit)
+
+    # ── P.1  insert path B — existing-page live round-trip ────────────────────
+    print("\n📊 P.1  ppt_insert_chart  路径 B（CONNECTED → 整页 round-trip）")
+    ev0 = len(fake.events)
+    insert_tool = PptInsertChartTool(workspace)
+    r1 = await insert_tool.execute(
+        {
+            "document_uri": open_uri,
+            "chart": {
+                "chartType": "ColumnClustered",
+                "categories": ["Q1", "Q2", "Q3", "Q4"],
+                "series": [{"name": "营收", "values": [120, 135, 158, 180]}],
+                "title": "打开态业绩",
+                "showLegend": True,
+            },
+            "options": {"slideIndex": 0, "left": 60, "top": 60, "width": 540, "height": 360},
+        }
+    )
+    assert r1["success"], f"path B 插入失败: {r1}"
+    assert r1["data"]["requiresReload"] is False, f"CONNECTED 应 requiresReload=False: {r1['data']}"
+    assert fake.events[ev0:] == ["ppt:get:slideOoxml", "ppt:insert:slidesOoxml"], fake.events[ev0:]
+    eid = r1["data"]["elementId"]
+    live_titles = _chart_titles_in_b64(fake.live_slide_b64(0))
+    assert live_titles == ["打开态业绩"], f"live 单页图表标题异常: {live_titles}"
+    assert _count_charts(open_deck) == 0, "path B 不应写磁盘（磁盘副本应仍为 0 图表）"
+    print(f"   ✅ elementId={eid} 事件序列={fake.events[ev0:]} requiresReload=False")
+    print(f"   ✅ live 单页图表标题={live_titles}；磁盘副本图表数=0（path B 未碰盘）")
+
+    # ── P.2  get path B — read the live (unsaved) slide ───────────────────────
+    print("\n🔍 P.2  ppt_get_chart  路径 B（读 live 单页，非磁盘）")
+    ev1 = len(fake.events)
+    get_tool = PptGetChartTool(workspace)
+    r2 = await get_tool.execute({"document_uri": open_uri, "elementId": eid, "slideIndex": 0})
+    assert r2["success"], f"path B 读取失败: {r2}"
+    chart = r2["data"]["chart"]
+    assert chart["chartType"] == "ColumnClustered", chart
+    assert chart["categories"] == ["Q1", "Q2", "Q3", "Q4"], chart
+    assert chart["title"] == "打开态业绩", chart
+    assert fake.events[ev1:] == ["ppt:get:slideOoxml"], fake.events[ev1:]
+    print(f"   ✅ 回读 chartType={chart['chartType']} categories={chart['categories']} title='{chart['title']}'")
+
+    # ── P.3  update path B — mutate the chart in place on the live slide ──────
+    print("\n✏️  P.3  ppt_update_chart  路径 B（就地改 live 单页标题）")
+    ev2 = len(fake.events)
+    update_tool = PptUpdateChartTool(workspace)
+    r3 = await update_tool.execute(
+        {
+            "document_uri": open_uri,
+            "elementId": eid,
+            "slideIndex": 0,
+            "chart": {"chartType": "ColumnClustered", "title": "打开态业绩（已更新）"},
+        }
+    )
+    assert r3["success"], f"path B 更新失败: {r3}"
+    assert "title" in r3["data"]["updatedFields"], r3["data"]
+    assert r3["data"]["requiresReload"] is False, r3["data"]
+    assert fake.events[ev2:] == ["ppt:get:slideOoxml", "ppt:insert:slidesOoxml"], fake.events[ev2:]
+    live_titles = _chart_titles_in_b64(fake.live_slide_b64(0))
+    assert live_titles == ["打开态业绩（已更新）"], f"更新后 live 标题异常: {live_titles}"
+    print(f"   ✅ updatedFields={r3['data']['updatedFields']}；live 标题={live_titles}")
+
+    # Writes notify /ppt subscribers on both paths; reads do not.
+    assert len(notified) == 2, f"预期 2 次写通知（P.1 insert + P.3 update），实际 {len(notified)}"
+    for uris in notified:
+        assert uris == ["window://office4ai/ppt", "window://office4ai"], uris
+    print(f"   ✅ notify_resource_updated 调用 {len(notified)} 次（insert + update；get 只读不通知）")
+
+    # ── P.4  reactive WRITE degrade — Add-In carrier handler absent → 3003 ───
+    print("\n⚠️  P.4  反应式写降级（搬运事件超时 → 翻转后的 3003 + 磁盘字节不变）")
+    degrade_deck = WORKING_ROOT / f"pathb_degrade_{int(time.time())}.pptx"
+    _create_blank_deck(degrade_deck)
+    degrade_uri = degrade_deck.as_uri()
+    before_bytes = degrade_deck.read_bytes()
+    ws_timeout, _ = _build_connected_workspace_mock(TimeoutError("no ack from Add-In"))
+    r4 = await PptInsertChartTool(ws_timeout).execute(
+        {
+            "document_uri": degrade_uri,
+            "chart": {
+                "chartType": "Pie",
+                "categories": ["a", "b"],
+                "series": [{"name": "x", "values": [1, 2]}],
+                "title": "SHOULD-DEGRADE",
+            },
+            "options": {"slideIndex": 0},
+        }
+    )
+    assert r4["success"] is False, f"path B 不可用时写应降级: {r4}"
+    assert "3003" in r4["error"], f"降级应带 3003 前缀: {r4['error']}"
+    assert degrade_deck.read_bytes() == before_bytes, "写降级不得改动磁盘字节"
+    print(f"   ✅ 降级返回: {r4['error'][:72]}...")
+    print("   ✅ 磁盘字节零变化（降级未触发任何盘写）")
+
+    # ── P.4b reactive WRITE degrade — Add-In acks 3016 API_NOT_SUPPORTED ─────
+    # Completes the degrade matrix: timeout (transport gone) AND 3016 (handler
+    # present but the platform's Office.js requirement set is unsupported) both
+    # classify as "path B unavailable" → flipped 3003, disk untouched.
+    print("\n⚠️  P.4b 反应式写降级（Add-In 回 3016 不支持 → 同样翻转 3003 + 磁盘字节不变）")
+    deck_3016 = WORKING_ROOT / f"pathb_3016_{int(time.time())}.pptx"
+    _create_blank_deck(deck_3016)
+    uri_3016 = deck_3016.as_uri()
+    before_3016 = deck_3016.read_bytes()
+
+    def _emit_3016(document_uri: str, event: str, data: dict[str, Any]) -> dict[str, Any]:
+        return {"success": False, "error": {"code": "3016", "message": "PowerPointApi 1.8 unavailable"}}
+
+    ws_3016, _ = _build_connected_workspace_mock(_emit_3016)
+    r4b = await PptInsertChartTool(ws_3016).execute(
+        {
+            "document_uri": uri_3016,
+            "chart": {"chartType": "Pie", "categories": ["a", "b"], "series": [{"name": "x", "values": [1, 2]}]},
+            "options": {"slideIndex": 0},
+        }
+    )
+    assert r4b["success"] is False, f"3016 应触发降级: {r4b}"
+    assert "3003" in r4b["error"], f"3016 降级应回退 3003 文案: {r4b['error']}"
+    assert deck_3016.read_bytes() == before_3016, "3016 降级不得改动磁盘字节"
+    print(f"   ✅ 3016 降级返回: {r4b['error'][:72]}...")
+
+    # ── P.5  reactive READ fallback — get degrades to the on-disk read ───────
+    print("\n🔁 P.5  反应式读降级（搬运事件超时 → 回退读盘）")
+    disk_deck = WORKING_ROOT / f"pathb_diskread_{int(time.time())}.pptx"
+    _create_blank_deck(disk_deck)
+    disk_uri = disk_deck.as_uri()
+    seeded = await chart_engine.insert_chart(
+        disk_uri,
+        CategoricalChartData(
+            chartType="Line",
+            categories=["Jan", "Feb"],
+            series=[CategoricalSeries(name="趋势", values=[10, 20])],
+            title="DISK-CHART",
+        ),
+        ChartInsertOptions(slideIndex=0),
+    )
+    ws_timeout_read, _ = _build_connected_workspace_mock(TimeoutError("no ack from Add-In"))
+    r5 = await PptGetChartTool(ws_timeout_read).execute(
+        {"document_uri": disk_uri, "elementId": seeded["elementId"], "slideIndex": 0}
+    )
+    assert r5["success"], f"读应回退读盘并成功: {r5}"
+    assert r5["data"]["chart"]["title"] == "DISK-CHART", r5["data"]["chart"]
+    print(f"   ✅ 回退读盘成功，回读 title='{r5['data']['chart']['title']}'")
+
+    print("\n" + "=" * 70)
+    print("✅ 路径 B（模拟 Add-In）全部场景通过。")
+    print("   真机全链路联调 / Web·Windows 边界 / masterLeak 累积 → 待 office-editor4ai")
+    print("   Task 2（#38/#39）发布后执行，清单见 docs/manual_tests/ppt_chart_v0.3.0.md。")
+    print("=" * 70)
+    return 0
+
+
+# ============================================================================
 # CONFLICT-MODE EXPERIMENT (real PowerPoint + real Add-In)
 # ============================================================================
 # Demonstrates the conflict between two write paths on the same .pptx:
@@ -402,7 +707,8 @@ async def conflict_main() -> int:
     print("⚠️  本实验包含三个阶段：")
     print("    Phase A/B  — 直接调用 chart_engine 绕过工具防御，复现冲突场景")
     print("                 （证明「没有防御时，PowerPoint save 会覆盖 Server 写入」）")
-    print("    Phase C    — 走完整工具路径，验证 CONNECTED 防御生效，")
+    print("    Phase C    — 走完整工具路径，验证 #15 翻转守卫后的反应式降级（CONNECTED →")
+    print("                 路由 path B；真实 Add-In 搬运事件未发布 → 回退 3003），")
     print("                 引导用户关闭文档，关闭后工具放行，最后重新打开验证持久化")
     print()
 
@@ -567,40 +873,45 @@ async def conflict_main() -> int:
             print("   🤔 观察：B.4 后 chart 仍然存在——PowerPoint 可能会感知到外部修改并保留。")
 
         # ────────────────────────────────────────────────────────────────
-        # Phase C — Defense + recovery.
-        # 1) 工具防御：现在调用 chart 工具应该被 3003 拒绝（因 Add-In 仍持有文档）
+        # Phase C — Reactive degradation + recovery.
+        # 1) #15 翻转守卫后 CONNECTED 不再「上抛 3003 拒绝」，而是路由到 path B。真实
+        #    Add-In 的 path-B 搬运事件（office-editor4ai Task 2，#38/#39）尚未发布 →
+        #    path B 不可用 → 反应式降级回退到带 "3003" 前缀的「先关闭文档」文案。
+        #    ⚠️  一旦 Add-In 发布搬运事件，本步将经 path B 直接成功——届时把 C.0 的
+        #        「应被拒」预期翻转为「应成功（live round-trip）」。
         # 2) 引导用户关闭文档 → poll 直到 Add-In 断开
-        # 3) 文档关闭后，再次调用 chart 工具应该成功
+        # 3) 文档关闭后，再次调用 chart 工具应该成功（path A 写盘）
         # 4) AppleScript 重新打开文档
         # 5) 用 python-pptx 验证 chart 真的留在磁盘上（PowerPoint 读取的版本）
         # ────────────────────────────────────────────────────────────────
         print("\n" + "─" * 70)
-        print("Phase C — 防御 + 恢复路径（关闭后再插，验证 chart 真正持久化）")
+        print("Phase C — 反应式降级 + 恢复路径（关闭后再插，验证 chart 真正持久化）")
         print("─" * 70)
 
-        # C.0 — 验证防御生效：CONNECTED 状态下 insert_chart 必须返回 3003
-        print("\n🅲  C.0  防御验证：当前 Add-In 仍连着此文档，insert_chart 应被拒")
-        rejected = await insert_chart_tool.execute(
+        # C.0 — #15 翻转守卫：CONNECTED 路由 path B，但真实 Add-In 搬运事件未发布 →
+        # 反应式降级回退带 "3003" 前缀的文案（Add-In 发布后此步会改为经 path B 成功）。
+        print("\n🅲  C.0  反应式降级验证：CONNECTED → 路由 path B，Add-In 搬运事件未发布 → 回退 3003")
+        degraded = await insert_chart_tool.execute(
             {
                 "document_uri": deck_uri,
                 "chart": {
                     "chartType": "Pie",
                     "categories": ["a"],
                     "series": [{"name": "x", "values": [1]}],
-                    "title": "SHOULD-BE-REJECTED",
+                    "title": "SHOULD-DEGRADE",
                 },
                 "options": {"slideIndex": 2},
             }
         )
-        if rejected["success"]:
-            print(f"   ⚠️  预期被拒，实际成功了：{rejected}")
-            print("       （检查 office4ai/a2c_smcp/tools/ppt/insert_chart.py 的 CONNECTED 防御）")
+        if degraded["success"]:
+            print("   ℹ️  insert 直接成功——真实 Add-In 似乎已实装 path-B 搬运事件（office-editor4ai Task 2）。")
+            print("       这正是 #16 的目标终态；届时请把本步「应被拒」预期翻转为「应成功（live round-trip）」。")
             return 4
-        if "3003" not in rejected["error"]:
-            print(f"   ⚠️  预期 3003 错误码，实际：{rejected['error']}")
+        if "3003" not in degraded["error"]:
+            print(f"   ⚠️  预期降级回退 3003，实际：{degraded['error']}")
             return 4
-        print(f"   ✅ 工具按预期拒绝：{rejected['error'][:80]}...")
-        snapshots.append(_observe_disk(deck_path, "C.0 after rejected insert (no disk change)"))
+        print(f"   ✅ 反应式降级按预期回退 3003：{degraded['error'][:80]}...")
+        snapshots.append(_observe_disk(deck_path, "C.0 after degraded insert (no disk change)"))
 
         # C.1 — Console 提示用户关闭文档
         print()
@@ -709,6 +1020,8 @@ def run(mode: str) -> None:
     try:
         if mode == "conflict":
             rc = asyncio.run(conflict_main())
+        elif mode == "pathb":
+            rc = asyncio.run(pathb_main())
         else:
             rc = asyncio.run(offline_main())
     except AssertionError as e:
@@ -731,7 +1044,7 @@ def _parse_args(argv: list[str]) -> tuple[str, bool]:
             clean = True
         elif a == "--mode":
             if i + 1 >= len(argv):
-                print("❌ --mode requires a value (offline|conflict)", file=sys.stderr)
+                print("❌ --mode requires a value (offline|pathb|conflict)", file=sys.stderr)
                 sys.exit(2)
             mode = argv[i + 1]
             i += 1
@@ -741,8 +1054,8 @@ def _parse_args(argv: list[str]) -> tuple[str, bool]:
             print(__doc__)
             sys.exit(0)
         i += 1
-    if mode not in ("offline", "conflict"):
-        print(f"❌ unknown --mode {mode!r} (expected offline|conflict)", file=sys.stderr)
+    if mode not in ("offline", "pathb", "conflict"):
+        print(f"❌ unknown --mode {mode!r} (expected offline|pathb|conflict)", file=sys.stderr)
         sys.exit(2)
     return mode, clean
 

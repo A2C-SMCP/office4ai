@@ -6,6 +6,11 @@
 > 因此 OASP `/ppt` 的 3 个 chart 事件由 office4ai Server 端使用 `python-pptx` 直接改写
 > .pptx OOXML — **不下发 Socket.IO 事件给 Add-In**。完成后 MCP 触发 `resource_updated`
 > 通知 `window://office4ai/ppt` 订阅者，AI / 用户需在 PowerPoint 中重新打开文档以查看效果。
+>
+> **⚠️ 0.3.0 更新**：自 [#15](https://github.com/JIAQIA/office4ai/issues/15) 起改为**双路径**——
+> 打开态（CONNECTED）不再「上抛 3003 拒绝」，而是路由到客户端整页 round-trip（path B）。
+> 本文档描述的 0.2.0「CONNECTED 一律 3003」行为（见下方「已知限制 #1」）已被翻转为反应式
+> 降级。最新双路径验收（含 `--mode pathb`）见 [ppt_chart_v0.3.0.md](ppt_chart_v0.3.0.md)。
 
 ---
 
