@@ -1641,6 +1641,95 @@ class TestChartToolDualPathRouting:
         assert result["success"] is False
         assert disk_path.read_bytes() == before
 
+    @pytest.mark.asyncio
+    async def test_get_path_b_business_error_surfaced_not_disk_fallback(self, deck_uri):
+        # A working Add-In returning a genuine business error (3010) on export must be
+        # SURFACED, not silently swallowed into a stale on-disk read. Seed the disk WITH a
+        # chart at this elementId so a (wrong) silent fallback would *succeed* — the test
+        # then proves the tool fails with 3010 instead.
+        eid = await _insert_on_disk(deck_uri, slide_index=0, chart_type="Line")
+
+        def _emit(document_uri, event, data):
+            return {"success": False, "error": {"code": "3010", "message": "chart not found on live slide"}}
+
+        ws = _connected_ws(_emit)
+        result = await PptGetChartTool(ws).execute({"document_uri": deck_uri, "elementId": eid, "slideIndex": 0})
+        assert result["success"] is False
+        assert "3010" in result["error"]  # surfaced, NOT a stale disk success
+
+    @pytest.mark.asyncio
+    async def test_update_path_b_business_error_is_surfaced_not_degraded(self, deck_uri):
+        from office4ai.environment.workspace.dtos.ppt import CategoricalChartData
+        from office4ai.environment.workspace.services import chart_engine
+
+        built = await chart_engine.generate_chart_slide_base64(
+            CategoricalChartData.model_validate(
+                {
+                    "chartType": "Line",
+                    "categories": ["A", "B"],
+                    "series": [{"name": "x", "values": [1, 2]}],
+                    "title": "Old",
+                }
+            )
+        )
+
+        def _emit(document_uri, event, data):
+            if event == "ppt:get:slideOoxml":
+                return {"success": True, "data": {"slideIndex": 0, "slideId": "sid", "base64": built["slideBase64"]}}
+            return {"success": False, "error": {"code": "3004", "message": "apply failed on client"}}
+
+        ws = _connected_ws(_emit)
+        result = await PptUpdateChartTool(ws).execute(
+            {
+                "document_uri": deck_uri,
+                "elementId": built["elementId"],
+                "slideIndex": 0,
+                "chart": {"chartType": "Line", "title": "New"},
+            }
+        )
+        assert result["success"] is False
+        # Real business error propagates verbatim — never masked by the 3003 degrade.
+        assert "3004" in result["error"]
+        assert "3003" not in result["error"]
+        ws.notify_resource_updated.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_path_b_holds_document_lock_serializing_concurrent_writes(self, deck_uri):
+        # Lost-update invariant: the document lock must wrap the WHOLE path-B round-trip
+        # (export → build → re-insert), so two concurrent writes on the same documentUri
+        # serialize. The `await asyncio.to_thread(...)` inside chart_engine (between the two
+        # carrier emits) is the yield point that WOULD let them interleave absent the lock.
+        import asyncio
+
+        order: list[tuple[str, str]] = []
+
+        def _make_emit(tag: str):
+            def _emit(document_uri, event, data):
+                order.append((tag, event))
+                if event == "ppt:get:slideOoxml":
+                    return {
+                        "success": True,
+                        "data": {"slideIndex": 0, "slideId": f"sid-{tag}", "base64": _blank_slide_b64()},
+                    }
+                return {"success": True, "data": {"insertedSlideIndices": [0], "insertedSlideIds": ["new"]}}
+
+            return _emit
+
+        payload = {
+            "document_uri": deck_uri,  # SAME uri for both → same lock
+            "chart": {"chartType": "Pie", "categories": ["A", "B"], "series": [{"name": "x", "values": [1, 2]}]},
+            "options": {"slideIndex": 0},
+        }
+        ra, rb = await asyncio.gather(
+            PptInsertChartTool(_connected_ws(_make_emit("A"))).execute(payload),
+            PptInsertChartTool(_connected_ws(_make_emit("B"))).execute(payload),
+        )
+        assert ra["success"] is True and rb["success"] is True
+        # Each task's [get, insert] pair must complete before the other's begins —
+        # a fully grouped order, never interleaved like ["A","B","A","B"].
+        tags = [tag for tag, _ in order]
+        assert tags in (["A", "A", "B", "B"], ["B", "B", "A", "A"]), order
+
 
 class TestChartRouterPayloadContract:
     """The router's path-B payloads must validate through the *real* wrap_request → DTO path.

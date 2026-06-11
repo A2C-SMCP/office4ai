@@ -15,7 +15,9 @@ import logging
 from typing import Any
 
 import pytest
+from socketio.exceptions import ConnectionRefusedError  # type: ignore[import-untyped]
 
+from office4ai.environment.workspace.dtos.common import ErrorCode
 from office4ai.environment.workspace.socketio.namespaces.ppt import PptNamespace
 from office4ai.environment.workspace.socketio.services.connection_manager import (
     connection_manager,
@@ -46,6 +48,21 @@ class TestPptNamespace:
     def test_namespace_init(self, ppt_namespace: PptNamespace) -> None:
         """Test PptNamespace initializes with correct namespace"""
         assert ppt_namespace.namespace_name == "/ppt"
+
+    @pytest.mark.asyncio
+    async def test_on_connect_incompatible_version_rejected(
+        self, ppt_namespace: PptNamespace, handshake_data_incompatible_version: dict[str, Any]
+    ) -> None:
+        """The inherited version gate fires on /ppt too: incompatible oaspVersion → 2006.
+
+        Proves the gate runs per-namespace, so a future PptNamespace.on_connect override
+        that drops the version check would fail here (the /word contract test alone wouldn't).
+        """
+        sid = "ppt_reject_sid"
+        with pytest.raises(ConnectionRefusedError) as exc_info:
+            await ppt_namespace.on_connect(sid, {}, handshake_data_incompatible_version)
+        assert exc_info.value.error_args["data"]["code"] == ErrorCode.PROTOCOL_VERSION_MISMATCH
+        assert connection_manager.get_client_info(sid) is None
 
     def test_namespace_has_only_event_handlers(self, ppt_namespace: PptNamespace) -> None:
         """Test PptNamespace only has event handlers, not command handlers"""

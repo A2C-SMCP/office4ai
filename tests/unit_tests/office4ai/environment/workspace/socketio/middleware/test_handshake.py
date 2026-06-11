@@ -157,6 +157,19 @@ class TestValidateOaspVersion:
         # error message（顶层）亦应有意义，便于无 data 解析的客户端
         assert exc_info.value.error_args["message"] == "Protocol version mismatch"
 
+    def test_major_mismatch_rejected_2006(self) -> None:
+        """MAJOR 不匹配（如 1.x vs server 0.x）→ PROTOCOL_VERSION_MISMATCH (2006)。
+
+        既有不兼容用例只覆盖 MINOR 维度；MAJOR 走 ``is_compatible`` 的另一分支，
+        必须同样经 ``validate_oasp_version`` 拒绝（防止未来给 major==0 加特例时漏判）。
+        """
+        incompatible_major = OaspVersion(SERVER_VERSION.major + 1, 0, 0)
+        with pytest.raises(ConnectionRefusedError) as exc_info:
+            validate_oasp_version({"oaspVersion": str(incompatible_major)})
+        data = exc_info.value.error_args["data"]
+        assert data["code"] == ErrorCode.PROTOCOL_VERSION_MISMATCH
+        assert data["clientVersion"] == str(incompatible_major)
+
 
 class TestBuildConnectionEstablished:
     """build_connection_established —— spec 形状 {socketId, serverVersion, timestamp}"""

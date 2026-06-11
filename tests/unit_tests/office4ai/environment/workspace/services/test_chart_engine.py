@@ -610,3 +610,81 @@ async def test_insert_into_base64_with_no_slides_raises_4002() -> None:
     with pytest.raises(ChartEngineError) as exc:
         await chart_engine.insert_chart_into_slide_base64(empty_b64, chart, None)
     assert exc.value.code == ErrorCode.INVALID_PARAM
+
+
+# ---------------------------------------------------------------------------
+# title=None deletion / partial-update preservation / display options
+# (subtle model_fields_set semantics — easy to silently break on a DTO change)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_update_title_explicit_none_deletes_title(empty_pptx: Path) -> None:
+    """Explicit ``title=None`` (present in model_fields_set) removes the chart title."""
+    chart = CategoricalChartData(
+        chartType="ColumnClustered",
+        categories=["A", "B"],
+        series=[CategoricalSeries(name="s", values=[1, 2])],
+        title="Original",
+    )
+    eid = (await chart_engine.insert_chart(empty_pptx.as_uri(), chart, ChartInsertOptions(slideIndex=0)))["elementId"]
+
+    # model_validate guarantees "title" lands in model_fields_set even though the value is None.
+    upd = CategoricalChartUpdate.model_validate({"chartType": "ColumnClustered", "title": None})
+    result = await chart_engine.update_chart(empty_pptx.as_uri(), eid, upd)
+    assert "title" in result["updatedFields"]
+
+    got = await chart_engine.get_chart(empty_pptx.as_uri(), eid)
+    assert got["chart"]["title"] is None
+
+
+@pytest.mark.asyncio
+async def test_update_data_only_preserves_existing_title(empty_pptx: Path) -> None:
+    """A series-only update (title absent from model_fields_set) must NOT wipe the title."""
+    chart = CategoricalChartData(
+        chartType="ColumnClustered",
+        categories=["A", "B"],
+        series=[CategoricalSeries(name="s", values=[1, 2])],
+        title="Keep Me",
+    )
+    eid = (await chart_engine.insert_chart(empty_pptx.as_uri(), chart, ChartInsertOptions(slideIndex=0)))["elementId"]
+
+    upd = CategoricalChartUpdate(chartType="ColumnClustered", series=[CategoricalSeries(name="s", values=[9, 8])])
+    result = await chart_engine.update_chart(empty_pptx.as_uri(), eid, upd)
+    assert "title" not in result["updatedFields"]
+
+    got = await chart_engine.get_chart(empty_pptx.as_uri(), eid)
+    assert got["chart"]["title"] == "Keep Me"
+    assert got["chart"]["series"][0]["values"] == [9.0, 8.0]
+
+
+@pytest.mark.asyncio
+async def test_display_options_round_trip(empty_pptx: Path) -> None:
+    """showLegend / showDataLabels written on insert are read back faithfully."""
+    chart = CategoricalChartData(
+        chartType="ColumnClustered",
+        categories=["A", "B"],
+        series=[CategoricalSeries(name="s", values=[1, 2])],
+        showLegend=True,
+        showDataLabels=True,
+    )
+    eid = (await chart_engine.insert_chart(empty_pptx.as_uri(), chart, ChartInsertOptions(slideIndex=0)))["elementId"]
+
+    got = await chart_engine.get_chart(empty_pptx.as_uri(), eid)
+    assert got["chart"]["showLegend"] is True
+    assert got["chart"]["showDataLabels"] is True
+
+
+@pytest.mark.asyncio
+async def test_display_options_legend_off_round_trip(empty_pptx: Path) -> None:
+    """showLegend=False is honoured (not just the True case)."""
+    chart = CategoricalChartData(
+        chartType="Pie",
+        categories=["A", "B"],
+        series=[CategoricalSeries(name="s", values=[1, 2])],
+        showLegend=False,
+    )
+    eid = (await chart_engine.insert_chart(empty_pptx.as_uri(), chart, ChartInsertOptions(slideIndex=0)))["elementId"]
+
+    got = await chart_engine.get_chart(empty_pptx.as_uri(), eid)
+    assert got["chart"]["showLegend"] is False

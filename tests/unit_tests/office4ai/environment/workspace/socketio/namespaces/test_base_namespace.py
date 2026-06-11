@@ -133,6 +133,23 @@ class TestBaseNamespace:
         assert connection_manager.get_client_info(sid) is None
 
     @pytest.mark.asyncio
+    async def test_on_connect_version_checked_before_business_params(self, base_namespace: BaseNamespace) -> None:
+        """Version-first ordering: when the version is incompatible AND business params are
+        BOTH missing, the version failure (2006) wins — proving version is validated first.
+
+        Existing tests can't prove ordering: the bad-version cases all carry valid business
+        params, and the missing-param case carries a valid version. This sends both bad.
+        """
+        sid = "test_socket_order"
+
+        with pytest.raises(ConnectionRefusedError) as exc_info:
+            # Incompatible oaspVersion AND no clientId / documentUri.
+            await base_namespace.on_connect(sid, {}, {"oaspVersion": "0.2.0"})
+        # If business were checked first this would be HANDSHAKE_FAILED (2003).
+        assert exc_info.value.error_args["data"]["code"] == ErrorCode.PROTOCOL_VERSION_MISMATCH
+        assert connection_manager.get_client_info(sid) is None
+
+    @pytest.mark.asyncio
     async def test_on_disconnect(self, base_namespace: BaseNamespace, valid_handshake_data: dict[str, Any]) -> None:
         """Test client disconnection"""
         sid = "test_socket_123"

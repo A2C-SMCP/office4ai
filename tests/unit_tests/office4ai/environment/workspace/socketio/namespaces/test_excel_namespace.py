@@ -11,9 +11,16 @@ Architecture Note:
     BaseTool + OfficeWorkspace.emit_to_document() 直接发送，不经过 namespace handler。
 """
 
-import pytest
+from typing import Any
 
+import pytest
+from socketio.exceptions import ConnectionRefusedError  # type: ignore[import-untyped]
+
+from office4ai.environment.workspace.dtos.common import ErrorCode
 from office4ai.environment.workspace.socketio.namespaces.excel import ExcelNamespace
+from office4ai.environment.workspace.socketio.services.connection_manager import (
+    connection_manager,
+)
 
 
 class TestExcelNamespace:
@@ -23,6 +30,22 @@ class TestExcelNamespace:
     def excel_namespace(self) -> ExcelNamespace:
         """Create ExcelNamespace instance"""
         return ExcelNamespace()
+
+    @pytest.mark.asyncio
+    async def test_on_connect_incompatible_version_rejected(
+        self, excel_namespace: ExcelNamespace, handshake_data_incompatible_version: dict[str, Any]
+    ) -> None:
+        """The inherited version gate fires on /excel too: incompatible oaspVersion → 2006.
+
+        Stronger than the `hasattr(on_connect)` structural check — proves the gate actually
+        runs per-namespace, so a future ExcelNamespace.on_connect override that drops the
+        version check would fail here.
+        """
+        sid = "excel_reject_sid"
+        with pytest.raises(ConnectionRefusedError) as exc_info:
+            await excel_namespace.on_connect(sid, {}, handshake_data_incompatible_version)
+        assert exc_info.value.error_args["data"]["code"] == ErrorCode.PROTOCOL_VERSION_MISMATCH
+        assert connection_manager.get_client_info(sid) is None
 
     def test_namespace_init(self, excel_namespace: ExcelNamespace) -> None:
         """Test ExcelNamespace initializes with correct namespace"""
