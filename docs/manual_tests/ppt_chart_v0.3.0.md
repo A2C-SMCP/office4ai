@@ -53,23 +53,31 @@ uv run python manual_tests/ppt/test_chart_e2e.py --mode pathb
 
 ---
 
-## 真机联调清单（阻塞于 office-editor4ai Task 2）
+### 3. 真机联调验收（path B live）— office-editor4ai 0.3.0 已发布
 
-> 以下需**真实 Add-In + 真实设备**，**当前阻塞**：office-editor4ai milestone 2「OASP 0.3.0
-> 协议对齐」0/8 完成（[#37](https://github.com/JIAQIA/office-editor4ai/issues/37) 握手 /
-> [#38](https://github.com/JIAQIA/office-editor4ai/issues/38) /
-> [#39](https://github.com/JIAQIA/office-editor4ai/issues/39) 搬运事件均 OPEN）。待其发布后执行：
+office-editor4ai 0.3.0 搬运事件落地后，用真实 PowerPoint + 真实 Add-In 跑真机验收：
 
-- [ ] **打开态全链路 insert / get / update**：未保存 / 打开态新建文档插入图表，图表为
-      **原生可编辑对象**（可双击改数据）。
-- [ ] **双路径按连接状态正确路由**：同一文档先打开（path B）再关闭（path A），两次写入均落地，
-      无静默覆盖。
-- [ ] **Web 边界抽测**：PowerPoint Web 端的搬运事件可用性 / 需求集（requirement set）—— 不支持
-      时应回 `3016` 并反应式降级，而非崩溃。
-- [ ] **Windows 边界抽测**：PowerPoint for Windows 同上。
-- [ ] **母版累积（masterLeak）**：连续多次 round-trip 后 `slideMaster` 数不膨胀（spike
-      [office-editor4ai#34](https://github.com/JIAQIA/office-editor4ai/issues/34) 已验证单次
-      `masterLeak:0`，此处抽测**多次累积**）。
+```bash
+# macOS + PowerPoint 运行中 + office-editor4ai Add-In 可加载
+uv run python manual_tests/ppt/test_chart_e2e.py --mode pathb-live
+```
+
+与 `--mode pathb` 同一份 Server 代码，区别仅在搬运事件打到真机 Add-In 而非进程内
+`FakeAddIn`。脚本分段断言：
+
+| 段 | 场景 | 通过判据 |
+|----|------|----------|
+| L1 | 裸搬运 round-trip（直接验新原语） | `ppt:get:slideOoxml` 返回单页 `{slideId, base64}`；服务端内存加图后 `ppt:insert:slidesOoxml` 就地替换 → slide 0 含 1 图、总页数不变（替换非追加） |
+| L2 | 三工具 CONNECTED → path B | insert/get/update 均 `success`、`requiresReload=False`；回读/改写一致 |
+| L3 | masterLeak 抽测 | 连续 3 次 round-trip 后 `slideMaster` 数 ≤ 基线（spike [office-editor4ai#34](https://github.com/JIAQIA/office-editor4ai/issues/34) 已验单次 `masterLeak:0`，此处验累积） |
+| L4 | 视觉验收（人工） | 双击图表为**原生可编辑对象**（可改数据/类型），非图片 |
+
+### 4. 仍需人工逐平台抽测的边界
+
+- [ ] **Web 边界**：在 PowerPoint Web 端重跑上面命令 —— 平台不支持所需 requirement set 时
+      应回 `3016` 并反应式降级（写回 3003 / 读回退盘），而非崩溃。
+- [ ] **Windows 边界**：在 PowerPoint for Windows 重跑，同上。
+- [ ] **双路径切换**：同一文档先打开（path B）再关闭（path A），两次写入均落地、无静默覆盖。
 - [ ] **占位符内图表**：`containedType` 过滤属 Office.js（office-editor4ai）侧，本仓不涉及
       （spike#34 已记录占位符内图表 type 报 `Placeholder`）。
 

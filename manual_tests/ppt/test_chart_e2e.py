@@ -4,7 +4,7 @@ PPT Chart End-to-End Test (OASP /ppt Draft, v0.2.0 — Server OOXML)
 Issue #9 验收：依次驱动 3 个新 chart MCP 工具并用 python-pptx 双重验证 OOXML 结构。
 Chart 类事件由 OASP Server 端通过 python-pptx 直接修改 .pptx。
 
-三种运行模式：
+四种运行模式：
 
 ────────────────────────────────────────────────────────────────────
   --mode offline (默认)
@@ -39,8 +39,25 @@ Chart 类事件由 OASP Server 端通过 python-pptx 直接修改 .pptx。
 - ✅ requiresReload=False（live 已就地更新，无需重开）
 - ✅ path B 不碰盘（磁盘副本图表数恒为 0）
 - ✅ 反应式降级：写超时 → 翻转后的 3003 文案 + 磁盘字节不变；读超时 → 回退读盘
-⚠️  真机全链路联调 / Web·Windows 边界 / masterLeak 累积仍需真实 Add-In
-    （office-editor4ai Task 2，#38/#39，尚 OPEN）——属阻塞项，不在本模式内。
+⚠️  真机全链路联调 / Web·Windows 边界 / masterLeak 累积见 --mode pathb-live。
+
+────────────────────────────────────────────────────────────────────
+  --mode pathb-live  (#16 — 打开态路径 B 真机验收，真实 Add-In)
+────────────────────────────────────────────────────────────────────
+office-editor4ai 0.3.0 已发布搬运事件后的**真机联调验收**：用真实 PowerPoint +
+真实 Add-In 跑通新的 OASP 0.3.0 Base64 搬运能力。与 --mode pathb 同一份 Server
+代码，区别仅在搬运事件打到真机 Add-In 而非进程内 FakeAddIn。
+
+需要：macOS + PowerPoint 运行中 + office-editor4ai Add-In 可加载。
+
+    uv run python manual_tests/ppt/test_chart_e2e.py --mode pathb-live
+
+覆盖：
+- ✅ L1 裸搬运 round-trip：ppt:get:slideOoxml 导出单页（验 slideId/base64 单页）
+     → 服务端内存加图 → ppt:insert:slidesOoxml 就地替换（验图表落页、页数不变）
+- ✅ L2 三工具 CONNECTED → path B（insert/get/update；requiresReload=False）
+- ✅ L3 masterLeak 抽测：连续 3 次 round-trip 后 slideMaster 数不膨胀
+- 👁  L4 视觉验收：图表为原生可编辑对象（双击改数据）；Web/Windows 换平台重跑
 
 ────────────────────────────────────────────────────────────────────
   --mode conflict
@@ -1016,12 +1033,221 @@ async def conflict_main() -> int:
     return 0
 
 
+# ============================================================================
+# PATH-B LIVE MODE (#16) — open-document round-trip against the REAL Add-In
+# ============================================================================
+# Real-device acceptance for the new OASP 0.3.0 PPT Base64 capability, now that
+# office-editor4ai 0.3.0 ships the carrier-event handlers. This is the joint-debug
+# counterpart to --mode pathb (which uses an in-process FakeAddIn): same Server
+# code, but the carrier events hit the real Add-In in real PowerPoint.
+#
+# Requires:
+#   - macOS + PowerPoint running, office-editor4ai Add-In loadable
+#   - Web / Windows boundary: run the same command with PowerPoint on that platform
+#
+#     uv run python manual_tests/ppt/test_chart_e2e.py --mode pathb-live
+
+
+async def pathb_live_main() -> int:
+    import platform
+
+    if platform.system() != "Darwin":
+        print("❌ pathb-live 依赖 AppleScript 强制保存 PowerPoint，仅支持 macOS", file=sys.stderr)
+        return 2
+
+    # Lazy imports — keep offline / pathb modes lightweight.
+    from manual_tests.ppt.e2e_base import PPTTestRunner, PresentationReader
+    from office4ai.environment.workspace.base import DocumentStatus
+    from office4ai.environment.workspace.dtos.ppt import (
+        CategoricalChartData,
+        CategoricalSeries,
+    )
+    from office4ai.environment.workspace.services import chart_engine
+
+    print("=" * 70)
+    print("PPT Chart — OPEN-DOCUMENT PATH B LIVE (real PowerPoint + real Add-In)")
+    print("OASP 0.3.0 Base64 carrier acceptance: ppt:get:slideOoxml / ppt:insert:slidesOoxml")
+    print("=" * 70)
+
+    def _ack_data(resp: Any, label: str) -> dict[str, Any]:
+        """Unwrap an Add-In ack the same way chart_router._emit does."""
+        assert isinstance(resp, dict), f"{label}: 非 dict 应答 {resp!r}"
+        assert resp.get("success"), f"{label}: 应答非 success: {resp}"
+        data = resp.get("data")
+        assert isinstance(data, dict), f"{label}: 应答缺 data: {resp}"
+        return data
+
+    def _charts_on_slide(reader: Any, idx: int) -> int:
+        return sum(1 for s in reader.get_slide_shapes(idx) if getattr(s, "has_chart", False))
+
+    runner = PPTTestRunner(
+        fixtures_dir=_PROJECT_ROOT / "manual_tests" / "ppt" / "fixtures" / "ppt_e2e",
+        cleanup_on_success=False,  # keep the deck for post-mortem viewing
+    )
+
+    async with runner.run_with_workspace("multi_slide.pptx") as (workspace, fixture):
+        deck_path: Path = fixture.working_path
+        deck_uri: str = fixture.document_uri
+        print(f"\n📄 打开态工作副本: {deck_path}")
+
+        # 0) 连接前置：确认 Add-In 已连且文档状态 CONNECTED（否则就不是 path B）
+        status = workspace.get_document_status(deck_uri)
+        assert status == DocumentStatus.CONNECTED, f"期望 CONNECTED，实际 {status}"
+        print(f"   ✅ 文档状态 = {status.name}（Add-In 已连接 → 三工具将路由 path B）")
+
+        baseline_masters = len(PresentationReader(deck_path).prs.slide_masters)
+        print(f"   📐 slideMaster 基线数 = {baseline_masters}（用于 L3 masterLeak 抽测）")
+
+        # ── L1  裸搬运事件 round-trip（直接验收新原语）────────────────────
+        print("\n" + "─" * 70)
+        print("L1 — 裸搬运事件：ppt:get:slideOoxml → 服务端内存加图 → ppt:insert:slidesOoxml")
+        print("─" * 70)
+
+        print("\n🅛  L1.1  导出 slide 0（ppt:get:slideOoxml）")
+        exp = _ack_data(
+            await workspace.emit_to_document(deck_uri, "ppt:get:slideOoxml", {"slideIndex": 0}),
+            "get:slideOoxml",
+        )
+        slide_id = exp.get("slideId")
+        slide_b64 = exp.get("base64")
+        assert isinstance(slide_id, str) and slide_id, f"导出缺不透明 slideId: {exp}"
+        assert isinstance(slide_b64, str) and slide_b64, f"导出缺 base64: {exp}"
+        assert len(_decode_b64_to_prs(slide_b64).slides) == 1, "导出包应恰好含 1 页"
+        print(f"   ✅ slideId={slide_id!r}；base64 可解码为单页 .pptx")
+
+        print("\n🅛  L1.2  服务端把图表加进导出的单页包（python-pptx 内存）")
+        built = await chart_engine.insert_chart_into_slide_base64(
+            slide_b64,
+            CategoricalChartData(
+                chartType="ColumnClustered",
+                categories=["Q1", "Q2", "Q3"],
+                series=[CategoricalSeries(name="Rev", values=[10, 20, 30])],
+                title="LIVE-L1-CARRIER",
+            ),
+            None,
+        )
+        print(f"   ✅ 内存建图 elementId={built['elementId']}")
+
+        print("\n🅛  L1.3  就地替换回 slide 0（ppt:insert:slidesOoxml + replaceSlideId）")
+        _ack_data(
+            await workspace.emit_to_document(
+                deck_uri,
+                "ppt:insert:slidesOoxml",
+                {
+                    "base64": built["slideBase64"],
+                    "targetSlideIndex": 0,
+                    "formatting": "keepSourceFormatting",
+                    "replaceSlideId": slide_id,
+                    "finalSlideIndex": 0,
+                },
+            ),
+            "insert:slidesOoxml",
+        )
+        print("   ✅ Add-In 应答 success")
+
+        print("\n🅛  L1.4  保存 + python-pptx 复核（图表落在 slide 0，页数不变 = 替换非追加）")
+        reader = PresentationReader(deck_path)
+        reader.reload()  # 强制 PowerPoint 保存到磁盘后再读
+        assert _charts_on_slide(reader, 0) == 1, "slide 0 应恰好 1 个图表（就地替换成功）"
+        assert reader.slide_count == 5, f"页数应保持 5（替换非追加），实际 {reader.slide_count}"
+        print(f"   ✅ slide 0 图表数=1，总页数={reader.slide_count}")
+
+        # ── L2  三个 MCP 图表工具走 path B（产品面）──────────────────────
+        print("\n" + "─" * 70)
+        print("L2 — 三工具 CONNECTED → path B（router 驱动真实 Add-In）")
+        print("─" * 70)
+
+        print("\n🅛  L2.1  ppt_insert_chart on slide 1")
+        ins = await PptInsertChartTool(workspace).execute(
+            {
+                "document_uri": deck_uri,
+                "chart": {
+                    "chartType": "Pie",
+                    "categories": ["A", "B", "C"],
+                    "series": [{"name": "share", "values": [30, 50, 20]}],
+                    "title": "LIVE-L2-TOOL",
+                },
+                "options": {"slideIndex": 1},
+            }
+        )
+        assert ins["success"], f"path B 插入失败: {ins}"
+        assert ins["data"]["requiresReload"] is False, f"CONNECTED 应 requiresReload=False: {ins['data']}"
+        eid = ins["data"]["elementId"]
+        print(f"   ✅ elementId={eid} requiresReload=False")
+
+        print("\n🅛  L2.2  ppt_get_chart on slide 1（读 live）")
+        got = await PptGetChartTool(workspace).execute({"document_uri": deck_uri, "elementId": eid, "slideIndex": 1})
+        assert got["success"], f"path B 读取失败: {got}"
+        assert got["data"]["chart"]["title"] == "LIVE-L2-TOOL", got["data"]["chart"]
+        print(f"   ✅ 回读 title='{got['data']['chart']['title']}'")
+
+        print("\n🅛  L2.3  ppt_update_chart on slide 1（就地改标题）")
+        upd = await PptUpdateChartTool(workspace).execute(
+            {
+                "document_uri": deck_uri,
+                "elementId": eid,
+                "slideIndex": 1,
+                "chart": {"chartType": "Pie", "title": "LIVE-L2-UPDATED"},
+            }
+        )
+        assert upd["success"], f"path B 更新失败: {upd}"
+        assert "title" in upd["data"]["updatedFields"], upd["data"]
+        reader.reload()
+        assert _charts_on_slide(reader, 1) == 1, "slide 1 应有 1 个图表"
+        print(f"   ✅ updatedFields={upd['data']['updatedFields']}；slide 1 图表数=1")
+
+        # ── L3  masterLeak 抽测（spike#34 边界：连续 round-trip 不膨胀 master）──
+        print("\n" + "─" * 70)
+        print("L3 — masterLeak 抽测：连续 3 次 round-trip 后 slideMaster 数不膨胀")
+        print("─" * 70)
+        for i in range(3):
+            exp_i = _ack_data(
+                await workspace.emit_to_document(deck_uri, "ppt:get:slideOoxml", {"slideIndex": 2}),
+                f"get:slideOoxml#{i}",
+            )
+            _ack_data(
+                await workspace.emit_to_document(
+                    deck_uri,
+                    "ppt:insert:slidesOoxml",
+                    {
+                        "base64": exp_i["base64"],
+                        "targetSlideIndex": 2,
+                        "formatting": "keepSourceFormatting",
+                        "replaceSlideId": exp_i["slideId"],
+                        "finalSlideIndex": 2,
+                    },
+                ),
+                f"insert:slidesOoxml#{i}",
+            )
+            print(f"   ↻ round-trip {i + 1}/3 on slide 2 done")
+        reader.reload()
+        after_masters = len(reader.prs.slide_masters)
+        assert after_masters <= baseline_masters, (
+            f"masterLeak: slideMaster 从 {baseline_masters} 增至 {after_masters}（应保持 ≤ 基线）"
+        )
+        print(f"   ✅ slideMaster: 基线 {baseline_masters} → 3 次 round-trip 后 {after_masters}（无累积泄漏）")
+
+        # ── L4  视觉验收 ────────────────────────────────────────────────
+        print("\n" + "=" * 70)
+        print("✅ 自动断言全过。请在 PowerPoint 中做视觉验收：")
+        print("   - slide 0：柱形图 'LIVE-L1-CARRIER'（裸搬运事件 round-trip 注入）")
+        print("   - slide 1：饼图 'LIVE-L2-UPDATED'（三工具 path B；标题已被 update 改写）")
+        print("   - 双击任一图表 → 应为【原生可编辑图表】（可改数据/类型），而非图片")
+        print("   - Web / Windows 边界：在对应平台重跑本命令")
+        print("     （平台不支持所需 requirement set 时应回 3016 并反应式降级，不应崩溃）")
+        print("=" * 70)
+
+    return 0
+
+
 def run(mode: str) -> None:
     try:
         if mode == "conflict":
             rc = asyncio.run(conflict_main())
         elif mode == "pathb":
             rc = asyncio.run(pathb_main())
+        elif mode == "pathb-live":
+            rc = asyncio.run(pathb_live_main())
         else:
             rc = asyncio.run(offline_main())
     except AssertionError as e:
@@ -1044,7 +1270,7 @@ def _parse_args(argv: list[str]) -> tuple[str, bool]:
             clean = True
         elif a == "--mode":
             if i + 1 >= len(argv):
-                print("❌ --mode requires a value (offline|pathb|conflict)", file=sys.stderr)
+                print("❌ --mode requires a value (offline|pathb|pathb-live|conflict)", file=sys.stderr)
                 sys.exit(2)
             mode = argv[i + 1]
             i += 1
@@ -1054,8 +1280,8 @@ def _parse_args(argv: list[str]) -> tuple[str, bool]:
             print(__doc__)
             sys.exit(0)
         i += 1
-    if mode not in ("offline", "pathb", "conflict"):
-        print(f"❌ unknown --mode {mode!r} (expected offline|pathb|conflict)", file=sys.stderr)
+    if mode not in ("offline", "pathb", "pathb-live", "conflict"):
+        print(f"❌ unknown --mode {mode!r} (expected offline|pathb|pathb-live|conflict)", file=sys.stderr)
         sys.exit(2)
     return mode, clean
 
