@@ -39,9 +39,9 @@ class TestOfficeMCPServer:
             server = OfficeMCPServer(config)
 
             # 25 Word (21 + 4 OASP v0.2.0 table tools) + 24 PPT (21 + 3 OASP v0.2.0 chart tools)
-            # + 16 Excel (OASP 0.3.0 Draft: #18 read slice 3 + #19 Range CRUD/公式 7
-            #   + #20 Format/条件格式/合并 6) = 65
-            assert len(server.tools) == 65
+            # + 21 Excel (OASP 0.3.0 Draft: #18 read slice 3 + #19 Range CRUD/公式 7
+            #   + #20 Format/条件格式/合并 6 + #21 Worksheet 管理 5) = 70
+            assert len(server.tools) == 70
 
             expected_tools = [
                 # Word Get tools
@@ -124,6 +124,12 @@ class TestOfficeMCPServer:
                 "excel_clear_conditional_format",
                 "excel_merge_cells",
                 "excel_unmerge_cells",
+                # Excel Worksheet 管理 tools (OASP /excel Draft 0.3.0, #21)
+                "excel_get_worksheets",
+                "excel_add_worksheet",
+                "excel_delete_worksheet",
+                "excel_rename_worksheet",
+                "excel_activate_worksheet",
             ]
             for tool_name in expected_tools:
                 assert tool_name in server.tools, f"Tool {tool_name} not registered"

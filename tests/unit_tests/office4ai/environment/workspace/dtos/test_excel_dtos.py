@@ -4,13 +4,15 @@ Test Excel DTOs
 测试 Excel 事件的数据传输对象 (OASP 0.3.0 events-excel.md, issue #18 Foundation)。
 
 覆盖:
-- #18 读事件 + #19 Range/公式 + #20 Format/条件格式/合并 Request DTO 的构造、必填
-  校验、event_name、camelCase 序列化、枚举约束、注册。
+- #18 读事件 + #19 Range/公式 + #20 Format/条件格式/合并 + #21 Worksheet 管理
+  Request DTO 的构造、必填校验、event_name、camelCase 序列化、枚举约束、注册。
 - 共享数据模型 (SheetInfo / UsedRangeInfo / WorkbookInfo / WorksheetInfo /
   SelectedRangeInfo / RangeFormatInfo / GetRangeData / RangeOperationResult /
-  GetRangeFormatData) 的 snake_case ↔ camelCase 双向兼容。
+  GetRangeFormatData / GetWorksheetsData / AddWorksheetData / DeleteWorksheetData /
+  RenameWorksheetData / ActivateWorksheetData) 的 snake_case ↔ camelCase 双向兼容。
 - #20 写侧偏更新模型 (SetRangeFormatOptions) 与条件格式透传模型
   (ConditionalFormatRule) —— 读/写不对称、None 剔除、extra 透传。
+- #21 工作表事件字段形态各异 (无统一 worksheetName)，按 spec type 钉死必填/可选。
 """
 
 from __future__ import annotations
@@ -20,27 +22,37 @@ from pydantic import ValidationError
 
 from office4ai.environment.workspace.dtos.common import request_registry
 from office4ai.environment.workspace.dtos.excel import (
+    ActivateWorksheetData,
+    AddWorksheetData,
     ConditionalFormatRule,
+    DeleteWorksheetData,
+    ExcelActivateWorksheetRequest,
     ExcelAddConditionalFormatRequest,
+    ExcelAddWorksheetRequest,
     ExcelClearConditionalFormatRequest,
     ExcelClearRangeRequest,
     ExcelCopyRangeRequest,
     ExcelDeleteRangeRequest,
+    ExcelDeleteWorksheetRequest,
     ExcelGetRangeFormatRequest,
     ExcelGetRangeRequest,
     ExcelGetSelectedRangeRequest,
     ExcelGetWorkbookInfoRequest,
     ExcelGetWorksheetInfoRequest,
+    ExcelGetWorksheetsRequest,
     ExcelInsertRangeRequest,
     ExcelMergeCellsRequest,
+    ExcelRenameWorksheetRequest,
     ExcelSetFormulaRequest,
     ExcelSetRangeFormatRequest,
     ExcelSetRangeRequest,
     ExcelUnmergeCellsRequest,
     GetRangeData,
     GetRangeFormatData,
+    GetWorksheetsData,
     RangeFormatInfo,
     RangeOperationResult,
+    RenameWorksheetData,
     SelectedRangeInfo,
     SetRangeFormatOptions,
     SheetInfo,
@@ -151,7 +163,7 @@ class TestExcelGetSelectedRangeRequest:
 
 
 class TestRequestRegistration:
-    """读事件 (#18) + Range/公式 (#19) + Format/条件格式/合并 (#20) 应自动注册。"""
+    """读事件 (#18) + Range/公式 (#19) + Format/条件格式/合并 (#20) + Worksheet (#21) 应自动注册。"""
 
     @pytest.mark.parametrize(
         "event,dto_cls",
@@ -172,6 +184,11 @@ class TestRequestRegistration:
             ("excel:clear:conditionalFormat", ExcelClearConditionalFormatRequest),
             ("excel:merge:cells", ExcelMergeCellsRequest),
             ("excel:unmerge:cells", ExcelUnmergeCellsRequest),
+            ("excel:get:worksheets", ExcelGetWorksheetsRequest),
+            ("excel:add:worksheet", ExcelAddWorksheetRequest),
+            ("excel:delete:worksheet", ExcelDeleteWorksheetRequest),
+            ("excel:rename:worksheet", ExcelRenameWorksheetRequest),
+            ("excel:activate:worksheet", ExcelActivateWorksheetRequest),
         ],
     )
     def test_event_registered(self, event: str, dto_cls: type) -> None:
@@ -726,3 +743,166 @@ class TestConditionalFormatRule:
         rule = ConditionalFormatRule.model_validate(wire)
         assert rule.type == "colorScale"
         assert rule.model_dump(by_alias=True, exclude_none=True) == wire
+
+
+# ============================================================================
+# #21 Worksheet: Request DTOs (字段形态以 spec type 为准, 各事件不同)
+# ============================================================================
+
+
+class TestExcelGetWorksheetsRequest:
+    """Test ExcelGetWorksheetsRequest DTO (excel:get:worksheets) — 无业务参数"""
+
+    def test_event_name_attribute(self) -> None:
+        assert ExcelGetWorksheetsRequest.event_name == "excel:get:worksheets"
+
+    def test_payload_carries_only_base_fields(self) -> None:
+        payload = ExcelGetWorksheetsRequest.build(document_uri="file:///d.xlsx").to_payload()
+        assert payload["documentUri"] == "file:///d.xlsx"
+        assert "requestId" in payload
+        # 无业务字段
+        assert "worksheetName" not in payload
+        assert "name" not in payload
+
+
+class TestExcelAddWorksheetRequest:
+    """Test ExcelAddWorksheetRequest DTO (excel:add:worksheet) — name 可选"""
+
+    def test_event_name_attribute(self) -> None:
+        assert ExcelAddWorksheetRequest.event_name == "excel:add:worksheet"
+
+    def test_payload_with_name(self) -> None:
+        payload = ExcelAddWorksheetRequest.build(document_uri="file:///d.xlsx", name="数据分析").to_payload()
+        assert payload["name"] == "数据分析"
+
+    def test_payload_without_name_drops_field(self) -> None:
+        """name 省略时由 Excel 自动命名 → exclude_none 剔除该键。"""
+        payload = ExcelAddWorksheetRequest.build(document_uri="file:///d.xlsx").to_payload()
+        assert "name" not in payload
+
+
+class TestExcelDeleteWorksheetRequest:
+    """Test ExcelDeleteWorksheetRequest DTO (excel:delete:worksheet) — worksheet_name 必填"""
+
+    def test_event_name_attribute(self) -> None:
+        assert ExcelDeleteWorksheetRequest.event_name == "excel:delete:worksheet"
+
+    def test_required_worksheet_name(self) -> None:
+        with pytest.raises(ValidationError):
+            ExcelDeleteWorksheetRequest(requestId="r", documentUri="file:///d.xlsx")  # type: ignore[call-arg]
+
+    def test_payload_snake_to_camel(self) -> None:
+        payload = ExcelDeleteWorksheetRequest.build(document_uri="file:///d.xlsx", worksheet_name="Sheet3").to_payload()
+        assert payload["worksheetName"] == "Sheet3"
+        assert "worksheet_name" not in payload
+
+
+class TestExcelRenameWorksheetRequest:
+    """Test ExcelRenameWorksheetRequest DTO (excel:rename:worksheet) — current_name + new_name 必填"""
+
+    def test_event_name_attribute(self) -> None:
+        assert ExcelRenameWorksheetRequest.event_name == "excel:rename:worksheet"
+
+    def test_required_both_names(self) -> None:
+        # 缺 new_name
+        with pytest.raises(ValidationError):
+            ExcelRenameWorksheetRequest(requestId="r", documentUri="file:///d.xlsx", currentName="Sheet1")  # type: ignore[call-arg]
+        # 缺 current_name
+        with pytest.raises(ValidationError):
+            ExcelRenameWorksheetRequest(requestId="r", documentUri="file:///d.xlsx", newName="销售数据")  # type: ignore[call-arg]
+
+    def test_payload_snake_to_camel(self) -> None:
+        payload = ExcelRenameWorksheetRequest.build(
+            document_uri="file:///d.xlsx", current_name="Sheet1", new_name="销售数据"
+        ).to_payload()
+        assert payload["currentName"] == "Sheet1"
+        assert payload["newName"] == "销售数据"
+        assert "current_name" not in payload
+        assert "new_name" not in payload
+
+
+class TestExcelActivateWorksheetRequest:
+    """Test ExcelActivateWorksheetRequest DTO (excel:activate:worksheet) — worksheet_name 必填"""
+
+    def test_event_name_attribute(self) -> None:
+        assert ExcelActivateWorksheetRequest.event_name == "excel:activate:worksheet"
+
+    def test_required_worksheet_name(self) -> None:
+        with pytest.raises(ValidationError):
+            ExcelActivateWorksheetRequest(requestId="r", documentUri="file:///d.xlsx")  # type: ignore[call-arg]
+
+    def test_payload_snake_to_camel(self) -> None:
+        payload = ExcelActivateWorksheetRequest.build(
+            document_uri="file:///d.xlsx", worksheet_name="Sheet2"
+        ).to_payload()
+        assert payload["worksheetName"] == "Sheet2"
+
+
+# ============================================================================
+# #21 Worksheet: response data models
+# ============================================================================
+
+
+class TestGetWorksheetsData:
+    """Test GetWorksheetsData data model (excel:get:worksheets response data)"""
+
+    def test_round_trip_reuses_sheet_info(self) -> None:
+        wire = {
+            "worksheets": [
+                {"name": "Sheet1", "index": 0, "isActive": True, "isHidden": False},
+                {"name": "Sheet2", "index": 1, "isActive": False, "isHidden": False},
+            ]
+        }
+        data = GetWorksheetsData.model_validate(wire)
+        assert len(data.worksheets) == 2
+        # 列表项复用 #18 SheetInfo
+        assert isinstance(data.worksheets[0], SheetInfo)
+        assert data.worksheets[0].is_active is True
+        assert data.worksheets[1].name == "Sheet2"
+        assert data.model_dump(by_alias=True) == wire
+
+    def test_empty_list(self) -> None:
+        data = GetWorksheetsData.model_validate({"worksheets": []})
+        assert data.worksheets == []
+
+
+class TestAddWorksheetData:
+    """Test AddWorksheetData data model (excel:add:worksheet response data)"""
+
+    def test_round_trip(self) -> None:
+        wire = {"name": "数据分析", "index": 2}
+        data = AddWorksheetData.model_validate(wire)
+        assert data.name == "数据分析"
+        assert data.index == 2
+        assert data.model_dump(by_alias=True) == wire
+
+    def test_both_fields_required(self) -> None:
+        with pytest.raises(ValidationError):
+            AddWorksheetData.model_validate({"name": "X"})
+
+
+class TestDeleteWorksheetData:
+    """Test DeleteWorksheetData data model (excel:delete:worksheet response data)"""
+
+    def test_round_trip(self) -> None:
+        data = DeleteWorksheetData.model_validate({"deleted": True})
+        assert data.deleted is True
+        assert data.model_dump(by_alias=True) == {"deleted": True}
+
+
+class TestRenameWorksheetData:
+    """Test RenameWorksheetData data model (excel:rename:worksheet response data)"""
+
+    def test_round_trip(self) -> None:
+        data = RenameWorksheetData.model_validate({"name": "销售数据"})
+        assert data.name == "销售数据"
+        assert data.model_dump(by_alias=True) == {"name": "销售数据"}
+
+
+class TestActivateWorksheetData:
+    """Test ActivateWorksheetData data model (excel:activate:worksheet response data)"""
+
+    def test_round_trip(self) -> None:
+        data = ActivateWorksheetData.model_validate({"activated": True})
+        assert data.activated is True
+        assert data.model_dump(by_alias=True) == {"activated": True}

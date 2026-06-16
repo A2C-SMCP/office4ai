@@ -15,18 +15,23 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from office4ai.a2c_smcp.tools.excel import (
+    ExcelActivateWorksheetTool,
     ExcelAddConditionalFormatTool,
+    ExcelAddWorksheetTool,
     ExcelClearConditionalFormatTool,
     ExcelClearRangeTool,
     ExcelCopyRangeTool,
     ExcelDeleteRangeTool,
+    ExcelDeleteWorksheetTool,
     ExcelGetRangeFormatTool,
     ExcelGetRangeTool,
     ExcelGetSelectedRangeTool,
     ExcelGetWorkbookInfoTool,
     ExcelGetWorksheetInfoTool,
+    ExcelGetWorksheetsTool,
     ExcelInsertRangeTool,
     ExcelMergeCellsTool,
+    ExcelRenameWorksheetTool,
     ExcelSetFormulaTool,
     ExcelSetRangeFormatTool,
     ExcelSetRangeTool,
@@ -70,6 +75,12 @@ class TestToolMetadata:
         (ExcelClearConditionalFormatTool, "excel_clear_conditional_format", "excel", "clear:conditionalFormat"),
         (ExcelMergeCellsTool, "excel_merge_cells", "excel", "merge:cells"),
         (ExcelUnmergeCellsTool, "excel_unmerge_cells", "excel", "unmerge:cells"),
+        # Worksheet 管理 (#21)
+        (ExcelGetWorksheetsTool, "excel_get_worksheets", "excel", "get:worksheets"),
+        (ExcelAddWorksheetTool, "excel_add_worksheet", "excel", "add:worksheet"),
+        (ExcelDeleteWorksheetTool, "excel_delete_worksheet", "excel", "delete:worksheet"),
+        (ExcelRenameWorksheetTool, "excel_rename_worksheet", "excel", "rename:worksheet"),
+        (ExcelActivateWorksheetTool, "excel_activate_worksheet", "excel", "activate:worksheet"),
     ]
 
     @pytest.mark.parametrize("tool_cls,expected_name,expected_category,expected_event", TOOL_SPECS)
@@ -109,6 +120,11 @@ class TestToolMetadata:
             "excel_clear_conditional_format": "excel:clear:conditionalFormat",
             "excel_merge_cells": "excel:merge:cells",
             "excel_unmerge_cells": "excel:unmerge:cells",
+            "excel_get_worksheets": "excel:get:worksheets",
+            "excel_add_worksheet": "excel:add:worksheet",
+            "excel_delete_worksheet": "excel:delete:worksheet",
+            "excel_rename_worksheet": "excel:rename:worksheet",
+            "excel_activate_worksheet": "excel:activate:worksheet",
         }
         for tool_cls, name, _, _ in self.TOOL_SPECS:
             tool = tool_cls(mock_workspace)
@@ -376,6 +392,95 @@ class TestExecuteFlow:
         assert action.action_name == "unmerge:cells"
         assert action.params["address"] == "A1:C1"
 
+    # ---- #21 Worksheet 管理 -----------------------------------------------
+
+    @pytest.mark.asyncio
+    async def test_get_worksheets_builds_correct_action(self, mock_workspace):
+        """get:worksheets 无业务参数, params 仅有 document_uri。"""
+        mock_workspace.execute.return_value = OfficeObs(success=True, data={"worksheets": []})
+
+        tool = ExcelGetWorksheetsTool(mock_workspace)
+        await tool.execute({"document_uri": "file:///data.xlsx"})
+
+        action = mock_workspace.execute.call_args[0][0]
+        assert action.category == "excel"
+        assert action.action_name == "get:worksheets"
+        assert "worksheet_name" not in action.params
+        assert "name" not in action.params
+
+    @pytest.mark.asyncio
+    async def test_add_worksheet_passes_name(self, mock_workspace):
+        mock_workspace.execute.return_value = OfficeObs(success=True, data={"name": "数据分析", "index": 2})
+
+        tool = ExcelAddWorksheetTool(mock_workspace)
+        await tool.execute({"document_uri": "file:///data.xlsx", "name": "数据分析"})
+
+        action = mock_workspace.execute.call_args[0][0]
+        assert action.action_name == "add:worksheet"
+        assert action.params["name"] == "数据分析"
+
+    @pytest.mark.asyncio
+    async def test_add_worksheet_omits_none_name(self, mock_workspace):
+        """name 省略时, exclude_none 不应把它放进 params（Excel 自动命名）。"""
+        mock_workspace.execute.return_value = OfficeObs(success=True, data={"name": "Sheet3", "index": 2})
+
+        tool = ExcelAddWorksheetTool(mock_workspace)
+        await tool.execute({"document_uri": "file:///data.xlsx"})
+
+        action = mock_workspace.execute.call_args[0][0]
+        assert action.action_name == "add:worksheet"
+        assert "name" not in action.params
+
+    @pytest.mark.asyncio
+    async def test_delete_worksheet_passes_worksheet_name(self, mock_workspace):
+        mock_workspace.execute.return_value = OfficeObs(success=True, data={"deleted": True})
+
+        tool = ExcelDeleteWorksheetTool(mock_workspace)
+        await tool.execute({"document_uri": "file:///data.xlsx", "worksheet_name": "Sheet3"})
+
+        action = mock_workspace.execute.call_args[0][0]
+        assert action.action_name == "delete:worksheet"
+        assert action.params["worksheet_name"] == "Sheet3"
+
+    @pytest.mark.asyncio
+    async def test_delete_worksheet_requires_worksheet_name(self, mock_workspace):
+        """worksheet_name 必填: 缺失时 MCP 输入校验失败, 不应触达 workspace。"""
+        tool = ExcelDeleteWorksheetTool(mock_workspace)
+        result = await tool.execute({"document_uri": "file:///data.xlsx"})
+        assert result["success"] is False
+        mock_workspace.execute.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_rename_worksheet_passes_both_names(self, mock_workspace):
+        mock_workspace.execute.return_value = OfficeObs(success=True, data={"name": "销售数据"})
+
+        tool = ExcelRenameWorksheetTool(mock_workspace)
+        await tool.execute({"document_uri": "file:///data.xlsx", "current_name": "Sheet1", "new_name": "销售数据"})
+
+        action = mock_workspace.execute.call_args[0][0]
+        assert action.action_name == "rename:worksheet"
+        assert action.params["current_name"] == "Sheet1"
+        assert action.params["new_name"] == "销售数据"
+
+    @pytest.mark.asyncio
+    async def test_rename_worksheet_requires_both_names(self, mock_workspace):
+        """current_name 与 new_name 均必填: 缺其一即校验失败。"""
+        tool = ExcelRenameWorksheetTool(mock_workspace)
+        result = await tool.execute({"document_uri": "file:///data.xlsx", "current_name": "Sheet1"})
+        assert result["success"] is False
+        mock_workspace.execute.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_activate_worksheet_passes_worksheet_name(self, mock_workspace):
+        mock_workspace.execute.return_value = OfficeObs(success=True, data={"activated": True})
+
+        tool = ExcelActivateWorksheetTool(mock_workspace)
+        await tool.execute({"document_uri": "file:///data.xlsx", "worksheet_name": "Sheet2"})
+
+        action = mock_workspace.execute.call_args[0][0]
+        assert action.action_name == "activate:worksheet"
+        assert action.params["worksheet_name"] == "Sheet2"
+
 
 # ============================================================================
 # format_result Tests (获取类工具: content + data)
@@ -540,3 +645,70 @@ class TestFormatResult:
         result = tool.format_result(obs)
         assert result["success"] is False
         assert result["error"] == "5004 PROTECTED_SHEET"
+
+    # ---- #21 Worksheet 管理 -----------------------------------------------
+
+    def test_get_worksheets_summary(self, mock_workspace):
+        """get:worksheets 覆写 format_result: 返回工作表名列表 content + 完整 data。"""
+        tool = ExcelGetWorksheetsTool(mock_workspace)
+        obs = OfficeObs(
+            success=True,
+            data={
+                "worksheets": [
+                    {"name": "Sheet1", "index": 0, "isActive": True, "isHidden": False},
+                    {"name": "销售数据", "index": 1, "isActive": False, "isHidden": False},
+                ]
+            },
+        )
+        result = tool.format_result(obs)
+        assert result["success"] is True
+        assert "2 worksheet(s)" in result["content"]
+        assert "Sheet1" in result["content"]
+        assert "销售数据" in result["content"]
+        assert len(result["data"]["worksheets"]) == 2
+
+    def test_get_worksheets_empty_summary(self, mock_workspace):
+        tool = ExcelGetWorksheetsTool(mock_workspace)
+        obs = OfficeObs(success=True, data={"worksheets": []})
+        result = tool.format_result(obs)
+        assert result["success"] is True
+        assert "0 worksheet(s)" in result["content"]
+
+    def test_get_worksheets_missing_key_falls_back(self, mock_workspace):
+        """data 缺 'worksheets' 键时, .get 兜底为空列表 → '0 worksheet(s)' 不崩溃。"""
+        tool = ExcelGetWorksheetsTool(mock_workspace)
+        obs = OfficeObs(success=True, data={})
+        result = tool.format_result(obs)
+        assert result["success"] is True
+        assert "0 worksheet(s)" in result["content"]
+
+    def test_get_worksheets_failure_returns_error(self, mock_workspace):
+        tool = ExcelGetWorksheetsTool(mock_workspace)
+        obs = OfficeObs(success=False, data={}, error="3001 DOCUMENT_NOT_FOUND")
+        result = tool.format_result(obs)
+        assert result["success"] is False
+        assert result["error"] == "3001 DOCUMENT_NOT_FOUND"
+
+    def test_add_worksheet_uses_base_format_result(self, mock_workspace):
+        """写工具不覆写 format_result: 成功时返回 {success, data}，无 content。"""
+        tool = ExcelAddWorksheetTool(mock_workspace)
+        obs = OfficeObs(success=True, data={"name": "数据分析", "index": 2})
+        result = tool.format_result(obs)
+        assert result == {"success": True, "data": {"name": "数据分析", "index": 2}}
+        assert "content" not in result
+
+    def test_delete_worksheet_surfaces_worksheet_not_found(self, mock_workspace):
+        """删除不存在的工作表由 AddIn 返回 5001 WORKSHEET_NOT_FOUND；consumer 透传。"""
+        tool = ExcelDeleteWorksheetTool(mock_workspace)
+        obs = OfficeObs(success=False, data={}, error="5001 WORKSHEET_NOT_FOUND")
+        result = tool.format_result(obs)
+        assert result["success"] is False
+        assert result["error"] == "5001 WORKSHEET_NOT_FOUND"
+
+    def test_rename_worksheet_surfaces_operation_failed(self, mock_workspace):
+        """重命名为已存在名称由 AddIn 返回 3004 OPERATION_FAILED；consumer 透传。"""
+        tool = ExcelRenameWorksheetTool(mock_workspace)
+        obs = OfficeObs(success=False, data={}, error="3004 OPERATION_FAILED")
+        result = tool.format_result(obs)
+        assert result["success"] is False
+        assert result["error"] == "3004 OPERATION_FAILED"

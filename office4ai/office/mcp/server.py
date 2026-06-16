@@ -174,18 +174,23 @@ class OfficeMCPServer(BaseMCPServer):
         logger.info(f"已注册 {len(ppt_tools)} 个 PPT 工具 | Registered {len(ppt_tools)} PPT tools")
 
         from office4ai.a2c_smcp.tools.excel import (
+            ExcelActivateWorksheetTool,
             ExcelAddConditionalFormatTool,
+            ExcelAddWorksheetTool,
             ExcelClearConditionalFormatTool,
             ExcelClearRangeTool,
             ExcelCopyRangeTool,
             ExcelDeleteRangeTool,
+            ExcelDeleteWorksheetTool,
             ExcelGetRangeFormatTool,
             ExcelGetRangeTool,
             ExcelGetSelectedRangeTool,
             ExcelGetWorkbookInfoTool,
             ExcelGetWorksheetInfoTool,
+            ExcelGetWorksheetsTool,
             ExcelInsertRangeTool,
             ExcelMergeCellsTool,
+            ExcelRenameWorksheetTool,
             ExcelSetFormulaTool,
             ExcelSetRangeFormatTool,
             ExcelSetRangeTool,
@@ -212,6 +217,12 @@ class OfficeMCPServer(BaseMCPServer):
             ExcelClearConditionalFormatTool(self.workspace),
             ExcelMergeCellsTool(self.workspace),
             ExcelUnmergeCellsTool(self.workspace),
+            # Worksheet 管理 (OASP /excel Draft 0.3.0, issue #21)
+            ExcelGetWorksheetsTool(self.workspace),
+            ExcelAddWorksheetTool(self.workspace),
+            ExcelDeleteWorksheetTool(self.workspace),
+            ExcelRenameWorksheetTool(self.workspace),
+            ExcelActivateWorksheetTool(self.workspace),
         ]
 
         for tool in excel_tools:

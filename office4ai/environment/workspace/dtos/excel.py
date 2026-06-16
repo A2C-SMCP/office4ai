@@ -23,7 +23,11 @@ Defines data structures for Excel-specific Socket.IO events (``/excel`` namespac
   ``excel:clear:conditionalFormat`` / ``excel:merge:cells`` /
   ``excel:unmerge:cells``。读侧 ``RangeFormatInfo`` 复用；写侧 ``set:rangeFormat``
   另用一套全可选偏更新模型（协议本身读/写不对称，详见下方注释）。
-- 表格 / 图表等其余数据结构随各自子 issue (#21–#25) 落地，避免提前过度建模。
+- #21 Worksheet — 工作表管理: ``excel:get:worksheets`` / ``excel:add:worksheet`` /
+  ``excel:delete:worksheet`` / ``excel:rename:worksheet`` / ``excel:activate:worksheet``。
+  ``get:worksheets`` 响应复用 #18 ``SheetInfo``；各事件请求字段形态以 spec type 为准
+  （非统一的可选 ``worksheetName``，详见各 Request DTO）。
+- 表格 / 图表等其余数据结构随各自子 issue (#22–#25) 落地，避免提前过度建模。
 """
 
 from typing import Any, ClassVar, Literal
@@ -252,6 +256,43 @@ class ConditionalFormatRule(SocketIOBaseModel):
     type: str = Field(..., alias="type", description="Rule type, e.g. cellValue|colorScale|dataBar|iconSet")
 
 
+# ---- #21 Worksheet: response data models -----------------------------------
+#
+# 各写事件响应形态互不相同（与 #19/#20 的统一 ``{address}`` 不同），故不复用
+# ``RangeOperationResult``，按 spec 分别建模。
+
+
+class GetWorksheetsData(SocketIOBaseModel):
+    """工作表列表 | ``excel:get:worksheets`` response data."""
+
+    worksheets: list[SheetInfo] = Field(..., alias="worksheets", description="All worksheets in the workbook")
+
+
+class AddWorksheetData(SocketIOBaseModel):
+    """新增工作表结果 | ``excel:add:worksheet`` response data."""
+
+    name: str = Field(..., alias="name", description="Actual name of the new worksheet")
+    index: int = Field(..., alias="index", description="Index of the new worksheet")
+
+
+class DeleteWorksheetData(SocketIOBaseModel):
+    """删除工作表结果 | ``excel:delete:worksheet`` response data."""
+
+    deleted: bool = Field(..., alias="deleted", description="Whether the worksheet was deleted")
+
+
+class RenameWorksheetData(SocketIOBaseModel):
+    """重命名工作表结果 | ``excel:rename:worksheet`` response data."""
+
+    name: str = Field(..., alias="name", description="Name after rename")
+
+
+class ActivateWorksheetData(SocketIOBaseModel):
+    """激活工作表结果 | ``excel:activate:worksheet`` response data."""
+
+    activated: bool = Field(..., alias="activated", description="Whether the worksheet was activated")
+
+
 # ============================================================================
 # Request DTOs (Server → AddIn, 自动注册 via event_name)
 # ============================================================================
@@ -429,3 +470,55 @@ class ExcelUnmergeCellsRequest(BaseRequest):
 
     address: str = Field(..., alias="address", description="Range address to unmerge, e.g. 'A1:C1'")
     worksheet_name: str | None = Field(default=None, alias="worksheetName", description="Worksheet name")
+
+
+# ---- #21 Worksheet: 工作表管理 ---------------------------------------------
+#
+# 字段形态以 spec type 为准，各事件不同（非 #19/#20 的统一可选 worksheetName）：
+#   get:worksheets   — 无业务参数
+#   add:worksheet    — name 可选（省略时 Excel 自动命名）
+#   delete/activate  — worksheetName 必填
+#   rename           — currentName + newName 均必填
+
+
+class ExcelGetWorksheetsRequest(BaseRequest):
+    """
+    Request: ``excel:get:worksheets`` — 获取工作簿中所有工作表列表。
+
+    无业务参数，仅携带 BaseRequest 三要素 (requestId / documentUri / timestamp)。
+    """
+
+    event_name: ClassVar[str] = "excel:get:worksheets"
+
+
+class ExcelAddWorksheetRequest(BaseRequest):
+    """Request: ``excel:add:worksheet`` — 添加新工作表（name 省略时由 Excel 自动命名）。"""
+
+    event_name: ClassVar[str] = "excel:add:worksheet"
+
+    name: str | None = Field(default=None, alias="name", description="New worksheet name; omitted = auto-named")
+
+
+class ExcelDeleteWorksheetRequest(BaseRequest):
+    """Request: ``excel:delete:worksheet`` — 删除指定工作表。"""
+
+    event_name: ClassVar[str] = "excel:delete:worksheet"
+
+    worksheet_name: str = Field(..., alias="worksheetName", description="Name of the worksheet to delete")
+
+
+class ExcelRenameWorksheetRequest(BaseRequest):
+    """Request: ``excel:rename:worksheet`` — 重命名工作表。"""
+
+    event_name: ClassVar[str] = "excel:rename:worksheet"
+
+    current_name: str = Field(..., alias="currentName", description="Current worksheet name")
+    new_name: str = Field(..., alias="newName", description="New worksheet name")
+
+
+class ExcelActivateWorksheetRequest(BaseRequest):
+    """Request: ``excel:activate:worksheet`` — 激活（切换到）指定工作表。"""
+
+    event_name: ClassVar[str] = "excel:activate:worksheet"
+
+    worksheet_name: str = Field(..., alias="worksheetName", description="Name of the worksheet to activate")

@@ -186,6 +186,46 @@ class TestWrapRequest:
         assert wrapped["address"] == "A1:C1"
         assert wrapped["documentUri"] == "file:///test.xlsx"
 
+    def test_wrap_excel_add_worksheet(self) -> None:
+        """Test wrapping excel:add:worksheet (optional name passes through verbatim)"""
+        business_params = {
+            "document_uri": "file:///test.xlsx",
+            "name": "数据分析",
+        }
+
+        wrapped = wrap_request("excel:add:worksheet", business_params)
+
+        assert wrapped["name"] == "数据分析"
+        assert wrapped["documentUri"] == "file:///test.xlsx"
+
+    def test_wrap_excel_rename_worksheet(self) -> None:
+        """Test wrapping excel:rename:worksheet (snake_case current_name/new_name → camelCase)"""
+        business_params = {
+            "document_uri": "file:///test.xlsx",
+            "current_name": "Sheet1",
+            "new_name": "销售数据",
+        }
+
+        wrapped = wrap_request("excel:rename:worksheet", business_params)
+
+        assert wrapped["currentName"] == "Sheet1"
+        assert wrapped["newName"] == "销售数据"
+        # snake_case keys must not leak to the wire payload
+        assert "current_name" not in wrapped
+        assert "new_name" not in wrapped
+
+    def test_wrap_excel_delete_worksheet(self) -> None:
+        """Test wrapping excel:delete:worksheet (required worksheet_name → worksheetName)"""
+        business_params = {
+            "document_uri": "file:///test.xlsx",
+            "worksheet_name": "Sheet3",
+        }
+
+        wrapped = wrap_request("excel:delete:worksheet", business_params)
+
+        assert wrapped["worksheetName"] == "Sheet3"
+        assert "worksheet_name" not in wrapped
+
     def test_wrap_ppt_insert_text(self) -> None:
         """Test wrapping ppt:insert:text"""
         business_params = {
@@ -240,8 +280,8 @@ class TestGetRegisteredEvents:
     def test_contains_all_excel_events(self) -> None:
         events = get_registered_events()
         excel_events = [e for e in events if e.startswith("excel:")]
-        # #18 read slice (3) + #19 Range CRUD + 公式 (7) + #20 Format/条件格式/合并 (6);
-        # remaining /excel events land with #21–#26.
+        # #18 read slice (3) + #19 Range CRUD + 公式 (7) + #20 Format/条件格式/合并 (6)
+        # + #21 Worksheet 管理 (5); remaining /excel events land with #22–#26.
         assert set(excel_events) >= {
             "excel:get:workbookInfo",
             "excel:get:worksheetInfo",
@@ -259,6 +299,11 @@ class TestGetRegisteredEvents:
             "excel:clear:conditionalFormat",
             "excel:merge:cells",
             "excel:unmerge:cells",
+            "excel:get:worksheets",
+            "excel:add:worksheet",
+            "excel:delete:worksheet",
+            "excel:rename:worksheet",
+            "excel:activate:worksheet",
         }
 
     def test_contains_all_ppt_events(self) -> None:
