@@ -17,13 +17,18 @@ Defines data structures for Excel-specific Socket.IO events (``/excel`` namespac
 - #19 Range — Range CRUD + 公式: ``excel:get:range`` / ``excel:set:range`` /
   ``excel:clear:range`` / ``excel:copy:range`` / ``excel:delete:range`` /
   ``excel:insert:range`` / ``excel:set:formula``；新增共享 ``RangeFormatInfo``
-  （#20 格式类复用）。
-- 格式 / 表格 / 图表等其余数据结构随各自子 issue (#20–#25) 落地，避免提前过度建模。
+  （#20 ``excel:get:rangeFormat`` 复用）。
+- #20 Format — 格式/条件格式/合并: ``excel:get:rangeFormat`` /
+  ``excel:set:rangeFormat`` / ``excel:add:conditionalFormat`` /
+  ``excel:clear:conditionalFormat`` / ``excel:merge:cells`` /
+  ``excel:unmerge:cells``。读侧 ``RangeFormatInfo`` 复用；写侧 ``set:rangeFormat``
+  另用一套全可选偏更新模型（协议本身读/写不对称，详见下方注释）。
+- 表格 / 图表等其余数据结构随各自子 issue (#21–#25) 落地，避免提前过度建模。
 """
 
 from typing import Any, ClassVar, Literal
 
-from pydantic import Field
+from pydantic import ConfigDict, Field
 
 from .common import BaseRequest, SocketIOBaseModel
 
@@ -103,8 +108,11 @@ class RangeFormatInfo(SocketIOBaseModel):
     """
     范围格式信息 | Range format info.
 
-    ``excel:get:range`` 在 ``includeFormat=true`` 时返回；#20 ``excel:get:rangeFormat`` /
-    ``excel:set:rangeFormat`` 复用本模型，故定义在 #19 Range 切片中作为共享类型。
+    ``excel:get:range`` 在 ``includeFormat=true`` 时返回；#20 ``excel:get:rangeFormat``
+    的响应 ``format`` 字段也复用本模型（OASP spec 明示「见 excel:get:range 中的
+    RangeFormatInfo 定义」），故定义在 #19 Range 切片中作为共享读侧类型。
+    注意：``excel:set:rangeFormat`` 写入侧**不**复用本模型（结构不对称，见
+    ``SetRangeFormatOptions``）。
     """
 
     font: RangeFontInfo = Field(..., alias="font", description="Font info")
@@ -133,9 +141,115 @@ class RangeOperationResult(SocketIOBaseModel):
 
     ``excel:set:range`` / ``clear:range`` / ``copy:range`` / ``delete:range`` /
     ``insert:range`` / ``set:formula`` 的响应统一为 ``{address}``。
+    #20 ``set:rangeFormat`` / ``add:conditionalFormat`` / ``clear:conditionalFormat`` /
+    ``merge:cells`` / ``unmerge:cells`` 的响应同为 ``{address}``，亦复用本模型。
     """
 
     address: str = Field(..., alias="address", description="Address operated on")
+
+
+# ---- #20 Format: get:rangeFormat response data -----------------------------
+
+
+class GetRangeFormatData(SocketIOBaseModel):
+    """
+    范围格式读取结果 | ``excel:get:rangeFormat`` response data.
+
+    ``format`` 字段复用 #19 共享读侧 ``RangeFormatInfo``。
+    """
+
+    address: str = Field(..., alias="address", description="Range address")
+    format: RangeFormatInfo = Field(..., alias="format", description="Range format info")
+
+
+# ---- #20 Format: set:rangeFormat write-side options (偏更新, 全可选) ---------
+#
+# 写入侧与读侧 ``RangeFormatInfo`` 结构不对称（协议如此），故不复用读侧模型：
+#   - 含 ``borders``（读侧无）
+#   - ``alignment`` 为嵌套对象（读侧是扁平 horizontalAlignment/verticalAlignment）
+#   - ``numberFormat`` 为标量字符串（读侧是二维数组）
+#   - 全字段可选（仅传入的属性会被修改）
+# 对齐/下划线/边框枚举为开放词表（协议用「等」），故用 ``str`` 透传并保留大小写。
+
+
+class BorderFormat(SocketIOBaseModel):
+    """单边框样式 | One border edge style (``excel:set:rangeFormat``)."""
+
+    style: str | None = Field(
+        default=None, alias="style", description="None|Thin|Medium|Thick|Dashed|Dotted ... (open vocab)"
+    )
+    color: str | None = Field(default=None, alias="color", description="Border color (#RRGGBB)")
+    weight: str | None = Field(default=None, alias="weight", description="Hairline|Thin|Medium|Thick")
+
+
+class RangeBorders(SocketIOBaseModel):
+    """四向边框 | Range border edges (``excel:set:rangeFormat``)."""
+
+    top: BorderFormat | None = Field(default=None, alias="top", description="Top border")
+    bottom: BorderFormat | None = Field(default=None, alias="bottom", description="Bottom border")
+    left: BorderFormat | None = Field(default=None, alias="left", description="Left border")
+    right: BorderFormat | None = Field(default=None, alias="right", description="Right border")
+
+
+class SetFontFormat(SocketIOBaseModel):
+    """字体偏更新 | Optional font fields (``excel:set:rangeFormat``)."""
+
+    name: str | None = Field(default=None, alias="name", description="Font name")
+    size: float | None = Field(default=None, alias="size", description="Font size in points")
+    bold: bool | None = Field(default=None, alias="bold", description="Bold")
+    italic: bool | None = Field(default=None, alias="italic", description="Italic")
+    color: str | None = Field(default=None, alias="color", description="Font color (#RRGGBB)")
+    underline: str | None = Field(default=None, alias="underline", description="None|Single|Double ... (open vocab)")
+
+
+class SetFillFormat(SocketIOBaseModel):
+    """填充偏更新 | Optional fill fields (``excel:set:rangeFormat``)."""
+
+    color: str | None = Field(default=None, alias="color", description="Fill color (#RRGGBB)")
+
+
+class SetAlignmentFormat(SocketIOBaseModel):
+    """对齐偏更新 | Optional alignment fields (``excel:set:rangeFormat``)."""
+
+    horizontal: str | None = Field(
+        default=None, alias="horizontal", description="Left|Center|Right|Fill|Justify|General ... (open vocab)"
+    )
+    vertical: str | None = Field(
+        default=None, alias="vertical", description="Top|Center|Bottom|Justify ... (open vocab)"
+    )
+    wrap_text: bool | None = Field(default=None, alias="wrapText", description="Wrap text")
+    indent_level: int | None = Field(default=None, alias="indentLevel", description="Indent level (0-based)")
+    text_orientation: int | None = Field(default=None, alias="textOrientation", description="Text orientation angle")
+
+
+class SetRangeFormatOptions(SocketIOBaseModel):
+    """
+    范围格式偏更新载荷 | ``excel:set:rangeFormat`` ``format`` payload (all optional).
+
+    仅传入的属性会被修改（偏更新语义）。结构与读侧 ``RangeFormatInfo`` 不同。
+    """
+
+    font: SetFontFormat | None = Field(default=None, alias="font", description="Font fields")
+    fill: SetFillFormat | None = Field(default=None, alias="fill", description="Fill fields")
+    borders: RangeBorders | None = Field(default=None, alias="borders", description="Border edges")
+    alignment: SetAlignmentFormat | None = Field(default=None, alias="alignment", description="Alignment fields")
+    number_format: str | None = Field(
+        default=None, alias="numberFormat", description="Number format string, e.g. '0.00', 'yyyy-mm-dd'"
+    )
+
+
+class ConditionalFormatRule(SocketIOBaseModel):
+    """
+    条件格式规则（透传）| Conditional-format rule, passthrough.
+
+    协议为透传模式：必填 ``type`` + 任意附加参数键（按 type 不同而不同）。
+    ``extra="allow"`` 保留附加键，``model_dump(by_alias=True, exclude_none=True)``
+    原样透传。``type`` 为开放字符串（如 cellValue/colorScale/dataBar/iconSet）。
+    """
+
+    model_config: ClassVar[ConfigDict] = ConfigDict(populate_by_name=True, extra="allow")
+
+    type: str = Field(..., alias="type", description="Rule type, e.g. cellValue|colorScale|dataBar|iconSet")
 
 
 # ============================================================================
@@ -253,4 +367,65 @@ class ExcelSetFormulaRequest(BaseRequest):
 
     address: str = Field(..., alias="address", description="Target cell address")
     formula: str = Field(..., alias="formula", description="Formula string including '=' (e.g. '=SUM(A1:A10)')")
+    worksheet_name: str | None = Field(default=None, alias="worksheetName", description="Worksheet name")
+
+
+# ---- #20 Format: 格式 / 条件格式 / 合并单元格 -------------------------------
+
+
+class ExcelGetRangeFormatRequest(BaseRequest):
+    """Request: ``excel:get:rangeFormat`` — 获取范围完整格式信息。"""
+
+    event_name: ClassVar[str] = "excel:get:rangeFormat"
+
+    address: str = Field(..., alias="address", description="Range address, e.g. 'A1:C3'")
+    worksheet_name: str | None = Field(
+        default=None, alias="worksheetName", description="Worksheet name; omitted = active worksheet"
+    )
+
+
+class ExcelSetRangeFormatRequest(BaseRequest):
+    """Request: ``excel:set:rangeFormat`` — 设置范围格式（偏更新，仅传入属性被改）。"""
+
+    event_name: ClassVar[str] = "excel:set:rangeFormat"
+
+    address: str = Field(..., alias="address", description="Range address")
+    format: SetRangeFormatOptions = Field(..., alias="format", description="Optional format fields to apply")
+    worksheet_name: str | None = Field(default=None, alias="worksheetName", description="Worksheet name")
+
+
+class ExcelAddConditionalFormatRequest(BaseRequest):
+    """Request: ``excel:add:conditionalFormat`` — 添加条件格式规则（规则透传）。"""
+
+    event_name: ClassVar[str] = "excel:add:conditionalFormat"
+
+    address: str = Field(..., alias="address", description="Range address, e.g. 'B2:B100'")
+    rule: ConditionalFormatRule = Field(..., alias="rule", description="Conditional-format rule (passthrough)")
+    worksheet_name: str | None = Field(default=None, alias="worksheetName", description="Worksheet name")
+
+
+class ExcelClearConditionalFormatRequest(BaseRequest):
+    """Request: ``excel:clear:conditionalFormat`` — 清除范围上的所有条件格式。"""
+
+    event_name: ClassVar[str] = "excel:clear:conditionalFormat"
+
+    address: str = Field(..., alias="address", description="Range address")
+    worksheet_name: str | None = Field(default=None, alias="worksheetName", description="Worksheet name")
+
+
+class ExcelMergeCellsRequest(BaseRequest):
+    """Request: ``excel:merge:cells`` — 合并单元格（保留左上角值）。"""
+
+    event_name: ClassVar[str] = "excel:merge:cells"
+
+    address: str = Field(..., alias="address", description="Range address to merge, e.g. 'A1:C1'")
+    worksheet_name: str | None = Field(default=None, alias="worksheetName", description="Worksheet name")
+
+
+class ExcelUnmergeCellsRequest(BaseRequest):
+    """Request: ``excel:unmerge:cells`` — 取消单元格合并。"""
+
+    event_name: ClassVar[str] = "excel:unmerge:cells"
+
+    address: str = Field(..., alias="address", description="Range address to unmerge, e.g. 'A1:C1'")
     worksheet_name: str | None = Field(default=None, alias="worksheetName", description="Worksheet name")

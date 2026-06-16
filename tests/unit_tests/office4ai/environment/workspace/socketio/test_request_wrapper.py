@@ -129,6 +129,63 @@ class TestWrapRequest:
         assert wrapped["address"] == "A1:C3"
         assert wrapped["includeFormat"] is True
 
+    def test_wrap_excel_set_range_format(self) -> None:
+        """Test wrapping excel:set:rangeFormat (nested partial format → camelCase, None dropped)"""
+        business_params = {
+            "document_uri": "file:///test.xlsx",
+            "address": "A1:C1",
+            "format": {
+                "font": {"bold": True, "size": 14},
+                "alignment": {"horizontal": "Center", "wrap_text": True},
+                "number_format": "0.00",
+            },
+        }
+
+        wrapped = wrap_request("excel:set:rangeFormat", business_params)
+
+        assert wrapped["address"] == "A1:C1"
+        assert wrapped["format"]["font"]["bold"] is True
+        # snake_case input fields surface as camelCase wire aliases
+        assert wrapped["format"]["alignment"]["wrapText"] is True
+        assert wrapped["format"]["numberFormat"] == "0.00"
+        # unset optional font fields are dropped (exclude_none)
+        assert "italic" not in wrapped["format"]["font"]
+        assert "wrap_text" not in wrapped["format"]["alignment"]
+
+    def test_wrap_excel_add_conditional_format_passthrough(self) -> None:
+        """Test wrapping excel:add:conditionalFormat (rule passthrough keeps extra keys)"""
+        business_params = {
+            "document_uri": "file:///test.xlsx",
+            "address": "B2:B100",
+            "rule": {
+                "type": "cellValue",
+                "operator": "greaterThan",
+                "value": 90,
+                "format": {"fill": {"color": "#C6EFCE"}},
+            },
+        }
+
+        wrapped = wrap_request("excel:add:conditionalFormat", business_params)
+
+        assert wrapped["address"] == "B2:B100"
+        # passthrough: type required + arbitrary extra keys preserved verbatim
+        assert wrapped["rule"]["type"] == "cellValue"
+        assert wrapped["rule"]["operator"] == "greaterThan"
+        assert wrapped["rule"]["value"] == 90
+        assert wrapped["rule"]["format"]["fill"]["color"] == "#C6EFCE"
+
+    def test_wrap_excel_merge_cells(self) -> None:
+        """Test wrapping excel:merge:cells (minimal {address})"""
+        business_params = {
+            "document_uri": "file:///test.xlsx",
+            "address": "A1:C1",
+        }
+
+        wrapped = wrap_request("excel:merge:cells", business_params)
+
+        assert wrapped["address"] == "A1:C1"
+        assert wrapped["documentUri"] == "file:///test.xlsx"
+
     def test_wrap_ppt_insert_text(self) -> None:
         """Test wrapping ppt:insert:text"""
         business_params = {
@@ -183,7 +240,8 @@ class TestGetRegisteredEvents:
     def test_contains_all_excel_events(self) -> None:
         events = get_registered_events()
         excel_events = [e for e in events if e.startswith("excel:")]
-        # #18 read slice (3) + #19 Range CRUD + 公式 (7); remaining /excel events land with #20–#26.
+        # #18 read slice (3) + #19 Range CRUD + 公式 (7) + #20 Format/条件格式/合并 (6);
+        # remaining /excel events land with #21–#26.
         assert set(excel_events) >= {
             "excel:get:workbookInfo",
             "excel:get:worksheetInfo",
@@ -195,6 +253,12 @@ class TestGetRegisteredEvents:
             "excel:delete:range",
             "excel:insert:range",
             "excel:set:formula",
+            "excel:get:rangeFormat",
+            "excel:set:rangeFormat",
+            "excel:add:conditionalFormat",
+            "excel:clear:conditionalFormat",
+            "excel:merge:cells",
+            "excel:unmerge:cells",
         }
 
     def test_contains_all_ppt_events(self) -> None:

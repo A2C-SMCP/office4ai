@@ -4,11 +4,13 @@ Test Excel DTOs
 测试 Excel 事件的数据传输对象 (OASP 0.3.0 events-excel.md, issue #18 Foundation)。
 
 覆盖:
-- #18 读事件 + #19 Range/公式 Request DTO 的构造、必填校验、event_name、camelCase
-  序列化、枚举约束、注册。
+- #18 读事件 + #19 Range/公式 + #20 Format/条件格式/合并 Request DTO 的构造、必填
+  校验、event_name、camelCase 序列化、枚举约束、注册。
 - 共享数据模型 (SheetInfo / UsedRangeInfo / WorkbookInfo / WorksheetInfo /
-  SelectedRangeInfo / RangeFormatInfo / GetRangeData / RangeOperationResult) 的
-  snake_case ↔ camelCase 双向兼容。
+  SelectedRangeInfo / RangeFormatInfo / GetRangeData / RangeOperationResult /
+  GetRangeFormatData) 的 snake_case ↔ camelCase 双向兼容。
+- #20 写侧偏更新模型 (SetRangeFormatOptions) 与条件格式透传模型
+  (ConditionalFormatRule) —— 读/写不对称、None 剔除、extra 透传。
 """
 
 from __future__ import annotations
@@ -18,20 +20,29 @@ from pydantic import ValidationError
 
 from office4ai.environment.workspace.dtos.common import request_registry
 from office4ai.environment.workspace.dtos.excel import (
+    ConditionalFormatRule,
+    ExcelAddConditionalFormatRequest,
+    ExcelClearConditionalFormatRequest,
     ExcelClearRangeRequest,
     ExcelCopyRangeRequest,
     ExcelDeleteRangeRequest,
+    ExcelGetRangeFormatRequest,
     ExcelGetRangeRequest,
     ExcelGetSelectedRangeRequest,
     ExcelGetWorkbookInfoRequest,
     ExcelGetWorksheetInfoRequest,
     ExcelInsertRangeRequest,
+    ExcelMergeCellsRequest,
     ExcelSetFormulaRequest,
+    ExcelSetRangeFormatRequest,
     ExcelSetRangeRequest,
+    ExcelUnmergeCellsRequest,
     GetRangeData,
+    GetRangeFormatData,
     RangeFormatInfo,
     RangeOperationResult,
     SelectedRangeInfo,
+    SetRangeFormatOptions,
     SheetInfo,
     UsedRangeInfo,
     WorkbookInfo,
@@ -140,7 +151,7 @@ class TestExcelGetSelectedRangeRequest:
 
 
 class TestRequestRegistration:
-    """读事件 (#18) + Range/公式事件 (#19) 应自动注册到全局 request_registry。"""
+    """读事件 (#18) + Range/公式 (#19) + Format/条件格式/合并 (#20) 应自动注册。"""
 
     @pytest.mark.parametrize(
         "event,dto_cls",
@@ -155,6 +166,12 @@ class TestRequestRegistration:
             ("excel:delete:range", ExcelDeleteRangeRequest),
             ("excel:insert:range", ExcelInsertRangeRequest),
             ("excel:set:formula", ExcelSetFormulaRequest),
+            ("excel:get:rangeFormat", ExcelGetRangeFormatRequest),
+            ("excel:set:rangeFormat", ExcelSetRangeFormatRequest),
+            ("excel:add:conditionalFormat", ExcelAddConditionalFormatRequest),
+            ("excel:clear:conditionalFormat", ExcelClearConditionalFormatRequest),
+            ("excel:merge:cells", ExcelMergeCellsRequest),
+            ("excel:unmerge:cells", ExcelUnmergeCellsRequest),
         ],
     )
     def test_event_registered(self, event: str, dto_cls: type) -> None:
@@ -484,3 +501,228 @@ class TestRangeOperationResult:
         result = RangeOperationResult.model_validate(wire)
         assert result.address == "Sheet1!A1:C3"
         assert result.model_dump(by_alias=True) == wire
+
+
+# ============================================================================
+# #20 Format: Request DTOs (格式 / 条件格式 / 合并单元格)
+# ============================================================================
+
+
+class TestExcelGetRangeFormatRequest:
+    """Test ExcelGetRangeFormatRequest DTO (excel:get:rangeFormat)"""
+
+    def test_event_name_attribute(self) -> None:
+        assert ExcelGetRangeFormatRequest.event_name == "excel:get:rangeFormat"
+
+    def test_required_address(self) -> None:
+        with pytest.raises(ValidationError):
+            ExcelGetRangeFormatRequest(requestId="r", documentUri="file:///d.xlsx")  # type: ignore[call-arg]
+
+    def test_payload_camel_case_and_omits_none_worksheet(self) -> None:
+        payload = ExcelGetRangeFormatRequest.build(document_uri="file:///d.xlsx", address="A1:C3").to_payload()
+        assert payload["address"] == "A1:C3"
+        assert "worksheetName" not in payload
+
+
+class TestExcelSetRangeFormatRequest:
+    """Test ExcelSetRangeFormatRequest DTO (excel:set:rangeFormat)"""
+
+    def test_event_name_attribute(self) -> None:
+        assert ExcelSetRangeFormatRequest.event_name == "excel:set:rangeFormat"
+
+    def test_required_format(self) -> None:
+        with pytest.raises(ValidationError):
+            ExcelSetRangeFormatRequest(requestId="r", documentUri="file:///d.xlsx", address="A1")  # type: ignore[call-arg]
+
+    def test_partial_format_payload_camel_case_and_drops_none(self) -> None:
+        """写侧偏更新: 仅传入字段出现, 未传字段 (exclude_none) 不出现, alias → camelCase。"""
+        payload = ExcelSetRangeFormatRequest.build(
+            document_uri="file:///d.xlsx",
+            address="A1:C1",
+            format={
+                "font": {"bold": True, "size": 14},
+                "alignment": {"horizontal": "Center", "wrap_text": True},
+                "number_format": "0.00",
+            },
+        ).to_payload()
+        assert payload["address"] == "A1:C1"
+        assert payload["format"]["font"]["bold"] is True
+        assert payload["format"]["font"]["size"] == 14
+        # snake_case 输入 → camelCase wire
+        assert payload["format"]["alignment"]["wrapText"] is True
+        assert payload["format"]["numberFormat"] == "0.00"
+        # 未传入的可选字段被剔除
+        assert "italic" not in payload["format"]["font"]
+        assert "fill" not in payload["format"]
+        assert "borders" not in payload["format"]
+
+    def test_borders_passthrough(self) -> None:
+        payload = ExcelSetRangeFormatRequest.build(
+            document_uri="file:///d.xlsx",
+            address="A1:C1",
+            format={"borders": {"top": {"style": "Thin", "color": "#000000"}}},
+        ).to_payload()
+        assert payload["format"]["borders"]["top"]["style"] == "Thin"
+        assert payload["format"]["borders"]["top"]["color"] == "#000000"
+
+
+class TestExcelAddConditionalFormatRequest:
+    """Test ExcelAddConditionalFormatRequest DTO (excel:add:conditionalFormat)"""
+
+    def test_event_name_attribute(self) -> None:
+        assert ExcelAddConditionalFormatRequest.event_name == "excel:add:conditionalFormat"
+
+    def test_required_rule(self) -> None:
+        with pytest.raises(ValidationError):
+            ExcelAddConditionalFormatRequest(requestId="r", documentUri="file:///d.xlsx", address="B2:B100")  # type: ignore[call-arg]
+
+    def test_rule_requires_type(self) -> None:
+        """规则透传但 type 必填。"""
+        with pytest.raises(ValidationError):
+            ExcelAddConditionalFormatRequest.build(
+                document_uri="file:///d.xlsx", address="B2:B100", rule={"operator": "greaterThan"}
+            )
+
+    def test_rule_passthrough_preserves_extra_keys(self) -> None:
+        payload = ExcelAddConditionalFormatRequest.build(
+            document_uri="file:///d.xlsx",
+            address="B2:B100",
+            rule={
+                "type": "cellValue",
+                "operator": "greaterThan",
+                "value": 90,
+                "format": {"fill": {"color": "#C6EFCE"}},
+            },
+        ).to_payload()
+        assert payload["rule"]["type"] == "cellValue"
+        assert payload["rule"]["operator"] == "greaterThan"
+        assert payload["rule"]["value"] == 90
+        assert payload["rule"]["format"]["fill"]["color"] == "#C6EFCE"
+
+
+class TestExcelClearConditionalFormatRequest:
+    """Test ExcelClearConditionalFormatRequest DTO (excel:clear:conditionalFormat)"""
+
+    def test_event_name_attribute(self) -> None:
+        assert ExcelClearConditionalFormatRequest.event_name == "excel:clear:conditionalFormat"
+
+    def test_payload_minimal_address(self) -> None:
+        payload = ExcelClearConditionalFormatRequest.build(
+            document_uri="file:///d.xlsx", address="B2:B100"
+        ).to_payload()
+        assert payload["address"] == "B2:B100"
+        assert "worksheetName" not in payload
+
+
+class TestExcelMergeCellsRequest:
+    """Test ExcelMergeCellsRequest DTO (excel:merge:cells)"""
+
+    def test_event_name_attribute(self) -> None:
+        assert ExcelMergeCellsRequest.event_name == "excel:merge:cells"
+
+    def test_required_address(self) -> None:
+        with pytest.raises(ValidationError):
+            ExcelMergeCellsRequest(requestId="r", documentUri="file:///d.xlsx")  # type: ignore[call-arg]
+
+    def test_payload_with_worksheet(self) -> None:
+        payload = ExcelMergeCellsRequest.build(
+            document_uri="file:///d.xlsx", address="A1:C1", worksheet_name="Sheet1"
+        ).to_payload()
+        assert payload["address"] == "A1:C1"
+        assert payload["worksheetName"] == "Sheet1"
+        assert "worksheet_name" not in payload
+
+
+class TestExcelUnmergeCellsRequest:
+    """Test ExcelUnmergeCellsRequest DTO (excel:unmerge:cells)"""
+
+    def test_event_name_attribute(self) -> None:
+        assert ExcelUnmergeCellsRequest.event_name == "excel:unmerge:cells"
+
+    def test_payload_minimal_address(self) -> None:
+        payload = ExcelUnmergeCellsRequest.build(document_uri="file:///d.xlsx", address="A1:C1").to_payload()
+        assert payload["address"] == "A1:C1"
+        assert "worksheetName" not in payload
+
+
+# ============================================================================
+# #20 Format: data + write-side option models
+# ============================================================================
+
+
+class TestGetRangeFormatData:
+    """Test GetRangeFormatData data model (excel:get:rangeFormat response data)"""
+
+    def test_round_trip_reuses_range_format_info(self) -> None:
+        wire = {
+            "address": "Sheet1!A1:C3",
+            "format": {
+                "font": {
+                    "name": "等线",
+                    "size": 11,
+                    "bold": True,
+                    "italic": False,
+                    "color": "#000000",
+                    "underline": "None",
+                },
+                "fill": {"color": "#FFFF00"},
+                "horizontalAlignment": "Center",
+                "verticalAlignment": "Center",
+                "wrapText": True,
+                "numberFormat": [["General", "0.00", "#,##0"]],
+            },
+        }
+        data = GetRangeFormatData.model_validate(wire)
+        assert data.address == "Sheet1!A1:C3"
+        # format 字段复用 #19 读侧 RangeFormatInfo
+        assert isinstance(data.format, RangeFormatInfo)
+        assert data.format.font.bold is True
+        assert data.format.horizontal_alignment == "Center"
+        assert data.model_dump(by_alias=True) == wire
+
+    def test_format_required(self) -> None:
+        with pytest.raises(ValidationError):
+            GetRangeFormatData.model_validate({"address": "A1"})
+
+
+class TestSetRangeFormatOptions:
+    """Test SetRangeFormatOptions write-side partial-update model (read/write asymmetry)"""
+
+    def test_all_fields_optional_empty_payload(self) -> None:
+        """全字段可选: 空对象 dump (exclude_none) 为空 dict。"""
+        opts = SetRangeFormatOptions()
+        assert opts.model_dump(by_alias=True, exclude_none=True) == {}
+
+    def test_accepts_snake_and_camel_alignment(self) -> None:
+        snake = SetRangeFormatOptions(alignment={"wrap_text": True, "indent_level": 2})
+        camel = SetRangeFormatOptions(alignment={"wrapText": True, "indentLevel": 2})
+        assert snake.alignment is not None and camel.alignment is not None
+        assert snake.alignment.wrap_text is camel.alignment.wrap_text is True
+        assert snake.alignment.indent_level == camel.alignment.indent_level == 2
+
+    def test_number_format_is_scalar_string(self) -> None:
+        """写侧 numberFormat 为标量字符串 (区别于读侧 RangeFormatInfo 的二维数组)。"""
+        opts = SetRangeFormatOptions(number_format="yyyy-mm-dd")
+        dumped = opts.model_dump(by_alias=True, exclude_none=True)
+        assert dumped == {"numberFormat": "yyyy-mm-dd"}
+
+    def test_alignment_preserves_case(self) -> None:
+        """对齐枚举为开放词表, str 透传保留大小写 (如 'Center')。"""
+        opts = SetRangeFormatOptions(alignment={"horizontal": "Center", "vertical": "Justify"})
+        dumped = opts.model_dump(by_alias=True, exclude_none=True)
+        assert dumped["alignment"]["horizontal"] == "Center"
+        assert dumped["alignment"]["vertical"] == "Justify"
+
+
+class TestConditionalFormatRule:
+    """Test ConditionalFormatRule passthrough model (extra='allow')"""
+
+    def test_type_required(self) -> None:
+        with pytest.raises(ValidationError):
+            ConditionalFormatRule.model_validate({"operator": "greaterThan"})
+
+    def test_extra_keys_preserved_round_trip(self) -> None:
+        wire = {"type": "colorScale", "minColor": "#FF0000", "maxColor": "#00FF00"}
+        rule = ConditionalFormatRule.model_validate(wire)
+        assert rule.type == "colorScale"
+        assert rule.model_dump(by_alias=True, exclude_none=True) == wire

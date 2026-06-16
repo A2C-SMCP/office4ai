@@ -15,16 +15,22 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from office4ai.a2c_smcp.tools.excel import (
+    ExcelAddConditionalFormatTool,
+    ExcelClearConditionalFormatTool,
     ExcelClearRangeTool,
     ExcelCopyRangeTool,
     ExcelDeleteRangeTool,
+    ExcelGetRangeFormatTool,
     ExcelGetRangeTool,
     ExcelGetSelectedRangeTool,
     ExcelGetWorkbookInfoTool,
     ExcelGetWorksheetInfoTool,
     ExcelInsertRangeTool,
+    ExcelMergeCellsTool,
     ExcelSetFormulaTool,
+    ExcelSetRangeFormatTool,
     ExcelSetRangeTool,
+    ExcelUnmergeCellsTool,
 )
 from office4ai.environment.workspace.base import OfficeObs
 
@@ -57,6 +63,13 @@ class TestToolMetadata:
         (ExcelDeleteRangeTool, "excel_delete_range", "excel", "delete:range"),
         (ExcelInsertRangeTool, "excel_insert_range", "excel", "insert:range"),
         (ExcelSetFormulaTool, "excel_set_formula", "excel", "set:formula"),
+        # Format / 条件格式 / 合并单元格 (#20)
+        (ExcelGetRangeFormatTool, "excel_get_range_format", "excel", "get:rangeFormat"),
+        (ExcelSetRangeFormatTool, "excel_set_range_format", "excel", "set:rangeFormat"),
+        (ExcelAddConditionalFormatTool, "excel_add_conditional_format", "excel", "add:conditionalFormat"),
+        (ExcelClearConditionalFormatTool, "excel_clear_conditional_format", "excel", "clear:conditionalFormat"),
+        (ExcelMergeCellsTool, "excel_merge_cells", "excel", "merge:cells"),
+        (ExcelUnmergeCellsTool, "excel_unmerge_cells", "excel", "unmerge:cells"),
     ]
 
     @pytest.mark.parametrize("tool_cls,expected_name,expected_category,expected_event", TOOL_SPECS)
@@ -90,6 +103,12 @@ class TestToolMetadata:
             "excel_delete_range": "excel:delete:range",
             "excel_insert_range": "excel:insert:range",
             "excel_set_formula": "excel:set:formula",
+            "excel_get_range_format": "excel:get:rangeFormat",
+            "excel_set_range_format": "excel:set:rangeFormat",
+            "excel_add_conditional_format": "excel:add:conditionalFormat",
+            "excel_clear_conditional_format": "excel:clear:conditionalFormat",
+            "excel_merge_cells": "excel:merge:cells",
+            "excel_unmerge_cells": "excel:unmerge:cells",
         }
         for tool_cls, name, _, _ in self.TOOL_SPECS:
             tool = tool_cls(mock_workspace)
@@ -258,6 +277,105 @@ class TestExecuteFlow:
         action = mock_workspace.execute.call_args[0][0]
         assert "worksheet_name" not in action.params
 
+    # ---- #20 Format / 条件格式 / 合并单元格 -------------------------------
+
+    @pytest.mark.asyncio
+    async def test_get_range_format_builds_correct_action(self, mock_workspace):
+        mock_workspace.execute.return_value = OfficeObs(success=True, data={})
+
+        tool = ExcelGetRangeFormatTool(mock_workspace)
+        await tool.execute({"document_uri": "file:///data.xlsx", "address": "A1:C3"})
+
+        action = mock_workspace.execute.call_args[0][0]
+        assert action.category == "excel"
+        assert action.action_name == "get:rangeFormat"
+        assert action.params["address"] == "A1:C3"
+        assert "worksheet_name" not in action.params
+
+    @pytest.mark.asyncio
+    async def test_set_range_format_passes_partial_format(self, mock_workspace):
+        """format 偏更新结构以 snake_case 流入 params；未传字段被 exclude_none 剔除。"""
+        mock_workspace.execute.return_value = OfficeObs(success=True, data={})
+
+        tool = ExcelSetRangeFormatTool(mock_workspace)
+        await tool.execute(
+            {
+                "document_uri": "file:///data.xlsx",
+                "address": "A1:C1",
+                "format": {"font": {"bold": True}, "alignment": {"horizontal": "Center"}},
+            }
+        )
+
+        action = mock_workspace.execute.call_args[0][0]
+        assert action.action_name == "set:rangeFormat"
+        assert action.params["format"]["font"]["bold"] is True
+        assert action.params["format"]["alignment"]["horizontal"] == "Center"
+        # 未传入的可选字段不应出现
+        assert "fill" not in action.params["format"]
+
+    @pytest.mark.asyncio
+    async def test_add_conditional_format_passes_rule_passthrough(self, mock_workspace):
+        mock_workspace.execute.return_value = OfficeObs(success=True, data={})
+
+        tool = ExcelAddConditionalFormatTool(mock_workspace)
+        await tool.execute(
+            {
+                "document_uri": "file:///data.xlsx",
+                "address": "B2:B100",
+                "rule": {"type": "cellValue", "operator": "greaterThan", "value": 90},
+            }
+        )
+
+        action = mock_workspace.execute.call_args[0][0]
+        assert action.action_name == "add:conditionalFormat"
+        assert action.params["rule"]["type"] == "cellValue"
+        assert action.params["rule"]["operator"] == "greaterThan"
+        assert action.params["rule"]["value"] == 90
+
+    @pytest.mark.asyncio
+    async def test_add_conditional_format_rejects_rule_without_type(self, mock_workspace):
+        """rule 透传但 type 必填；缺失应在输入校验阶段被拒。"""
+        tool = ExcelAddConditionalFormatTool(mock_workspace)
+        result = await tool.execute(
+            {"document_uri": "file:///data.xlsx", "address": "B2:B100", "rule": {"operator": "greaterThan"}}
+        )
+        assert result["success"] is False
+        mock_workspace.execute.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_clear_conditional_format_builds_correct_action(self, mock_workspace):
+        mock_workspace.execute.return_value = OfficeObs(success=True, data={})
+
+        tool = ExcelClearConditionalFormatTool(mock_workspace)
+        await tool.execute({"document_uri": "file:///data.xlsx", "address": "B2:B100"})
+
+        action = mock_workspace.execute.call_args[0][0]
+        assert action.action_name == "clear:conditionalFormat"
+        assert action.params["address"] == "B2:B100"
+
+    @pytest.mark.asyncio
+    async def test_merge_cells_builds_correct_action(self, mock_workspace):
+        mock_workspace.execute.return_value = OfficeObs(success=True, data={})
+
+        tool = ExcelMergeCellsTool(mock_workspace)
+        await tool.execute({"document_uri": "file:///data.xlsx", "address": "A1:C1", "worksheet_name": "Sheet1"})
+
+        action = mock_workspace.execute.call_args[0][0]
+        assert action.action_name == "merge:cells"
+        assert action.params["address"] == "A1:C1"
+        assert action.params["worksheet_name"] == "Sheet1"
+
+    @pytest.mark.asyncio
+    async def test_unmerge_cells_builds_correct_action(self, mock_workspace):
+        mock_workspace.execute.return_value = OfficeObs(success=True, data={})
+
+        tool = ExcelUnmergeCellsTool(mock_workspace)
+        await tool.execute({"document_uri": "file:///data.xlsx", "address": "A1:C1"})
+
+        action = mock_workspace.execute.call_args[0][0]
+        assert action.action_name == "unmerge:cells"
+        assert action.params["address"] == "A1:C1"
+
 
 # ============================================================================
 # format_result Tests (获取类工具: content + data)
@@ -370,3 +488,55 @@ class TestFormatResult:
         result = tool.format_result(obs)
         assert result["success"] is False
         assert result["error"] == "5002 RANGE_INVALID"
+
+    # ---- #20 Format / 条件格式 / 合并单元格 -------------------------------
+
+    def test_get_range_format_summary(self, mock_workspace):
+        """get:rangeFormat 覆写 format_result: 返回字体摘要 content + 完整 data。"""
+        tool = ExcelGetRangeFormatTool(mock_workspace)
+        obs = OfficeObs(
+            success=True,
+            data={
+                "address": "Sheet1!A1:C3",
+                "format": {
+                    "font": {"name": "Calibri", "size": 12, "bold": True},
+                    "fill": {"color": "#FFFF00"},
+                },
+            },
+        )
+        result = tool.format_result(obs)
+        assert result["success"] is True
+        assert "Sheet1!A1:C3" in result["content"]
+        assert "Calibri" in result["content"]
+        assert result["data"]["format"]["fill"]["color"] == "#FFFF00"
+
+    def test_get_range_format_failure_returns_error(self, mock_workspace):
+        tool = ExcelGetRangeFormatTool(mock_workspace)
+        obs = OfficeObs(success=False, data={}, error="5001 WORKSHEET_NOT_FOUND")
+        result = tool.format_result(obs)
+        assert result["success"] is False
+        assert result["error"] == "5001 WORKSHEET_NOT_FOUND"
+
+    def test_set_range_format_uses_base_format_result(self, mock_workspace):
+        """写工具不覆写 format_result: 成功时返回 {success, data}，无 content。"""
+        tool = ExcelSetRangeFormatTool(mock_workspace)
+        obs = OfficeObs(success=True, data={"address": "Sheet1!A1:C1"})
+        result = tool.format_result(obs)
+        assert result == {"success": True, "data": {"address": "Sheet1!A1:C1"}}
+        assert "content" not in result
+
+    def test_merge_cells_surfaces_merge_conflict_error(self, mock_workspace):
+        """合并冲突由 AddIn 返回 5003 MERGE_CONFLICT；consumer 透传。"""
+        tool = ExcelMergeCellsTool(mock_workspace)
+        obs = OfficeObs(success=False, data={}, error="5003 MERGE_CONFLICT")
+        result = tool.format_result(obs)
+        assert result["success"] is False
+        assert result["error"] == "5003 MERGE_CONFLICT"
+
+    def test_set_range_format_surfaces_protected_sheet_error(self, mock_workspace):
+        """受保护工作表由 AddIn 返回 5004 PROTECTED_SHEET；consumer 透传。"""
+        tool = ExcelSetRangeFormatTool(mock_workspace)
+        obs = OfficeObs(success=False, data={}, error="5004 PROTECTED_SHEET")
+        result = tool.format_result(obs)
+        assert result["success"] is False
+        assert result["error"] == "5004 PROTECTED_SHEET"
