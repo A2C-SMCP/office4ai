@@ -17,11 +17,23 @@ from office4ai.environment.workspace.dtos.common import (
     ErrorResponse,
 )
 
-# Excel DTOs (OASP 0.3.0 events-excel.md, milestone #3 — state-awareness slice #18)
+# Excel DTOs (OASP 0.3.0 events-excel.md, milestone #3 — #18 read slice + #19 Range)
 from office4ai.environment.workspace.dtos.excel import (
+    ExcelClearRangeRequest,
+    ExcelCopyRangeRequest,
+    ExcelDeleteRangeRequest,
+    ExcelGetRangeRequest,
     ExcelGetSelectedRangeRequest,
     ExcelGetWorkbookInfoRequest,
     ExcelGetWorksheetInfoRequest,
+    ExcelInsertRangeRequest,
+    ExcelSetFormulaRequest,
+    ExcelSetRangeRequest,
+    GetRangeData,
+    RangeFillInfo,
+    RangeFontInfo,
+    RangeFormatInfo,
+    RangeOperationResult,
     SelectedRangeInfo,
     SheetInfo,
     UsedRangeInfo,
@@ -90,7 +102,7 @@ __all__ = [
     "WordInsertTOCRequest",
     "WordExportContentRequest",
     "SelectionInfo",
-    # Excel (state-awareness slice #18)
+    # Excel read slice (#18)
     "ExcelGetWorkbookInfoRequest",
     "ExcelGetWorksheetInfoRequest",
     "ExcelGetSelectedRangeRequest",
@@ -99,6 +111,19 @@ __all__ = [
     "WorkbookInfo",
     "WorksheetInfo",
     "SelectedRangeInfo",
+    # Excel Range CRUD + 公式 (#19)
+    "ExcelGetRangeRequest",
+    "ExcelSetRangeRequest",
+    "ExcelClearRangeRequest",
+    "ExcelCopyRangeRequest",
+    "ExcelDeleteRangeRequest",
+    "ExcelInsertRangeRequest",
+    "ExcelSetFormulaRequest",
+    "RangeFontInfo",
+    "RangeFillInfo",
+    "RangeFormatInfo",
+    "GetRangeData",
+    "RangeOperationResult",
     # PPT
     "PptGetCurrentSlideElementsRequest",
     "PptGetSlideElementsRequest",

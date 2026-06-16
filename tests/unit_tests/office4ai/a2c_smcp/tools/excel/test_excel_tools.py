@@ -15,9 +15,16 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from office4ai.a2c_smcp.tools.excel import (
+    ExcelClearRangeTool,
+    ExcelCopyRangeTool,
+    ExcelDeleteRangeTool,
+    ExcelGetRangeTool,
     ExcelGetSelectedRangeTool,
     ExcelGetWorkbookInfoTool,
     ExcelGetWorksheetInfoTool,
+    ExcelInsertRangeTool,
+    ExcelSetFormulaTool,
+    ExcelSetRangeTool,
 )
 from office4ai.environment.workspace.base import OfficeObs
 
@@ -42,6 +49,14 @@ class TestToolMetadata:
         (ExcelGetWorkbookInfoTool, "excel_get_workbook_info", "excel", "get:workbookInfo"),
         (ExcelGetWorksheetInfoTool, "excel_get_worksheet_info", "excel", "get:worksheetInfo"),
         (ExcelGetSelectedRangeTool, "excel_get_selected_range", "excel", "get:selectedRange"),
+        # Range CRUD + 公式 (#19)
+        (ExcelGetRangeTool, "excel_get_range", "excel", "get:range"),
+        (ExcelSetRangeTool, "excel_set_range", "excel", "set:range"),
+        (ExcelClearRangeTool, "excel_clear_range", "excel", "clear:range"),
+        (ExcelCopyRangeTool, "excel_copy_range", "excel", "copy:range"),
+        (ExcelDeleteRangeTool, "excel_delete_range", "excel", "delete:range"),
+        (ExcelInsertRangeTool, "excel_insert_range", "excel", "insert:range"),
+        (ExcelSetFormulaTool, "excel_set_formula", "excel", "set:formula"),
     ]
 
     @pytest.mark.parametrize("tool_cls,expected_name,expected_category,expected_event", TOOL_SPECS)
@@ -68,6 +83,13 @@ class TestToolMetadata:
             "excel_get_workbook_info": "excel:get:workbookInfo",
             "excel_get_worksheet_info": "excel:get:worksheetInfo",
             "excel_get_selected_range": "excel:get:selectedRange",
+            "excel_get_range": "excel:get:range",
+            "excel_set_range": "excel:set:range",
+            "excel_clear_range": "excel:clear:range",
+            "excel_copy_range": "excel:copy:range",
+            "excel_delete_range": "excel:delete:range",
+            "excel_insert_range": "excel:insert:range",
+            "excel_set_formula": "excel:set:formula",
         }
         for tool_cls, name, _, _ in self.TOOL_SPECS:
             tool = tool_cls(mock_workspace)
@@ -138,6 +160,104 @@ class TestExecuteFlow:
         assert "error" in result
         mock_workspace.execute.assert_not_called()
 
+    @pytest.mark.asyncio
+    async def test_get_range_builds_action_with_params(self, mock_workspace):
+        mock_workspace.execute.return_value = OfficeObs(success=True, data={})
+
+        tool = ExcelGetRangeTool(mock_workspace)
+        await tool.execute({"document_uri": "file:///data.xlsx", "address": "A1:C3", "include_format": True})
+
+        action = mock_workspace.execute.call_args[0][0]
+        assert action.category == "excel"
+        assert action.action_name == "get:range"
+        assert action.params["address"] == "A1:C3"
+        assert action.params["include_format"] is True
+
+    @pytest.mark.asyncio
+    async def test_set_range_passes_scalar_or_array_values(self, mock_workspace):
+        mock_workspace.execute.return_value = OfficeObs(success=True, data={})
+
+        tool = ExcelSetRangeTool(mock_workspace)
+        await tool.execute({"document_uri": "file:///data.xlsx", "address": "A1:B2", "values": [[1, 2], [3, 4]]})
+
+        action = mock_workspace.execute.call_args[0][0]
+        assert action.action_name == "set:range"
+        assert action.params["values"] == [[1, 2], [3, 4]]
+
+    @pytest.mark.asyncio
+    async def test_clear_range_passes_clear_type(self, mock_workspace):
+        mock_workspace.execute.return_value = OfficeObs(success=True, data={})
+
+        tool = ExcelClearRangeTool(mock_workspace)
+        await tool.execute({"document_uri": "file:///data.xlsx", "address": "A1:C3", "clear_type": "contents"})
+
+        action = mock_workspace.execute.call_args[0][0]
+        assert action.action_name == "clear:range"
+        assert action.params["clear_type"] == "contents"
+
+    @pytest.mark.asyncio
+    async def test_clear_range_rejects_invalid_clear_type(self, mock_workspace):
+        tool = ExcelClearRangeTool(mock_workspace)
+        result = await tool.execute(
+            {"document_uri": "file:///data.xlsx", "address": "A1:C3", "clear_type": "everything"}
+        )
+        assert result["success"] is False
+        mock_workspace.execute.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_copy_range_passes_source_target(self, mock_workspace):
+        mock_workspace.execute.return_value = OfficeObs(success=True, data={})
+
+        tool = ExcelCopyRangeTool(mock_workspace)
+        await tool.execute({"document_uri": "file:///data.xlsx", "source_address": "A1:C3", "target_address": "E1:G3"})
+
+        action = mock_workspace.execute.call_args[0][0]
+        assert action.action_name == "copy:range"
+        assert action.params["source_address"] == "A1:C3"
+        assert action.params["target_address"] == "E1:G3"
+
+    @pytest.mark.asyncio
+    async def test_delete_range_rejects_insert_direction(self, mock_workspace):
+        """delete 仅接受 up/left；'down' 应在输入校验阶段被拒。"""
+        tool = ExcelDeleteRangeTool(mock_workspace)
+        result = await tool.execute(
+            {"document_uri": "file:///data.xlsx", "address": "B2:B5", "shift_direction": "down"}
+        )
+        assert result["success"] is False
+        mock_workspace.execute.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_insert_range_passes_shift_direction(self, mock_workspace):
+        mock_workspace.execute.return_value = OfficeObs(success=True, data={})
+
+        tool = ExcelInsertRangeTool(mock_workspace)
+        await tool.execute({"document_uri": "file:///data.xlsx", "address": "B2:B5", "shift_direction": "down"})
+
+        action = mock_workspace.execute.call_args[0][0]
+        assert action.action_name == "insert:range"
+        assert action.params["shift_direction"] == "down"
+
+    @pytest.mark.asyncio
+    async def test_set_formula_passes_formula(self, mock_workspace):
+        mock_workspace.execute.return_value = OfficeObs(success=True, data={})
+
+        tool = ExcelSetFormulaTool(mock_workspace)
+        await tool.execute({"document_uri": "file:///data.xlsx", "address": "D1", "formula": "=SUM(A1:C1)"})
+
+        action = mock_workspace.execute.call_args[0][0]
+        assert action.action_name == "set:formula"
+        assert action.params["formula"] == "=SUM(A1:C1)"
+
+    @pytest.mark.asyncio
+    async def test_get_range_omits_none_worksheet_name(self, mock_workspace):
+        mock_workspace.execute.return_value = OfficeObs(success=True, data={})
+
+        tool = ExcelGetRangeTool(mock_workspace)
+        await tool.execute({"document_uri": "file:///data.xlsx", "address": "A1"})
+
+        action = mock_workspace.execute.call_args[0][0]
+        assert "worksheet_name" not in action.params
+
 
 # ============================================================================
 # format_result Tests (获取类工具: content + data)
@@ -200,3 +320,53 @@ class TestFormatResult:
         result = tool.format_result(obs)
         assert result["success"] is False
         assert result["error"] == "Document not connected"
+
+    def test_get_range_summary_without_format(self, mock_workspace):
+        tool = ExcelGetRangeTool(mock_workspace)
+        obs = OfficeObs(
+            success=True,
+            data={"address": "Sheet1!A1:C3", "values": [[1, 2, 3]], "rowCount": 1, "columnCount": 3},
+        )
+        result = tool.format_result(obs)
+        assert result["success"] is True
+        assert "Sheet1!A1:C3" in result["content"]
+        assert "with format" not in result["content"]
+        assert result["data"]["columnCount"] == 3
+
+    def test_get_range_summary_with_format(self, mock_workspace):
+        tool = ExcelGetRangeTool(mock_workspace)
+        obs = OfficeObs(
+            success=True,
+            data={
+                "address": "Sheet1!A1",
+                "values": [[1]],
+                "rowCount": 1,
+                "columnCount": 1,
+                "format": {"fill": {"color": "#FFFFFF"}},
+            },
+        )
+        result = tool.format_result(obs)
+        assert "with format" in result["content"]
+
+    def test_write_tool_uses_base_format_result(self, mock_workspace):
+        """写工具不覆写 format_result: 成功时返回 {success, data}，无 content。"""
+        tool = ExcelSetRangeTool(mock_workspace)
+        obs = OfficeObs(success=True, data={"address": "Sheet1!A1:C3"})
+        result = tool.format_result(obs)
+        assert result == {"success": True, "data": {"address": "Sheet1!A1:C3"}}
+        assert "content" not in result
+
+    def test_write_tool_failure_returns_error(self, mock_workspace):
+        tool = ExcelSetFormulaTool(mock_workspace)
+        obs = OfficeObs(success=False, data={}, error="5005 FORMULA_ERROR")
+        result = tool.format_result(obs)
+        assert result["success"] is False
+        assert result["error"] == "5005 FORMULA_ERROR"
+
+    def test_get_range_surfaces_range_invalid_error(self, mock_workspace):
+        """非法地址由 AddIn 返回 5002 RANGE_INVALID；consumer 透传 (address 对 consumer 透明)。"""
+        tool = ExcelGetRangeTool(mock_workspace)
+        obs = OfficeObs(success=False, data={}, error="5002 RANGE_INVALID")
+        result = tool.format_result(obs)
+        assert result["success"] is False
+        assert result["error"] == "5002 RANGE_INVALID"

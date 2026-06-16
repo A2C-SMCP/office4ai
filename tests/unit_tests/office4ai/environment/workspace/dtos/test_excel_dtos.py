@@ -4,9 +4,11 @@ Test Excel DTOs
 测试 Excel 事件的数据传输对象 (OASP 0.3.0 events-excel.md, issue #18 Foundation)。
 
 覆盖:
-- 3 个状态感知读事件 Request DTO 的构造、必填校验、event_name、camelCase 序列化、注册。
+- #18 读事件 + #19 Range/公式 Request DTO 的构造、必填校验、event_name、camelCase
+  序列化、枚举约束、注册。
 - 共享数据模型 (SheetInfo / UsedRangeInfo / WorkbookInfo / WorksheetInfo /
-  SelectedRangeInfo) 的 snake_case ↔ camelCase 双向兼容。
+  SelectedRangeInfo / RangeFormatInfo / GetRangeData / RangeOperationResult) 的
+  snake_case ↔ camelCase 双向兼容。
 """
 
 from __future__ import annotations
@@ -16,9 +18,19 @@ from pydantic import ValidationError
 
 from office4ai.environment.workspace.dtos.common import request_registry
 from office4ai.environment.workspace.dtos.excel import (
+    ExcelClearRangeRequest,
+    ExcelCopyRangeRequest,
+    ExcelDeleteRangeRequest,
+    ExcelGetRangeRequest,
     ExcelGetSelectedRangeRequest,
     ExcelGetWorkbookInfoRequest,
     ExcelGetWorksheetInfoRequest,
+    ExcelInsertRangeRequest,
+    ExcelSetFormulaRequest,
+    ExcelSetRangeRequest,
+    GetRangeData,
+    RangeFormatInfo,
+    RangeOperationResult,
     SelectedRangeInfo,
     SheetInfo,
     UsedRangeInfo,
@@ -128,7 +140,7 @@ class TestExcelGetSelectedRangeRequest:
 
 
 class TestRequestRegistration:
-    """3 个读事件应自动注册到全局 request_registry。"""
+    """读事件 (#18) + Range/公式事件 (#19) 应自动注册到全局 request_registry。"""
 
     @pytest.mark.parametrize(
         "event,dto_cls",
@@ -136,6 +148,13 @@ class TestRequestRegistration:
             ("excel:get:workbookInfo", ExcelGetWorkbookInfoRequest),
             ("excel:get:worksheetInfo", ExcelGetWorksheetInfoRequest),
             ("excel:get:selectedRange", ExcelGetSelectedRangeRequest),
+            ("excel:get:range", ExcelGetRangeRequest),
+            ("excel:set:range", ExcelSetRangeRequest),
+            ("excel:clear:range", ExcelClearRangeRequest),
+            ("excel:copy:range", ExcelCopyRangeRequest),
+            ("excel:delete:range", ExcelDeleteRangeRequest),
+            ("excel:insert:range", ExcelInsertRangeRequest),
+            ("excel:set:formula", ExcelSetFormulaRequest),
         ],
     )
     def test_event_registered(self, event: str, dto_cls: type) -> None:
@@ -228,3 +247,240 @@ class TestSelectedRangeInfo:
         assert info.row_count == 3
         assert info.column_count == 3
         assert info.model_dump(by_alias=True) == wire
+
+
+# ============================================================================
+# #19 Range: Request DTOs (CRUD + 公式)
+# ============================================================================
+
+
+class TestExcelGetRangeRequest:
+    """Test ExcelGetRangeRequest DTO (excel:get:range)"""
+
+    def test_event_name_attribute(self) -> None:
+        assert ExcelGetRangeRequest.event_name == "excel:get:range"
+
+    def test_required_address(self) -> None:
+        with pytest.raises(ValidationError):
+            ExcelGetRangeRequest(requestId="r", documentUri="file:///d.xlsx")  # type: ignore[call-arg]
+
+    def test_include_format_defaults_false(self) -> None:
+        req = ExcelGetRangeRequest.build(document_uri="file:///d.xlsx", address="A1:C3")
+        assert req.include_format is False
+
+    def test_payload_camel_case_and_omits_none_worksheet(self) -> None:
+        payload = ExcelGetRangeRequest.build(
+            document_uri="file:///d.xlsx", address="A1:C3", include_format=True
+        ).to_payload()
+        assert payload["address"] == "A1:C3"
+        assert payload["includeFormat"] is True
+        assert "worksheetName" not in payload
+
+    def test_accepts_snake_and_camel(self) -> None:
+        snake = ExcelGetRangeRequest(requestId="r", documentUri="file:///d.xlsx", address="A1", worksheet_name="Sheet2")
+        camel = ExcelGetRangeRequest(requestId="r", documentUri="file:///d.xlsx", address="A1", worksheetName="Sheet2")
+        assert snake.worksheet_name == camel.worksheet_name == "Sheet2"
+
+
+class TestExcelSetRangeRequest:
+    """Test ExcelSetRangeRequest DTO (excel:set:range)"""
+
+    def test_event_name_attribute(self) -> None:
+        assert ExcelSetRangeRequest.event_name == "excel:set:range"
+
+    def test_values_accepts_scalar(self) -> None:
+        payload = ExcelSetRangeRequest.build(document_uri="file:///d.xlsx", address="A1:C3", values=0).to_payload()
+        assert payload["values"] == 0
+        assert payload["address"] == "A1:C3"
+
+    def test_values_accepts_2d_array(self) -> None:
+        values = [["a", "b"], ["c", "d"]]
+        payload = ExcelSetRangeRequest.build(document_uri="file:///d.xlsx", address="A1:B2", values=values).to_payload()
+        assert payload["values"] == values
+
+    def test_required_values(self) -> None:
+        with pytest.raises(ValidationError):
+            ExcelSetRangeRequest(requestId="r", documentUri="file:///d.xlsx", address="A1")  # type: ignore[call-arg]
+
+
+class TestExcelClearRangeRequest:
+    """Test ExcelClearRangeRequest DTO (excel:clear:range)"""
+
+    def test_event_name_attribute(self) -> None:
+        assert ExcelClearRangeRequest.event_name == "excel:clear:range"
+
+    @pytest.mark.parametrize("clear_type", ["contents", "formats", "all"])
+    def test_valid_clear_types(self, clear_type: str) -> None:
+        payload = ExcelClearRangeRequest.build(
+            document_uri="file:///d.xlsx", address="A1:C3", clear_type=clear_type
+        ).to_payload()
+        assert payload["clearType"] == clear_type
+
+    def test_invalid_clear_type_rejected(self) -> None:
+        with pytest.raises(ValidationError):
+            ExcelClearRangeRequest.build(document_uri="file:///d.xlsx", address="A1:C3", clear_type="everything")
+
+
+class TestExcelCopyRangeRequest:
+    """Test ExcelCopyRangeRequest DTO (excel:copy:range)"""
+
+    def test_event_name_attribute(self) -> None:
+        assert ExcelCopyRangeRequest.event_name == "excel:copy:range"
+
+    def test_payload_uses_source_target_aliases(self) -> None:
+        payload = ExcelCopyRangeRequest.build(
+            document_uri="file:///d.xlsx", source_address="A1:C3", target_address="E1:G3"
+        ).to_payload()
+        assert payload["sourceAddress"] == "A1:C3"
+        assert payload["targetAddress"] == "E1:G3"
+        assert "source_address" not in payload
+
+
+class TestExcelDeleteRangeRequest:
+    """Test ExcelDeleteRangeRequest DTO (excel:delete:range)"""
+
+    def test_event_name_attribute(self) -> None:
+        assert ExcelDeleteRangeRequest.event_name == "excel:delete:range"
+
+    @pytest.mark.parametrize("direction", ["up", "left"])
+    def test_valid_shift_directions(self, direction: str) -> None:
+        payload = ExcelDeleteRangeRequest.build(
+            document_uri="file:///d.xlsx", address="B2:B5", shift_direction=direction
+        ).to_payload()
+        assert payload["shiftDirection"] == direction
+
+    @pytest.mark.parametrize("direction", ["down", "right"])
+    def test_insert_directions_rejected_for_delete(self, direction: str) -> None:
+        """delete 仅接受 up/left；插入方向 down/right 必须被枚举拒绝。"""
+        with pytest.raises(ValidationError):
+            ExcelDeleteRangeRequest.build(document_uri="file:///d.xlsx", address="B2:B5", shift_direction=direction)
+
+
+class TestExcelInsertRangeRequest:
+    """Test ExcelInsertRangeRequest DTO (excel:insert:range)"""
+
+    def test_event_name_attribute(self) -> None:
+        assert ExcelInsertRangeRequest.event_name == "excel:insert:range"
+
+    @pytest.mark.parametrize("direction", ["down", "right"])
+    def test_valid_shift_directions(self, direction: str) -> None:
+        payload = ExcelInsertRangeRequest.build(
+            document_uri="file:///d.xlsx", address="B2:B5", shift_direction=direction
+        ).to_payload()
+        assert payload["shiftDirection"] == direction
+
+    @pytest.mark.parametrize("direction", ["up", "left"])
+    def test_delete_directions_rejected_for_insert(self, direction: str) -> None:
+        """insert 仅接受 down/right；删除方向 up/left 必须被枚举拒绝。"""
+        with pytest.raises(ValidationError):
+            ExcelInsertRangeRequest.build(document_uri="file:///d.xlsx", address="B2:B5", shift_direction=direction)
+
+
+class TestExcelSetFormulaRequest:
+    """Test ExcelSetFormulaRequest DTO (excel:set:formula)"""
+
+    def test_event_name_attribute(self) -> None:
+        assert ExcelSetFormulaRequest.event_name == "excel:set:formula"
+
+    def test_payload_preserves_formula(self) -> None:
+        payload = ExcelSetFormulaRequest.build(
+            document_uri="file:///d.xlsx", address="D1", formula="=SUM(A1:C1)"
+        ).to_payload()
+        assert payload["address"] == "D1"
+        assert payload["formula"] == "=SUM(A1:C1)"
+
+    def test_required_formula(self) -> None:
+        with pytest.raises(ValidationError):
+            ExcelSetFormulaRequest(requestId="r", documentUri="file:///d.xlsx", address="D1")  # type: ignore[call-arg]
+
+
+# ============================================================================
+# #19 Range: shared data models
+# ============================================================================
+
+
+class TestRangeFormatInfo:
+    """Test RangeFormatInfo data model (excel:get:range format payload, #20 复用)"""
+
+    def test_round_trip(self) -> None:
+        wire = {
+            "font": {
+                "name": "等线",
+                "size": 11,
+                "bold": False,
+                "italic": False,
+                "color": "#000000",
+                "underline": "None",
+            },
+            "fill": {"color": "#FFFFFF"},
+            "horizontalAlignment": "General",
+            "verticalAlignment": "Bottom",
+            "wrapText": False,
+            "numberFormat": [["General", "0"], ["General", "0"]],
+        }
+        info = RangeFormatInfo.model_validate(wire)
+        assert info.font.name == "等线"
+        assert info.font.size == 11
+        assert info.fill.color == "#FFFFFF"
+        assert info.horizontal_alignment == "General"
+        assert info.vertical_alignment == "Bottom"
+        assert info.wrap_text is False
+        assert info.number_format[1] == ["General", "0"]
+        assert info.model_dump(by_alias=True) == wire
+
+
+class TestGetRangeData:
+    """Test GetRangeData data model (excel:get:range response data)"""
+
+    def test_round_trip_without_format(self) -> None:
+        wire = {
+            "address": "Sheet1!A1:C3",
+            "values": [["姓名", "年龄", "城市"], ["张三", 25, "北京"]],
+            "rowCount": 2,
+            "columnCount": 3,
+        }
+        data = GetRangeData.model_validate(wire)
+        assert data.address == "Sheet1!A1:C3"
+        assert data.values[1] == ["张三", 25, "北京"]
+        assert data.format is None
+        # exclude_none=True 下 format=None 被剔除, payload 等于 wire
+        assert data.model_dump(by_alias=True, exclude_none=True) == wire
+        # 不带 exclude_none 时, format=None 显式出现在 dump 中
+        assert data.model_dump(by_alias=True)["format"] is None
+
+    def test_round_trip_with_format(self) -> None:
+        wire = {
+            "address": "Sheet1!A1",
+            "values": [[1]],
+            "rowCount": 1,
+            "columnCount": 1,
+            "format": {
+                "font": {
+                    "name": "Calibri",
+                    "size": 12,
+                    "bold": True,
+                    "italic": False,
+                    "color": "#FF0000",
+                    "underline": "None",
+                },
+                "fill": {"color": "#FFFF00"},
+                "horizontalAlignment": "Center",
+                "verticalAlignment": "Center",
+                "wrapText": True,
+                "numberFormat": [["0.00"]],
+            },
+        }
+        data = GetRangeData.model_validate(wire)
+        assert data.format is not None
+        assert data.format.font.bold is True
+        assert data.model_dump(by_alias=True, exclude_none=True) == wire
+
+
+class TestRangeOperationResult:
+    """Test RangeOperationResult data model (shared write-op response)"""
+
+    def test_round_trip(self) -> None:
+        wire = {"address": "Sheet1!A1:C3"}
+        result = RangeOperationResult.model_validate(wire)
+        assert result.address == "Sheet1!A1:C3"
+        assert result.model_dump(by_alias=True) == wire

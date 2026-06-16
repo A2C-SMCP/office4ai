@@ -174,9 +174,16 @@ class OfficeMCPServer(BaseMCPServer):
         logger.info(f"已注册 {len(ppt_tools)} 个 PPT 工具 | Registered {len(ppt_tools)} PPT tools")
 
         from office4ai.a2c_smcp.tools.excel import (
+            ExcelClearRangeTool,
+            ExcelCopyRangeTool,
+            ExcelDeleteRangeTool,
+            ExcelGetRangeTool,
             ExcelGetSelectedRangeTool,
             ExcelGetWorkbookInfoTool,
             ExcelGetWorksheetInfoTool,
+            ExcelInsertRangeTool,
+            ExcelSetFormulaTool,
+            ExcelSetRangeTool,
         )
 
         excel_tools = [
@@ -184,6 +191,14 @@ class OfficeMCPServer(BaseMCPServer):
             ExcelGetWorkbookInfoTool(self.workspace),
             ExcelGetWorksheetInfoTool(self.workspace),
             ExcelGetSelectedRangeTool(self.workspace),
+            # Range CRUD + 公式 (OASP /excel Draft 0.3.0, issue #19)
+            ExcelGetRangeTool(self.workspace),
+            ExcelSetRangeTool(self.workspace),
+            ExcelClearRangeTool(self.workspace),
+            ExcelCopyRangeTool(self.workspace),
+            ExcelDeleteRangeTool(self.workspace),
+            ExcelInsertRangeTool(self.workspace),
+            ExcelSetFormulaTool(self.workspace),
         ]
 
         for tool in excel_tools:

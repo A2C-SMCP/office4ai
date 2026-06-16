@@ -100,6 +100,35 @@ class TestWrapRequest:
         assert wrapped["worksheetName"] == "Sheet2"
         assert wrapped["documentUri"] == "file:///test.xlsx"
 
+    def test_wrap_excel_set_range(self) -> None:
+        """Test wrapping excel:set:range (2D values + snake_case worksheet_name → camelCase)"""
+        business_params = {
+            "document_uri": "file:///test.xlsx",
+            "address": "A1:B2",
+            "values": [[1, 2], [3, 4]],
+            "worksheet_name": "Sheet1",
+        }
+
+        wrapped = wrap_request("excel:set:range", business_params)
+
+        assert wrapped["address"] == "A1:B2"
+        assert wrapped["values"] == [[1, 2], [3, 4]]
+        assert wrapped["worksheetName"] == "Sheet1"
+        assert "worksheet_name" not in wrapped
+
+    def test_wrap_excel_get_range_includes_format_flag(self) -> None:
+        """Test wrapping excel:get:range (includeFormat camelCase alias)"""
+        business_params = {
+            "document_uri": "file:///test.xlsx",
+            "address": "A1:C3",
+            "include_format": True,
+        }
+
+        wrapped = wrap_request("excel:get:range", business_params)
+
+        assert wrapped["address"] == "A1:C3"
+        assert wrapped["includeFormat"] is True
+
     def test_wrap_ppt_insert_text(self) -> None:
         """Test wrapping ppt:insert:text"""
         business_params = {
@@ -154,12 +183,18 @@ class TestGetRegisteredEvents:
     def test_contains_all_excel_events(self) -> None:
         events = get_registered_events()
         excel_events = [e for e in events if e.startswith("excel:")]
-        # Foundation slice (#18) registers the 3 state-awareness read events;
-        # the remaining /excel events land with #19–#26.
+        # #18 read slice (3) + #19 Range CRUD + 公式 (7); remaining /excel events land with #20–#26.
         assert set(excel_events) >= {
             "excel:get:workbookInfo",
             "excel:get:worksheetInfo",
             "excel:get:selectedRange",
+            "excel:get:range",
+            "excel:set:range",
+            "excel:clear:range",
+            "excel:copy:range",
+            "excel:delete:range",
+            "excel:insert:range",
+            "excel:set:formula",
         }
 
     def test_contains_all_ppt_events(self) -> None:
