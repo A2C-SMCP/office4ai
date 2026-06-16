@@ -27,7 +27,12 @@ Defines data structures for Excel-specific Socket.IO events (``/excel`` namespac
   ``excel:delete:worksheet`` / ``excel:rename:worksheet`` / ``excel:activate:worksheet``。
   ``get:worksheets`` 响应复用 #18 ``SheetInfo``；各事件请求字段形态以 spec type 为准
   （非统一的可选 ``worksheetName``，详见各 Request DTO）。
-- 表格 / 图表等其余数据结构随各自子 issue (#22–#25) 落地，避免提前过度建模。
+- #22 Table — 表格操作: ``excel:insert:table`` / ``excel:get:table`` /
+  ``excel:get:tables`` / ``excel:add:tableRow`` / ``excel:delete:tableRow`` /
+  ``excel:sort:table``。读侧两响应形态各异（``get:table`` 富 8 字段含列明细 /
+  ``get:tables`` 精简 3 字段每条目），故**不**共用单一 ``TableInfo``（issue 文案
+  「共享 TableInfo」与 spec type 不符 → 从 spec type）；4 个写结果亦各自建模。
+- 图表 / 透视表等其余数据结构随各自子 issue (#23–#25) 落地，避免提前过度建模。
 """
 
 from typing import Any, ClassVar, Literal
@@ -293,6 +298,73 @@ class ActivateWorksheetData(SocketIOBaseModel):
     activated: bool = Field(..., alias="activated", description="Whether the worksheet was activated")
 
 
+# ---- #22 Table: nested + response data models ------------------------------
+#
+# 读侧两形态各异，故不共用单一 TableInfo（spec type 优先于 issue 文案）：
+#   get:table  — 富信息（含 columns 列明细 / styleName / showHeaders 等 8 字段）
+#   get:tables — 每条目仅 {name, id, address}（精简）
+# 4 个写结果（insert/add/delete/sort）形态互不相同，各自建模。
+
+
+class TableColumnInfo(SocketIOBaseModel):
+    """表格列条目 | Table column entry (part of ``excel:get:table`` response)."""
+
+    name: str = Field(..., alias="name", description="Column name")
+    index: int = Field(..., alias="index", description="Column index (0-based)")
+
+
+class TableSummary(SocketIOBaseModel):
+    """表格概要条目 | Table summary entry (``excel:get:tables`` response)."""
+
+    name: str = Field(..., alias="name", description="Table name")
+    id: str = Field(..., alias="id", description="Table ID")
+    address: str = Field(..., alias="address", description="Table range address")
+
+
+class InsertTableData(SocketIOBaseModel):
+    """新建表格结果 | ``excel:insert:table`` response data."""
+
+    name: str = Field(..., alias="name", description="Auto-generated table name (e.g. 'Table1')")
+    address: str = Field(..., alias="address", description="Actual table range address")
+
+
+class GetTableData(SocketIOBaseModel):
+    """表格详细信息 | ``excel:get:table`` response data (rich)."""
+
+    name: str = Field(..., alias="name", description="Table name")
+    id: str = Field(..., alias="id", description="Table ID")
+    address: str = Field(..., alias="address", description="Table range address")
+    row_count: int = Field(..., alias="rowCount", description="Data row count (excluding header)")
+    column_count: int = Field(..., alias="columnCount", description="Column count")
+    columns: list[TableColumnInfo] = Field(..., alias="columns", description="Column entries")
+    style_name: str = Field(..., alias="styleName", description="Table style name")
+    show_headers: bool = Field(..., alias="showHeaders", description="Whether the header row is shown")
+
+
+class GetTablesData(SocketIOBaseModel):
+    """表格列表 | ``excel:get:tables`` response data (slim entries)."""
+
+    tables: list[TableSummary] = Field(..., alias="tables", description="Table summaries in the worksheet")
+
+
+class AddTableRowData(SocketIOBaseModel):
+    """追加表格行结果 | ``excel:add:tableRow`` response data."""
+
+    table_id: str = Field(..., alias="tableId", description="Table the row was appended to")
+
+
+class DeleteTableRowData(SocketIOBaseModel):
+    """删除表格行结果 | ``excel:delete:tableRow`` response data."""
+
+    deleted: bool = Field(..., alias="deleted", description="Whether the row was deleted")
+
+
+class SortTableData(SocketIOBaseModel):
+    """表格排序结果 | ``excel:sort:table`` response data."""
+
+    sorted: bool = Field(..., alias="sorted", description="Whether the table was sorted")
+
+
 # ============================================================================
 # Request DTOs (Server → AddIn, 自动注册 via event_name)
 # ============================================================================
@@ -522,3 +594,88 @@ class ExcelActivateWorksheetRequest(BaseRequest):
     event_name: ClassVar[str] = "excel:activate:worksheet"
 
     worksheet_name: str = Field(..., alias="worksheetName", description="Name of the worksheet to activate")
+
+
+# ---- #22 Table: 表格操作 ----------------------------------------------------
+#
+# 字段形态以 spec type 为准（各事件不同）：
+#   insert:table     — address + hasHeaders 必填；data / styleName / worksheetName 可选
+#   get:table        — tableId 必填；worksheetName 可选
+#   get:tables       — 仅 worksheetName 可选
+#   add:tableRow     — tableId + values 必填；worksheetName 可选
+#   delete:tableRow  — tableId + rowIndex 必填；worksheetName 可选
+#   sort:table       — tableId + sortFields 必填；worksheetName 可选
+# 错误码 5006 TABLE_NOT_FOUND / 5009 DATA_TYPE_MISMATCH / 4004 PARAM_OUT_OF_RANGE
+# 均由 AddIn 产生，office4ai 透传 obs.error，不在此定义。
+
+
+class SortField(SocketIOBaseModel):
+    """排序键 | One sort key (``excel:sort:table`` request, priority-ordered)."""
+
+    column_index: int = Field(..., alias="columnIndex", description="Column index (0-based)")
+    ascending: bool | None = Field(
+        default=None, alias="ascending", description="Ascending order; omitted = true (AddIn default)"
+    )
+
+
+class ExcelInsertTableRequest(BaseRequest):
+    """Request: ``excel:insert:table`` — 在指定范围创建结构化表格。"""
+
+    event_name: ClassVar[str] = "excel:insert:table"
+
+    address: str = Field(..., alias="address", description="Table range address, e.g. 'A1:C4'")
+    has_headers: bool = Field(..., alias="hasHeaders", description="Whether the first row is a header row")
+    data: list[list[Any]] | None = Field(default=None, alias="data", description="Initial data (2D array)")
+    style_name: str | None = Field(
+        default=None, alias="styleName", description="Table style name, e.g. 'TableStyleMedium2'"
+    )
+    worksheet_name: str | None = Field(default=None, alias="worksheetName", description="Worksheet name")
+
+
+class ExcelGetTableRequest(BaseRequest):
+    """Request: ``excel:get:table`` — 获取指定表格的详细信息。"""
+
+    event_name: ClassVar[str] = "excel:get:table"
+
+    table_id: str = Field(..., alias="tableId", description="Table name or ID")
+    worksheet_name: str | None = Field(default=None, alias="worksheetName", description="Worksheet name")
+
+
+class ExcelGetTablesRequest(BaseRequest):
+    """Request: ``excel:get:tables`` — 获取工作表中所有表格的概要列表。"""
+
+    event_name: ClassVar[str] = "excel:get:tables"
+
+    worksheet_name: str | None = Field(
+        default=None, alias="worksheetName", description="Worksheet name; omitted = active worksheet"
+    )
+
+
+class ExcelAddTableRowRequest(BaseRequest):
+    """Request: ``excel:add:tableRow`` — 向表格末尾追加一行数据。"""
+
+    event_name: ClassVar[str] = "excel:add:tableRow"
+
+    table_id: str = Field(..., alias="tableId", description="Table name or ID")
+    values: list[Any] = Field(..., alias="values", description="Row values (1D array, in column order)")
+    worksheet_name: str | None = Field(default=None, alias="worksheetName", description="Worksheet name")
+
+
+class ExcelDeleteTableRowRequest(BaseRequest):
+    """Request: ``excel:delete:tableRow`` — 删除表格中指定索引的行。"""
+
+    event_name: ClassVar[str] = "excel:delete:tableRow"
+
+    table_id: str = Field(..., alias="tableId", description="Table name or ID")
+    row_index: int = Field(..., alias="rowIndex", description="Row index to delete (0-based, excluding header)")
+    worksheet_name: str | None = Field(default=None, alias="worksheetName", description="Worksheet name")
+
+
+class ExcelSortTableRequest(BaseRequest):
+    """Request: ``excel:sort:table`` — 对表格按指定列多级排序。"""
+
+    event_name: ClassVar[str] = "excel:sort:table"
+
+    table_id: str = Field(..., alias="tableId", description="Table name or ID")
+    sort_fields: list[SortField] = Field(..., alias="sortFields", description="Sort keys in priority order")
+    worksheet_name: str | None = Field(default=None, alias="worksheetName", description="Worksheet name")

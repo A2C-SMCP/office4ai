@@ -17,24 +17,30 @@ import pytest
 from office4ai.a2c_smcp.tools.excel import (
     ExcelActivateWorksheetTool,
     ExcelAddConditionalFormatTool,
+    ExcelAddTableRowTool,
     ExcelAddWorksheetTool,
     ExcelClearConditionalFormatTool,
     ExcelClearRangeTool,
     ExcelCopyRangeTool,
     ExcelDeleteRangeTool,
+    ExcelDeleteTableRowTool,
     ExcelDeleteWorksheetTool,
     ExcelGetRangeFormatTool,
     ExcelGetRangeTool,
     ExcelGetSelectedRangeTool,
+    ExcelGetTablesTool,
+    ExcelGetTableTool,
     ExcelGetWorkbookInfoTool,
     ExcelGetWorksheetInfoTool,
     ExcelGetWorksheetsTool,
     ExcelInsertRangeTool,
+    ExcelInsertTableTool,
     ExcelMergeCellsTool,
     ExcelRenameWorksheetTool,
     ExcelSetFormulaTool,
     ExcelSetRangeFormatTool,
     ExcelSetRangeTool,
+    ExcelSortTableTool,
     ExcelUnmergeCellsTool,
 )
 from office4ai.environment.workspace.base import OfficeObs
@@ -81,6 +87,13 @@ class TestToolMetadata:
         (ExcelDeleteWorksheetTool, "excel_delete_worksheet", "excel", "delete:worksheet"),
         (ExcelRenameWorksheetTool, "excel_rename_worksheet", "excel", "rename:worksheet"),
         (ExcelActivateWorksheetTool, "excel_activate_worksheet", "excel", "activate:worksheet"),
+        # Table 操作 (#22)
+        (ExcelInsertTableTool, "excel_insert_table", "excel", "insert:table"),
+        (ExcelGetTableTool, "excel_get_table", "excel", "get:table"),
+        (ExcelGetTablesTool, "excel_get_tables", "excel", "get:tables"),
+        (ExcelAddTableRowTool, "excel_add_table_row", "excel", "add:tableRow"),
+        (ExcelDeleteTableRowTool, "excel_delete_table_row", "excel", "delete:tableRow"),
+        (ExcelSortTableTool, "excel_sort_table", "excel", "sort:table"),
     ]
 
     @pytest.mark.parametrize("tool_cls,expected_name,expected_category,expected_event", TOOL_SPECS)
@@ -125,6 +138,12 @@ class TestToolMetadata:
             "excel_delete_worksheet": "excel:delete:worksheet",
             "excel_rename_worksheet": "excel:rename:worksheet",
             "excel_activate_worksheet": "excel:activate:worksheet",
+            "excel_insert_table": "excel:insert:table",
+            "excel_get_table": "excel:get:table",
+            "excel_get_tables": "excel:get:tables",
+            "excel_add_table_row": "excel:add:tableRow",
+            "excel_delete_table_row": "excel:delete:tableRow",
+            "excel_sort_table": "excel:sort:table",
         }
         for tool_cls, name, _, _ in self.TOOL_SPECS:
             tool = tool_cls(mock_workspace)
@@ -481,6 +500,150 @@ class TestExecuteFlow:
         assert action.action_name == "activate:worksheet"
         assert action.params["worksheet_name"] == "Sheet2"
 
+    # ---- #22 Table 操作 ----------------------------------------------------
+
+    @pytest.mark.asyncio
+    async def test_insert_table_passes_required_and_drops_optionals(self, mock_workspace):
+        """address + has_headers 流入 params；data/style_name/worksheet_name 省略时被剔除。"""
+        mock_workspace.execute.return_value = OfficeObs(success=True, data={"name": "Table1", "address": "A1:C4"})
+
+        tool = ExcelInsertTableTool(mock_workspace)
+        await tool.execute({"document_uri": "file:///data.xlsx", "address": "A1:C4", "has_headers": True})
+
+        action = mock_workspace.execute.call_args[0][0]
+        assert action.category == "excel"
+        assert action.action_name == "insert:table"
+        assert action.params["address"] == "A1:C4"
+        assert action.params["has_headers"] is True
+        assert "data" not in action.params
+        assert "style_name" not in action.params
+        assert "worksheet_name" not in action.params
+
+    @pytest.mark.asyncio
+    async def test_insert_table_passes_data_and_style(self, mock_workspace):
+        mock_workspace.execute.return_value = OfficeObs(success=True, data={"name": "Table1", "address": "A1:C2"})
+
+        tool = ExcelInsertTableTool(mock_workspace)
+        await tool.execute(
+            {
+                "document_uri": "file:///data.xlsx",
+                "address": "A1:C2",
+                "has_headers": True,
+                "data": [["姓名", "年龄", "城市"], ["张三", 25, "北京"]],
+                "style_name": "TableStyleMedium2",
+            }
+        )
+
+        action = mock_workspace.execute.call_args[0][0]
+        assert action.params["data"] == [["姓名", "年龄", "城市"], ["张三", 25, "北京"]]
+        assert action.params["style_name"] == "TableStyleMedium2"
+
+    @pytest.mark.asyncio
+    async def test_insert_table_requires_address_and_has_headers(self, mock_workspace):
+        """address 与 has_headers 必填: 缺其一即校验失败, 不触达 workspace。"""
+        tool = ExcelInsertTableTool(mock_workspace)
+        result = await tool.execute({"document_uri": "file:///data.xlsx", "address": "A1:C4"})
+        assert result["success"] is False
+        mock_workspace.execute.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_get_table_passes_table_id(self, mock_workspace):
+        mock_workspace.execute.return_value = OfficeObs(success=True, data={"name": "Table1"})
+
+        tool = ExcelGetTableTool(mock_workspace)
+        await tool.execute({"document_uri": "file:///data.xlsx", "table_id": "Table1"})
+
+        action = mock_workspace.execute.call_args[0][0]
+        assert action.action_name == "get:table"
+        assert action.params["table_id"] == "Table1"
+        assert "worksheet_name" not in action.params
+
+    @pytest.mark.asyncio
+    async def test_get_table_requires_table_id(self, mock_workspace):
+        tool = ExcelGetTableTool(mock_workspace)
+        result = await tool.execute({"document_uri": "file:///data.xlsx"})
+        assert result["success"] is False
+        mock_workspace.execute.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_get_tables_builds_correct_action(self, mock_workspace):
+        """get:tables 仅 worksheet_name 可选, 省略时 params 仅有 document_uri。"""
+        mock_workspace.execute.return_value = OfficeObs(success=True, data={"tables": []})
+
+        tool = ExcelGetTablesTool(mock_workspace)
+        await tool.execute({"document_uri": "file:///data.xlsx"})
+
+        action = mock_workspace.execute.call_args[0][0]
+        assert action.action_name == "get:tables"
+        assert "worksheet_name" not in action.params
+
+    @pytest.mark.asyncio
+    async def test_add_table_row_passes_values(self, mock_workspace):
+        mock_workspace.execute.return_value = OfficeObs(success=True, data={"tableId": "Table1"})
+
+        tool = ExcelAddTableRowTool(mock_workspace)
+        await tool.execute({"document_uri": "file:///data.xlsx", "table_id": "Table1", "values": ["赵六", 35, "深圳"]})
+
+        action = mock_workspace.execute.call_args[0][0]
+        assert action.action_name == "add:tableRow"
+        assert action.params["table_id"] == "Table1"
+        assert action.params["values"] == ["赵六", 35, "深圳"]
+
+    @pytest.mark.asyncio
+    async def test_add_table_row_requires_table_id_and_values(self, mock_workspace):
+        tool = ExcelAddTableRowTool(mock_workspace)
+        result = await tool.execute({"document_uri": "file:///data.xlsx", "table_id": "Table1"})
+        assert result["success"] is False
+        mock_workspace.execute.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_delete_table_row_passes_row_index_zero(self, mock_workspace):
+        """row_index=0 是合法首行: exclude_none 不得剔除 (0 ≠ None)。"""
+        mock_workspace.execute.return_value = OfficeObs(success=True, data={"deleted": True})
+
+        tool = ExcelDeleteTableRowTool(mock_workspace)
+        await tool.execute({"document_uri": "file:///data.xlsx", "table_id": "Table1", "row_index": 0})
+
+        action = mock_workspace.execute.call_args[0][0]
+        assert action.action_name == "delete:tableRow"
+        assert action.params["table_id"] == "Table1"
+        assert action.params["row_index"] == 0
+
+    @pytest.mark.asyncio
+    async def test_delete_table_row_requires_table_id_and_row_index(self, mock_workspace):
+        tool = ExcelDeleteTableRowTool(mock_workspace)
+        result = await tool.execute({"document_uri": "file:///data.xlsx", "table_id": "Table1"})
+        assert result["success"] is False
+        mock_workspace.execute.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_sort_table_passes_nested_sort_fields(self, mock_workspace):
+        """sort_fields 经 MCP 输入 (snake) → params 以 snake_case 嵌套字典流入。"""
+        mock_workspace.execute.return_value = OfficeObs(success=True, data={"sorted": True})
+
+        tool = ExcelSortTableTool(mock_workspace)
+        await tool.execute(
+            {
+                "document_uri": "file:///data.xlsx",
+                "table_id": "Table1",
+                "sort_fields": [{"column_index": 1, "ascending": False}, {"column_index": 0}],
+            }
+        )
+
+        action = mock_workspace.execute.call_args[0][0]
+        assert action.action_name == "sort:table"
+        assert action.params["table_id"] == "Table1"
+        # 第一项含 ascending=False；第二项省略 ascending → exclude_none 剔除
+        assert action.params["sort_fields"][0] == {"column_index": 1, "ascending": False}
+        assert action.params["sort_fields"][1] == {"column_index": 0}
+
+    @pytest.mark.asyncio
+    async def test_sort_table_requires_sort_fields(self, mock_workspace):
+        tool = ExcelSortTableTool(mock_workspace)
+        result = await tool.execute({"document_uri": "file:///data.xlsx", "table_id": "Table1"})
+        assert result["success"] is False
+        mock_workspace.execute.assert_not_called()
+
 
 # ============================================================================
 # format_result Tests (获取类工具: content + data)
@@ -712,3 +875,116 @@ class TestFormatResult:
         result = tool.format_result(obs)
         assert result["success"] is False
         assert result["error"] == "3004 OPERATION_FAILED"
+
+    # ---- #22 Table 操作 ----------------------------------------------------
+
+    def test_get_table_summary(self, mock_workspace):
+        """get:table 覆写 format_result: 返回 name/address/行列数 content + 完整 data。"""
+        tool = ExcelGetTableTool(mock_workspace)
+        obs = OfficeObs(
+            success=True,
+            data={
+                "name": "Table1",
+                "id": "{1}",
+                "address": "Sheet1!A1:C4",
+                "rowCount": 3,
+                "columnCount": 3,
+                "columns": [{"name": "姓名", "index": 0}],
+                "styleName": "TableStyleMedium2",
+                "showHeaders": True,
+            },
+        )
+        result = tool.format_result(obs)
+        assert result["success"] is True
+        assert "Table1" in result["content"]
+        assert "Sheet1!A1:C4" in result["content"]
+        assert "3 row(s)" in result["content"]
+        assert "3 column(s)" in result["content"]
+        assert result["data"]["styleName"] == "TableStyleMedium2"
+
+    def test_get_table_surfaces_table_not_found(self, mock_workspace):
+        """获取不存在的表格由 AddIn 返回 5006 TABLE_NOT_FOUND；consumer 透传。"""
+        tool = ExcelGetTableTool(mock_workspace)
+        obs = OfficeObs(success=False, data={}, error="5006 TABLE_NOT_FOUND")
+        result = tool.format_result(obs)
+        assert result["success"] is False
+        assert result["error"] == "5006 TABLE_NOT_FOUND"
+
+    def test_get_tables_summary(self, mock_workspace):
+        """get:tables 覆写 format_result: 返回表格名列表 content + 完整 data。"""
+        tool = ExcelGetTablesTool(mock_workspace)
+        obs = OfficeObs(
+            success=True,
+            data={
+                "tables": [
+                    {"name": "Table1", "id": "{1}", "address": "Sheet1!A1:C4"},
+                    {"name": "销售表", "id": "{2}", "address": "Sheet1!E1:G10"},
+                ]
+            },
+        )
+        result = tool.format_result(obs)
+        assert result["success"] is True
+        assert "2 table(s)" in result["content"]
+        assert "Table1" in result["content"]
+        assert "销售表" in result["content"]
+        assert len(result["data"]["tables"]) == 2
+
+    def test_get_tables_empty_summary(self, mock_workspace):
+        tool = ExcelGetTablesTool(mock_workspace)
+        obs = OfficeObs(success=True, data={"tables": []})
+        result = tool.format_result(obs)
+        assert result["success"] is True
+        assert "0 table(s)" in result["content"]
+
+    def test_get_tables_missing_key_falls_back(self, mock_workspace):
+        """data 缺 'tables' 键时, .get 兜底为空列表 → '0 table(s)' 不崩溃。"""
+        tool = ExcelGetTablesTool(mock_workspace)
+        obs = OfficeObs(success=True, data={})
+        result = tool.format_result(obs)
+        assert result["success"] is True
+        assert "0 table(s)" in result["content"]
+
+    def test_get_tables_filters_non_dict_entries(self, mock_workspace):
+        """data['tables'] 含非 dict 畸形条目时, isinstance 过滤 → 计数与名称列表一致 (不计入畸形项)。"""
+        tool = ExcelGetTablesTool(mock_workspace)
+        obs = OfficeObs(
+            success=True,
+            data={"tables": [{"name": "T1", "id": "{1}", "address": "Sheet1!A1:C4"}, "garbage", 42]},
+        )
+        result = tool.format_result(obs)
+        assert result["success"] is True
+        # 仅 1 个合法 dict 条目 → 计数为 1, 与名称列表一致 (不是原始 len 3)
+        assert "1 table(s)" in result["content"]
+        assert "T1" in result["content"]
+        assert "garbage" not in result["content"]
+
+    def test_insert_table_uses_base_format_result(self, mock_workspace):
+        """写工具不覆写 format_result: 成功时返回 {success, data}，无 content。"""
+        tool = ExcelInsertTableTool(mock_workspace)
+        obs = OfficeObs(success=True, data={"name": "Table1", "address": "Sheet1!A1:C4"})
+        result = tool.format_result(obs)
+        assert result == {"success": True, "data": {"name": "Table1", "address": "Sheet1!A1:C4"}}
+        assert "content" not in result
+
+    def test_add_table_row_surfaces_data_type_mismatch(self, mock_workspace):
+        """类型不匹配由 AddIn 返回 5009 DATA_TYPE_MISMATCH；consumer 透传。"""
+        tool = ExcelAddTableRowTool(mock_workspace)
+        obs = OfficeObs(success=False, data={}, error="5009 DATA_TYPE_MISMATCH")
+        result = tool.format_result(obs)
+        assert result["success"] is False
+        assert result["error"] == "5009 DATA_TYPE_MISMATCH"
+
+    def test_delete_table_row_surfaces_param_out_of_range(self, mock_workspace):
+        """行索引越界由 AddIn 返回 4004 PARAM_OUT_OF_RANGE；consumer 透传。"""
+        tool = ExcelDeleteTableRowTool(mock_workspace)
+        obs = OfficeObs(success=False, data={}, error="4004 PARAM_OUT_OF_RANGE")
+        result = tool.format_result(obs)
+        assert result["success"] is False
+        assert result["error"] == "4004 PARAM_OUT_OF_RANGE"
+
+    def test_sort_table_uses_base_format_result(self, mock_workspace):
+        tool = ExcelSortTableTool(mock_workspace)
+        obs = OfficeObs(success=True, data={"sorted": True})
+        result = tool.format_result(obs)
+        assert result == {"success": True, "data": {"sorted": True}}
+        assert "content" not in result

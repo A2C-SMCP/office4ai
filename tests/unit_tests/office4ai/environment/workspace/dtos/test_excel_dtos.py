@@ -5,14 +5,19 @@ Test Excel DTOs
 
 覆盖:
 - #18 读事件 + #19 Range/公式 + #20 Format/条件格式/合并 + #21 Worksheet 管理
-  Request DTO 的构造、必填校验、event_name、camelCase 序列化、枚举约束、注册。
+  + #22 Table 操作 Request DTO 的构造、必填校验、event_name、camelCase 序列化、
+  枚举约束、注册。
 - 共享数据模型 (SheetInfo / UsedRangeInfo / WorkbookInfo / WorksheetInfo /
   SelectedRangeInfo / RangeFormatInfo / GetRangeData / RangeOperationResult /
   GetRangeFormatData / GetWorksheetsData / AddWorksheetData / DeleteWorksheetData /
-  RenameWorksheetData / ActivateWorksheetData) 的 snake_case ↔ camelCase 双向兼容。
+  RenameWorksheetData / ActivateWorksheetData / TableColumnInfo / TableSummary /
+  InsertTableData / GetTableData / GetTablesData / AddTableRowData /
+  DeleteTableRowData / SortTableData) 的 snake_case ↔ camelCase 双向兼容。
 - #20 写侧偏更新模型 (SetRangeFormatOptions) 与条件格式透传模型
   (ConditionalFormatRule) —— 读/写不对称、None 剔除、extra 透传。
 - #21 工作表事件字段形态各异 (无统一 worksheetName)，按 spec type 钉死必填/可选。
+- #22 Table 读侧两形态各异 (get:table 富 / get:tables 精简)，不共用单一 TableInfo；
+  写结果各自建模；sort:table 含嵌套 SortField 列表 (ascending 可选)。
 """
 
 from __future__ import annotations
@@ -23,39 +28,54 @@ from pydantic import ValidationError
 from office4ai.environment.workspace.dtos.common import request_registry
 from office4ai.environment.workspace.dtos.excel import (
     ActivateWorksheetData,
+    AddTableRowData,
     AddWorksheetData,
     ConditionalFormatRule,
+    DeleteTableRowData,
     DeleteWorksheetData,
     ExcelActivateWorksheetRequest,
     ExcelAddConditionalFormatRequest,
+    ExcelAddTableRowRequest,
     ExcelAddWorksheetRequest,
     ExcelClearConditionalFormatRequest,
     ExcelClearRangeRequest,
     ExcelCopyRangeRequest,
     ExcelDeleteRangeRequest,
+    ExcelDeleteTableRowRequest,
     ExcelDeleteWorksheetRequest,
     ExcelGetRangeFormatRequest,
     ExcelGetRangeRequest,
     ExcelGetSelectedRangeRequest,
+    ExcelGetTableRequest,
+    ExcelGetTablesRequest,
     ExcelGetWorkbookInfoRequest,
     ExcelGetWorksheetInfoRequest,
     ExcelGetWorksheetsRequest,
     ExcelInsertRangeRequest,
+    ExcelInsertTableRequest,
     ExcelMergeCellsRequest,
     ExcelRenameWorksheetRequest,
     ExcelSetFormulaRequest,
     ExcelSetRangeFormatRequest,
     ExcelSetRangeRequest,
+    ExcelSortTableRequest,
     ExcelUnmergeCellsRequest,
     GetRangeData,
     GetRangeFormatData,
+    GetTableData,
+    GetTablesData,
     GetWorksheetsData,
+    InsertTableData,
     RangeFormatInfo,
     RangeOperationResult,
     RenameWorksheetData,
     SelectedRangeInfo,
     SetRangeFormatOptions,
     SheetInfo,
+    SortField,
+    SortTableData,
+    TableColumnInfo,
+    TableSummary,
     UsedRangeInfo,
     WorkbookInfo,
     WorksheetInfo,
@@ -163,7 +183,7 @@ class TestExcelGetSelectedRangeRequest:
 
 
 class TestRequestRegistration:
-    """读事件 (#18) + Range/公式 (#19) + Format/条件格式/合并 (#20) + Worksheet (#21) 应自动注册。"""
+    """读事件 (#18) + Range/公式 (#19) + Format/条件格式/合并 (#20) + Worksheet (#21) + Table (#22) 应自动注册。"""
 
     @pytest.mark.parametrize(
         "event,dto_cls",
@@ -189,6 +209,12 @@ class TestRequestRegistration:
             ("excel:delete:worksheet", ExcelDeleteWorksheetRequest),
             ("excel:rename:worksheet", ExcelRenameWorksheetRequest),
             ("excel:activate:worksheet", ExcelActivateWorksheetRequest),
+            ("excel:insert:table", ExcelInsertTableRequest),
+            ("excel:get:table", ExcelGetTableRequest),
+            ("excel:get:tables", ExcelGetTablesRequest),
+            ("excel:add:tableRow", ExcelAddTableRowRequest),
+            ("excel:delete:tableRow", ExcelDeleteTableRowRequest),
+            ("excel:sort:table", ExcelSortTableRequest),
         ],
     )
     def test_event_registered(self, event: str, dto_cls: type) -> None:
@@ -906,3 +932,284 @@ class TestActivateWorksheetData:
         data = ActivateWorksheetData.model_validate({"activated": True})
         assert data.activated is True
         assert data.model_dump(by_alias=True) == {"activated": True}
+
+
+# ============================================================================
+# #22 Table: Request DTOs (字段形态以 spec type 为准, 各事件不同)
+# ============================================================================
+
+
+class TestExcelInsertTableRequest:
+    """Test ExcelInsertTableRequest DTO (excel:insert:table) — address + has_headers 必填"""
+
+    def test_event_name_attribute(self) -> None:
+        assert ExcelInsertTableRequest.event_name == "excel:insert:table"
+
+    def test_required_address_and_has_headers(self) -> None:
+        # 缺 has_headers
+        with pytest.raises(ValidationError):
+            ExcelInsertTableRequest(requestId="r", documentUri="file:///d.xlsx", address="A1:C4")  # type: ignore[call-arg]
+        # 缺 address
+        with pytest.raises(ValidationError):
+            ExcelInsertTableRequest(requestId="r", documentUri="file:///d.xlsx", hasHeaders=True)  # type: ignore[call-arg]
+
+    def test_payload_minimal_drops_optionals(self) -> None:
+        """data / styleName / worksheetName 省略时 exclude_none 剔除。"""
+        payload = ExcelInsertTableRequest.build(
+            document_uri="file:///d.xlsx", address="A1:C4", has_headers=True
+        ).to_payload()
+        assert payload["address"] == "A1:C4"
+        assert payload["hasHeaders"] is True
+        assert "data" not in payload
+        assert "styleName" not in payload
+        assert "worksheetName" not in payload
+        assert "has_headers" not in payload
+
+    def test_payload_with_data_and_style(self) -> None:
+        payload = ExcelInsertTableRequest.build(
+            document_uri="file:///d.xlsx",
+            address="A1:C2",
+            has_headers=True,
+            data=[["姓名", "年龄", "城市"], ["张三", 25, "北京"]],
+            style_name="TableStyleMedium2",
+        ).to_payload()
+        assert payload["data"] == [["姓名", "年龄", "城市"], ["张三", 25, "北京"]]
+        assert payload["styleName"] == "TableStyleMedium2"
+        assert "style_name" not in payload
+
+
+class TestExcelGetTableRequest:
+    """Test ExcelGetTableRequest DTO (excel:get:table) — table_id 必填"""
+
+    def test_event_name_attribute(self) -> None:
+        assert ExcelGetTableRequest.event_name == "excel:get:table"
+
+    def test_required_table_id(self) -> None:
+        with pytest.raises(ValidationError):
+            ExcelGetTableRequest(requestId="r", documentUri="file:///d.xlsx")  # type: ignore[call-arg]
+
+    def test_payload_snake_to_camel(self) -> None:
+        payload = ExcelGetTableRequest.build(document_uri="file:///d.xlsx", table_id="Table1").to_payload()
+        assert payload["tableId"] == "Table1"
+        assert "table_id" not in payload
+        assert "worksheetName" not in payload
+
+
+class TestExcelGetTablesRequest:
+    """Test ExcelGetTablesRequest DTO (excel:get:tables) — 仅 worksheet_name 可选"""
+
+    def test_event_name_attribute(self) -> None:
+        assert ExcelGetTablesRequest.event_name == "excel:get:tables"
+
+    def test_payload_minimal_omits_worksheet(self) -> None:
+        payload = ExcelGetTablesRequest.build(document_uri="file:///d.xlsx").to_payload()
+        assert payload["documentUri"] == "file:///d.xlsx"
+        assert "worksheetName" not in payload
+
+    def test_payload_with_worksheet(self) -> None:
+        payload = ExcelGetTablesRequest.build(document_uri="file:///d.xlsx", worksheet_name="Sheet2").to_payload()
+        assert payload["worksheetName"] == "Sheet2"
+
+
+class TestExcelAddTableRowRequest:
+    """Test ExcelAddTableRowRequest DTO (excel:add:tableRow) — table_id + values 必填"""
+
+    def test_event_name_attribute(self) -> None:
+        assert ExcelAddTableRowRequest.event_name == "excel:add:tableRow"
+
+    def test_required_table_id_and_values(self) -> None:
+        with pytest.raises(ValidationError):
+            ExcelAddTableRowRequest(requestId="r", documentUri="file:///d.xlsx", tableId="Table1")  # type: ignore[call-arg]
+        with pytest.raises(ValidationError):
+            ExcelAddTableRowRequest(requestId="r", documentUri="file:///d.xlsx", values=["赵六", 35])  # type: ignore[call-arg]
+
+    def test_payload_preserves_values(self) -> None:
+        payload = ExcelAddTableRowRequest.build(
+            document_uri="file:///d.xlsx", table_id="Table1", values=["赵六", 35, "深圳"]
+        ).to_payload()
+        assert payload["tableId"] == "Table1"
+        assert payload["values"] == ["赵六", 35, "深圳"]
+        assert "table_id" not in payload
+
+
+class TestExcelDeleteTableRowRequest:
+    """Test ExcelDeleteTableRowRequest DTO (excel:delete:tableRow) — table_id + row_index 必填"""
+
+    def test_event_name_attribute(self) -> None:
+        assert ExcelDeleteTableRowRequest.event_name == "excel:delete:tableRow"
+
+    def test_required_table_id_and_row_index(self) -> None:
+        with pytest.raises(ValidationError):
+            ExcelDeleteTableRowRequest(requestId="r", documentUri="file:///d.xlsx", tableId="Table1")  # type: ignore[call-arg]
+        with pytest.raises(ValidationError):
+            ExcelDeleteTableRowRequest(requestId="r", documentUri="file:///d.xlsx", rowIndex=0)  # type: ignore[call-arg]
+
+    def test_payload_snake_to_camel(self) -> None:
+        payload = ExcelDeleteTableRowRequest.build(
+            document_uri="file:///d.xlsx", table_id="Table1", row_index=2
+        ).to_payload()
+        assert payload["tableId"] == "Table1"
+        assert payload["rowIndex"] == 2
+        assert "row_index" not in payload
+
+    def test_payload_row_index_zero_retained(self) -> None:
+        """rowIndex=0 是合法首行索引，exclude_none 不得剔除 (0 ≠ None)。"""
+        payload = ExcelDeleteTableRowRequest.build(
+            document_uri="file:///d.xlsx", table_id="Table1", row_index=0
+        ).to_payload()
+        assert payload["rowIndex"] == 0
+
+
+class TestExcelSortTableRequest:
+    """Test ExcelSortTableRequest DTO (excel:sort:table) — table_id + sort_fields 必填, 含嵌套 SortField"""
+
+    def test_event_name_attribute(self) -> None:
+        assert ExcelSortTableRequest.event_name == "excel:sort:table"
+
+    def test_required_table_id_and_sort_fields(self) -> None:
+        with pytest.raises(ValidationError):
+            ExcelSortTableRequest(requestId="r", documentUri="file:///d.xlsx", tableId="Table1")  # type: ignore[call-arg]
+
+    def test_payload_nested_sort_fields_camel_case(self) -> None:
+        """sortFields 内嵌 columnIndex (camel)；ascending 显式 False 保留。"""
+        payload = ExcelSortTableRequest.build(
+            document_uri="file:///d.xlsx",
+            table_id="Table1",
+            sort_fields=[SortField(column_index=1, ascending=False), SortField(column_index=0)],
+        ).to_payload()
+        assert payload["tableId"] == "Table1"
+        assert payload["sortFields"][0] == {"columnIndex": 1, "ascending": False}
+        # 第二个键省略 ascending → exclude_none 剔除, 仅余 columnIndex
+        assert payload["sortFields"][1] == {"columnIndex": 0}
+        assert "sort_fields" not in payload
+
+    def test_sort_field_accepts_snake_and_camel(self) -> None:
+        """populate_by_name: SortField 内部链路接受 snake_case column_index。"""
+        snake = SortField(column_index=2)
+        camel = SortField.model_validate({"columnIndex": 2})
+        assert snake.column_index == camel.column_index == 2
+        assert snake.ascending is None
+
+
+# ============================================================================
+# #22 Table: nested + response data models
+# ============================================================================
+
+
+class TestTableColumnInfo:
+    """Test TableColumnInfo nested model (part of excel:get:table response)"""
+
+    def test_round_trip(self) -> None:
+        info = TableColumnInfo.model_validate({"name": "年龄", "index": 1})
+        assert info.name == "年龄"
+        assert info.index == 1
+        assert info.model_dump(by_alias=True) == {"name": "年龄", "index": 1}
+
+
+class TestTableSummary:
+    """Test TableSummary nested model (excel:get:tables entry)"""
+
+    def test_round_trip(self) -> None:
+        wire = {"name": "Table1", "id": "{12345}", "address": "Sheet1!A1:C4"}
+        summary = TableSummary.model_validate(wire)
+        assert summary.name == "Table1"
+        assert summary.id == "{12345}"
+        assert summary.address == "Sheet1!A1:C4"
+        assert summary.model_dump(by_alias=True) == wire
+
+
+class TestInsertTableData:
+    """Test InsertTableData data model (excel:insert:table response data)"""
+
+    def test_round_trip(self) -> None:
+        wire = {"name": "Table1", "address": "Sheet1!A1:C4"}
+        data = InsertTableData.model_validate(wire)
+        assert data.name == "Table1"
+        assert data.address == "Sheet1!A1:C4"
+        assert data.model_dump(by_alias=True) == wire
+
+    def test_both_fields_required(self) -> None:
+        with pytest.raises(ValidationError):
+            InsertTableData.model_validate({"name": "Table1"})
+
+
+class TestGetTableData:
+    """Test GetTableData data model (excel:get:table response data, rich)"""
+
+    def test_round_trip_with_columns(self) -> None:
+        wire = {
+            "name": "Table1",
+            "id": "{12345}",
+            "address": "Sheet1!A1:C4",
+            "rowCount": 3,
+            "columnCount": 3,
+            "columns": [
+                {"name": "姓名", "index": 0},
+                {"name": "年龄", "index": 1},
+                {"name": "城市", "index": 2},
+            ],
+            "styleName": "TableStyleMedium2",
+            "showHeaders": True,
+        }
+        data = GetTableData.model_validate(wire)
+        assert data.row_count == 3
+        assert data.column_count == 3
+        assert data.style_name == "TableStyleMedium2"
+        assert data.show_headers is True
+        # columns 列表项为 TableColumnInfo
+        assert len(data.columns) == 3
+        assert isinstance(data.columns[0], TableColumnInfo)
+        assert data.columns[1].name == "年龄"
+        assert data.model_dump(by_alias=True) == wire
+
+    def test_required_fields(self) -> None:
+        with pytest.raises(ValidationError):
+            GetTableData.model_validate({"name": "Table1", "id": "{1}", "address": "A1:C4"})
+
+
+class TestGetTablesData:
+    """Test GetTablesData data model (excel:get:tables response data, slim entries)"""
+
+    def test_round_trip_reuses_table_summary(self) -> None:
+        wire = {
+            "tables": [
+                {"name": "Table1", "id": "{1}", "address": "Sheet1!A1:C4"},
+                {"name": "Table2", "id": "{2}", "address": "Sheet1!E1:G10"},
+            ]
+        }
+        data = GetTablesData.model_validate(wire)
+        assert len(data.tables) == 2
+        assert isinstance(data.tables[0], TableSummary)
+        assert data.tables[1].name == "Table2"
+        assert data.model_dump(by_alias=True) == wire
+
+    def test_empty_list(self) -> None:
+        data = GetTablesData.model_validate({"tables": []})
+        assert data.tables == []
+
+
+class TestAddTableRowData:
+    """Test AddTableRowData data model (excel:add:tableRow response data)"""
+
+    def test_round_trip(self) -> None:
+        data = AddTableRowData.model_validate({"tableId": "Table1"})
+        assert data.table_id == "Table1"
+        assert data.model_dump(by_alias=True) == {"tableId": "Table1"}
+
+
+class TestDeleteTableRowData:
+    """Test DeleteTableRowData data model (excel:delete:tableRow response data)"""
+
+    def test_round_trip(self) -> None:
+        data = DeleteTableRowData.model_validate({"deleted": True})
+        assert data.deleted is True
+        assert data.model_dump(by_alias=True) == {"deleted": True}
+
+
+class TestSortTableData:
+    """Test SortTableData data model (excel:sort:table response data)"""
+
+    def test_round_trip(self) -> None:
+        data = SortTableData.model_validate({"sorted": True})
+        assert data.sorted is True
+        assert data.model_dump(by_alias=True) == {"sorted": True}

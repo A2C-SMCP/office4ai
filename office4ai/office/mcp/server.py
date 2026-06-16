@@ -176,24 +176,30 @@ class OfficeMCPServer(BaseMCPServer):
         from office4ai.a2c_smcp.tools.excel import (
             ExcelActivateWorksheetTool,
             ExcelAddConditionalFormatTool,
+            ExcelAddTableRowTool,
             ExcelAddWorksheetTool,
             ExcelClearConditionalFormatTool,
             ExcelClearRangeTool,
             ExcelCopyRangeTool,
             ExcelDeleteRangeTool,
+            ExcelDeleteTableRowTool,
             ExcelDeleteWorksheetTool,
             ExcelGetRangeFormatTool,
             ExcelGetRangeTool,
             ExcelGetSelectedRangeTool,
+            ExcelGetTablesTool,
+            ExcelGetTableTool,
             ExcelGetWorkbookInfoTool,
             ExcelGetWorksheetInfoTool,
             ExcelGetWorksheetsTool,
             ExcelInsertRangeTool,
+            ExcelInsertTableTool,
             ExcelMergeCellsTool,
             ExcelRenameWorksheetTool,
             ExcelSetFormulaTool,
             ExcelSetRangeFormatTool,
             ExcelSetRangeTool,
+            ExcelSortTableTool,
             ExcelUnmergeCellsTool,
         )
 
@@ -223,6 +229,13 @@ class OfficeMCPServer(BaseMCPServer):
             ExcelDeleteWorksheetTool(self.workspace),
             ExcelRenameWorksheetTool(self.workspace),
             ExcelActivateWorksheetTool(self.workspace),
+            # Table 操作 (OASP /excel Draft 0.3.0, issue #22)
+            ExcelInsertTableTool(self.workspace),
+            ExcelGetTableTool(self.workspace),
+            ExcelGetTablesTool(self.workspace),
+            ExcelAddTableRowTool(self.workspace),
+            ExcelDeleteTableRowTool(self.workspace),
+            ExcelSortTableTool(self.workspace),
         ]
 
         for tool in excel_tools:

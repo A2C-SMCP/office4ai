@@ -226,6 +226,60 @@ class TestWrapRequest:
         assert wrapped["worksheetName"] == "Sheet3"
         assert "worksheet_name" not in wrapped
 
+    def test_wrap_excel_insert_table(self) -> None:
+        """Test wrapping excel:insert:table (snake_case has_headers/style_name → camelCase)"""
+        business_params = {
+            "document_uri": "file:///test.xlsx",
+            "address": "A1:C2",
+            "has_headers": True,
+            "data": [["姓名", "年龄", "城市"], ["张三", 25, "北京"]],
+            "style_name": "TableStyleMedium2",
+        }
+
+        wrapped = wrap_request("excel:insert:table", business_params)
+
+        assert wrapped["address"] == "A1:C2"
+        assert wrapped["hasHeaders"] is True
+        assert wrapped["data"] == [["姓名", "年龄", "城市"], ["张三", 25, "北京"]]
+        assert wrapped["styleName"] == "TableStyleMedium2"
+        # snake_case keys must not leak to the wire payload
+        assert "has_headers" not in wrapped
+        assert "style_name" not in wrapped
+
+    def test_wrap_excel_delete_table_row_retains_zero_index(self) -> None:
+        """Test wrapping excel:delete:tableRow (row_index=0 retained, snake → camelCase)"""
+        business_params = {
+            "document_uri": "file:///test.xlsx",
+            "table_id": "Table1",
+            "row_index": 0,
+        }
+
+        wrapped = wrap_request("excel:delete:tableRow", business_params)
+
+        assert wrapped["tableId"] == "Table1"
+        # rowIndex=0 是合法首行: exclude_none 不得剔除 (0 ≠ None)
+        assert wrapped["rowIndex"] == 0
+        assert "table_id" not in wrapped
+        assert "row_index" not in wrapped
+
+    def test_wrap_excel_sort_table_nested_fields(self) -> None:
+        """Test wrapping excel:sort:table (nested sortFields → columnIndex camelCase, None dropped)"""
+        business_params = {
+            "document_uri": "file:///test.xlsx",
+            "table_id": "Table1",
+            "sort_fields": [{"column_index": 1, "ascending": False}, {"column_index": 0}],
+        }
+
+        wrapped = wrap_request("excel:sort:table", business_params)
+
+        assert wrapped["tableId"] == "Table1"
+        assert wrapped["sortFields"][0] == {"columnIndex": 1, "ascending": False}
+        # 第二项省略 ascending → exclude_none 剔除, 仅余 columnIndex
+        assert wrapped["sortFields"][1] == {"columnIndex": 0}
+        # snake_case keys must not leak (top-level or nested)
+        assert "sort_fields" not in wrapped
+        assert "column_index" not in wrapped["sortFields"][0]
+
     def test_wrap_ppt_insert_text(self) -> None:
         """Test wrapping ppt:insert:text"""
         business_params = {
@@ -281,7 +335,7 @@ class TestGetRegisteredEvents:
         events = get_registered_events()
         excel_events = [e for e in events if e.startswith("excel:")]
         # #18 read slice (3) + #19 Range CRUD + 公式 (7) + #20 Format/条件格式/合并 (6)
-        # + #21 Worksheet 管理 (5); remaining /excel events land with #22–#26.
+        # + #21 Worksheet 管理 (5) + #22 Table 操作 (6); remaining /excel events land with #23–#26.
         assert set(excel_events) >= {
             "excel:get:workbookInfo",
             "excel:get:worksheetInfo",
@@ -304,6 +358,12 @@ class TestGetRegisteredEvents:
             "excel:delete:worksheet",
             "excel:rename:worksheet",
             "excel:activate:worksheet",
+            "excel:insert:table",
+            "excel:get:table",
+            "excel:get:tables",
+            "excel:add:tableRow",
+            "excel:delete:tableRow",
+            "excel:sort:table",
         }
 
     def test_contains_all_ppt_events(self) -> None:
