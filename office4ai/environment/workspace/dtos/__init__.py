@@ -17,15 +17,16 @@ from office4ai.environment.workspace.dtos.common import (
     ErrorResponse,
 )
 
-# Excel DTOs
+# Excel DTOs (OASP 0.3.0 events-excel.md, milestone #3 — state-awareness slice #18)
 from office4ai.environment.workspace.dtos.excel import (
-    ExcelGetRangeRequest,
     ExcelGetSelectedRangeRequest,
-    ExcelGetUsedRangeRequest,
-    ExcelInsertChartRequest,
-    ExcelInsertTableRequest,
-    ExcelSetCellValueRequest,
-    ExcelSetRangeRequest,
+    ExcelGetWorkbookInfoRequest,
+    ExcelGetWorksheetInfoRequest,
+    SelectedRangeInfo,
+    SheetInfo,
+    UsedRangeInfo,
+    WorkbookInfo,
+    WorksheetInfo,
 )
 
 # PPT DTOs
@@ -89,14 +90,15 @@ __all__ = [
     "WordInsertTOCRequest",
     "WordExportContentRequest",
     "SelectionInfo",
-    # Excel
+    # Excel (state-awareness slice #18)
+    "ExcelGetWorkbookInfoRequest",
+    "ExcelGetWorksheetInfoRequest",
     "ExcelGetSelectedRangeRequest",
-    "ExcelGetUsedRangeRequest",
-    "ExcelSetCellValueRequest",
-    "ExcelInsertTableRequest",
-    "ExcelGetRangeRequest",
-    "ExcelSetRangeRequest",
-    "ExcelInsertChartRequest",
+    "SheetInfo",
+    "UsedRangeInfo",
+    "WorkbookInfo",
+    "WorksheetInfo",
+    "SelectedRangeInfo",
     # PPT
     "PptGetCurrentSlideElementsRequest",
     "PptGetSlideElementsRequest",

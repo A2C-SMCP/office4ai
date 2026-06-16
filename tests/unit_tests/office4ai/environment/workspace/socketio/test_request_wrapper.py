@@ -88,18 +88,17 @@ class TestWrapRequest:
         assert wrapped["format"]["bold"] is True
         assert wrapped["format"]["fontSize"] == 14
 
-    def test_wrap_excel_set_cell_value(self) -> None:
-        """Test wrapping excel:set:cellValue"""
+    def test_wrap_excel_get_worksheet_info(self) -> None:
+        """Test wrapping excel:get:worksheetInfo (snake_case worksheet_name → camelCase alias)"""
         business_params = {
             "document_uri": "file:///test.xlsx",
-            "address": "A1",
-            "value": 42,
+            "worksheet_name": "Sheet2",
         }
 
-        wrapped = wrap_request("excel:set:cellValue", business_params)
+        wrapped = wrap_request("excel:get:worksheetInfo", business_params)
 
-        assert wrapped["address"] == "A1"
-        assert wrapped["value"] == 42
+        assert wrapped["worksheetName"] == "Sheet2"
+        assert wrapped["documentUri"] == "file:///test.xlsx"
 
     def test_wrap_ppt_insert_text(self) -> None:
         """Test wrapping ppt:insert:text"""
@@ -155,8 +154,13 @@ class TestGetRegisteredEvents:
     def test_contains_all_excel_events(self) -> None:
         events = get_registered_events()
         excel_events = [e for e in events if e.startswith("excel:")]
-        # Should have at least 7 Excel events
-        assert len(excel_events) >= 7
+        # Foundation slice (#18) registers the 3 state-awareness read events;
+        # the remaining /excel events land with #19–#26.
+        assert set(excel_events) >= {
+            "excel:get:workbookInfo",
+            "excel:get:worksheetInfo",
+            "excel:get:selectedRange",
+        }
 
     def test_contains_all_ppt_events(self) -> None:
         events = get_registered_events()

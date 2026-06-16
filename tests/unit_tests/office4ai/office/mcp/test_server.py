@@ -38,8 +38,9 @@ class TestOfficeMCPServer:
             config = MCPServerConfig()
             server = OfficeMCPServer(config)
 
-            # 25 Word (21 + 4 OASP v0.2.0 table tools) + 24 PPT (21 + 3 OASP v0.2.0 chart tools) = 49
-            assert len(server.tools) == 49
+            # 25 Word (21 + 4 OASP v0.2.0 table tools) + 24 PPT (21 + 3 OASP v0.2.0 chart tools)
+            # + 3 Excel (OASP 0.3.0 Draft, #18 state-awareness slice) = 52
+            assert len(server.tools) == 52
 
             expected_tools = [
                 # Word Get tools
@@ -103,6 +104,10 @@ class TestOfficeMCPServer:
                 "ppt_delete_slide",
                 "ppt_move_slide",
                 "ppt_goto_slide",
+                # Excel state-awareness read tools (OASP /excel Draft 0.3.0, #18 Foundation)
+                "excel_get_workbook_info",
+                "excel_get_worksheet_info",
+                "excel_get_selected_range",
             ]
             for tool_name in expected_tools:
                 assert tool_name in server.tools, f"Tool {tool_name} not registered"

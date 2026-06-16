@@ -173,7 +173,23 @@ class OfficeMCPServer(BaseMCPServer):
 
         logger.info(f"已注册 {len(ppt_tools)} 个 PPT 工具 | Registered {len(ppt_tools)} PPT tools")
 
-        # Excel 工具 (未来) | Excel tools (future)
+        from office4ai.a2c_smcp.tools.excel import (
+            ExcelGetSelectedRangeTool,
+            ExcelGetWorkbookInfoTool,
+            ExcelGetWorksheetInfoTool,
+        )
+
+        excel_tools = [
+            # State-awareness read tools (OASP /excel Draft 0.3.0, issue #18 Foundation)
+            ExcelGetWorkbookInfoTool(self.workspace),
+            ExcelGetWorksheetInfoTool(self.workspace),
+            ExcelGetSelectedRangeTool(self.workspace),
+        ]
+
+        for tool in excel_tools:
+            self.tools[tool.name] = tool
+
+        logger.info(f"已注册 {len(excel_tools)} 个 Excel 工具 | Registered {len(excel_tools)} Excel tools")
 
     def _register_resources(self) -> None:
         """注册资源 | Register resources"""
