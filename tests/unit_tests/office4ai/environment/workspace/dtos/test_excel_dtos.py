@@ -30,7 +30,12 @@ from office4ai.environment.workspace.dtos.excel import (
     ActivateWorksheetData,
     AddTableRowData,
     AddWorksheetData,
+    ChartOperationResult,
+    ChartPosition,
+    ChartSummary,
+    ChartUpdateProperties,
     ConditionalFormatRule,
+    DeleteChartData,
     DeleteTableRowData,
     DeleteWorksheetData,
     ExcelActivateWorksheetRequest,
@@ -40,9 +45,11 @@ from office4ai.environment.workspace.dtos.excel import (
     ExcelClearConditionalFormatRequest,
     ExcelClearRangeRequest,
     ExcelCopyRangeRequest,
+    ExcelDeleteChartRequest,
     ExcelDeleteRangeRequest,
     ExcelDeleteTableRowRequest,
     ExcelDeleteWorksheetRequest,
+    ExcelGetChartsRequest,
     ExcelGetRangeFormatRequest,
     ExcelGetRangeRequest,
     ExcelGetSelectedRangeRequest,
@@ -51,6 +58,7 @@ from office4ai.environment.workspace.dtos.excel import (
     ExcelGetWorkbookInfoRequest,
     ExcelGetWorksheetInfoRequest,
     ExcelGetWorksheetsRequest,
+    ExcelInsertChartRequest,
     ExcelInsertRangeRequest,
     ExcelInsertTableRequest,
     ExcelMergeCellsRequest,
@@ -60,6 +68,8 @@ from office4ai.environment.workspace.dtos.excel import (
     ExcelSetRangeRequest,
     ExcelSortTableRequest,
     ExcelUnmergeCellsRequest,
+    ExcelUpdateChartRequest,
+    GetChartsData,
     GetRangeData,
     GetRangeFormatData,
     GetTableData,
@@ -183,7 +193,7 @@ class TestExcelGetSelectedRangeRequest:
 
 
 class TestRequestRegistration:
-    """读事件 (#18) + Range/公式 (#19) + Format/条件格式/合并 (#20) + Worksheet (#21) + Table (#22) 应自动注册。"""
+    """读事件 (#18) + Range/公式 (#19) + Format/条件格式/合并 (#20) + Worksheet (#21) + Table (#22) + Chart (#23) 应自动注册。"""
 
     @pytest.mark.parametrize(
         "event,dto_cls",
@@ -215,6 +225,10 @@ class TestRequestRegistration:
             ("excel:add:tableRow", ExcelAddTableRowRequest),
             ("excel:delete:tableRow", ExcelDeleteTableRowRequest),
             ("excel:sort:table", ExcelSortTableRequest),
+            ("excel:insert:chart", ExcelInsertChartRequest),
+            ("excel:get:charts", ExcelGetChartsRequest),
+            ("excel:update:chart", ExcelUpdateChartRequest),
+            ("excel:delete:chart", ExcelDeleteChartRequest),
         ],
     )
     def test_event_registered(self, event: str, dto_cls: type) -> None:
@@ -1213,3 +1227,248 @@ class TestSortTableData:
         data = SortTableData.model_validate({"sorted": True})
         assert data.sorted is True
         assert data.model_dump(by_alias=True) == {"sorted": True}
+
+
+# ============================================================================
+# #23 Chart: Request DTOs (按 spec type: sourceAddress + chartType:str 开放, 无 ChartData/3015)
+# ============================================================================
+
+
+class TestExcelInsertChartRequest:
+    """Test ExcelInsertChartRequest DTO (excel:insert:chart) — source_address + chart_type 必填"""
+
+    def test_event_name_attribute(self) -> None:
+        assert ExcelInsertChartRequest.event_name == "excel:insert:chart"
+
+    def test_required_source_address_and_chart_type(self) -> None:
+        # 缺 chart_type
+        with pytest.raises(ValidationError):
+            ExcelInsertChartRequest(requestId="r", documentUri="file:///d.xlsx", sourceAddress="A1:C4")  # type: ignore[call-arg]
+        # 缺 source_address
+        with pytest.raises(ValidationError):
+            ExcelInsertChartRequest(requestId="r", documentUri="file:///d.xlsx", chartType="Line")  # type: ignore[call-arg]
+
+    def test_chart_type_accepts_open_string(self) -> None:
+        """chartType 为开放字符串 (spec type string)，非 spec「常见」列表的取值亦合法。"""
+        payload = ExcelInsertChartRequest.build(
+            document_uri="file:///d.xlsx", source_address="A1:C4", chart_type="Sunburst"
+        ).to_payload()
+        assert payload["chartType"] == "Sunburst"
+
+    def test_payload_minimal_drops_optionals(self) -> None:
+        """title / position / worksheetName 省略时 exclude_none 剔除。"""
+        payload = ExcelInsertChartRequest.build(
+            document_uri="file:///d.xlsx", source_address="A1:C4", chart_type="ColumnClustered"
+        ).to_payload()
+        assert payload["sourceAddress"] == "A1:C4"
+        assert payload["chartType"] == "ColumnClustered"
+        assert "title" not in payload
+        assert "position" not in payload
+        assert "worksheetName" not in payload
+        assert "source_address" not in payload
+        assert "chart_type" not in payload
+
+    def test_payload_nested_position_drops_none_keeps_zero(self) -> None:
+        """position 内 top=0 保留 (0 ≠ None)，省略的 height 被 exclude_none 剔除。"""
+        payload = ExcelInsertChartRequest.build(
+            document_uri="file:///d.xlsx",
+            source_address="A1:C4",
+            chart_type="Pie",
+            title="占比",
+            position=ChartPosition(top=0, left=300, width=400),
+        ).to_payload()
+        assert payload["title"] == "占比"
+        assert payload["position"] == {"top": 0, "left": 300, "width": 400}
+        assert "height" not in payload["position"]
+
+
+class TestExcelGetChartsRequest:
+    """Test ExcelGetChartsRequest DTO (excel:get:charts) — 仅 worksheet_name 可选"""
+
+    def test_event_name_attribute(self) -> None:
+        assert ExcelGetChartsRequest.event_name == "excel:get:charts"
+
+    def test_payload_minimal_omits_worksheet(self) -> None:
+        payload = ExcelGetChartsRequest.build(document_uri="file:///d.xlsx").to_payload()
+        assert payload["documentUri"] == "file:///d.xlsx"
+        assert "worksheetName" not in payload
+
+    def test_payload_with_worksheet(self) -> None:
+        payload = ExcelGetChartsRequest.build(document_uri="file:///d.xlsx", worksheet_name="Sheet2").to_payload()
+        assert payload["worksheetName"] == "Sheet2"
+
+
+class TestExcelUpdateChartRequest:
+    """Test ExcelUpdateChartRequest DTO (excel:update:chart) — chart_name + properties 必填, 偏更新"""
+
+    def test_event_name_attribute(self) -> None:
+        assert ExcelUpdateChartRequest.event_name == "excel:update:chart"
+
+    def test_required_chart_name_and_properties(self) -> None:
+        # 缺 properties
+        with pytest.raises(ValidationError):
+            ExcelUpdateChartRequest(requestId="r", documentUri="file:///d.xlsx", chartName="Chart 1")  # type: ignore[call-arg]
+        # 缺 chart_name
+        with pytest.raises(ValidationError):
+            ExcelUpdateChartRequest(  # type: ignore[call-arg]
+                requestId="r", documentUri="file:///d.xlsx", properties=ChartUpdateProperties(title="t")
+            )
+
+    def test_payload_partial_properties_camel_case(self) -> None:
+        """偏更新: 仅传入 chartType/sourceAddress; title/position 省略 → exclude_none 剔除。"""
+        payload = ExcelUpdateChartRequest.build(
+            document_uri="file:///d.xlsx",
+            chart_name="Chart 1",
+            properties=ChartUpdateProperties(chart_type="Line", source_address="A1:D9"),
+        ).to_payload()
+        assert payload["chartName"] == "Chart 1"
+        assert payload["properties"] == {"chartType": "Line", "sourceAddress": "A1:D9"}
+        assert "chart_name" not in payload
+        assert "chart_type" not in payload["properties"]
+
+    def test_payload_properties_nested_position(self) -> None:
+        payload = ExcelUpdateChartRequest.build(
+            document_uri="file:///d.xlsx",
+            chart_name="Chart 1",
+            properties=ChartUpdateProperties(title="新标题", position=ChartPosition(width=500, height=300)),
+        ).to_payload()
+        assert payload["properties"]["title"] == "新标题"
+        assert payload["properties"]["position"] == {"width": 500, "height": 300}
+
+    def test_empty_properties_payload(self) -> None:
+        """properties 全省略 → 空对象 (偏更新允许无字段)。"""
+        payload = ExcelUpdateChartRequest.build(
+            document_uri="file:///d.xlsx", chart_name="Chart 1", properties=ChartUpdateProperties()
+        ).to_payload()
+        assert payload["properties"] == {}
+
+    def test_properties_accepts_snake_and_camel(self) -> None:
+        """populate_by_name: ChartUpdateProperties 接受 snake_case chart_type。"""
+        snake = ChartUpdateProperties(chart_type="Line")
+        camel = ChartUpdateProperties.model_validate({"chartType": "Line"})
+        assert snake.chart_type == camel.chart_type == "Line"
+
+
+class TestExcelDeleteChartRequest:
+    """Test ExcelDeleteChartRequest DTO (excel:delete:chart) — chart_name 必填"""
+
+    def test_event_name_attribute(self) -> None:
+        assert ExcelDeleteChartRequest.event_name == "excel:delete:chart"
+
+    def test_required_chart_name(self) -> None:
+        with pytest.raises(ValidationError):
+            ExcelDeleteChartRequest(requestId="r", documentUri="file:///d.xlsx")  # type: ignore[call-arg]
+
+    def test_payload_snake_to_camel(self) -> None:
+        payload = ExcelDeleteChartRequest.build(document_uri="file:///d.xlsx", chart_name="Chart 1").to_payload()
+        assert payload["chartName"] == "Chart 1"
+        assert "chart_name" not in payload
+        assert "worksheetName" not in payload
+
+
+# ============================================================================
+# #23 Chart: nested + response data models
+# ============================================================================
+
+
+class TestChartPosition:
+    """Test ChartPosition nested model (insert/update, all optional)"""
+
+    def test_round_trip_partial(self) -> None:
+        pos = ChartPosition.model_validate({"top": 200, "left": 300})
+        assert pos.top == 200
+        assert pos.left == 300
+        assert pos.width is None
+        # exclude_none: 省略字段不出现在 wire payload
+        assert pos.model_dump(by_alias=True, exclude_none=True) == {"top": 200, "left": 300}
+
+    def test_all_optional_empty(self) -> None:
+        pos = ChartPosition()
+        assert pos.model_dump(by_alias=True, exclude_none=True) == {}
+
+
+class TestChartUpdateProperties:
+    """Test ChartUpdateProperties nested model (excel:update:chart properties, all optional)"""
+
+    def test_round_trip_camel_case(self) -> None:
+        wire = {"title": "T", "chartType": "Line", "sourceAddress": "A1:D9"}
+        props = ChartUpdateProperties.model_validate(wire)
+        assert props.title == "T"
+        assert props.chart_type == "Line"
+        assert props.source_address == "A1:D9"
+        assert props.model_dump(by_alias=True, exclude_none=True) == wire
+
+    def test_nested_position(self) -> None:
+        props = ChartUpdateProperties.model_validate({"position": {"top": 10, "left": 20}})
+        assert isinstance(props.position, ChartPosition)
+        assert props.position.top == 10
+
+
+class TestChartSummary:
+    """Test ChartSummary nested model (excel:get:charts entry)"""
+
+    def test_round_trip(self) -> None:
+        wire = {
+            "name": "Chart 1",
+            "chartType": "ColumnClustered",
+            "title": "销售数据",
+            "top": 200.0,
+            "left": 300.0,
+            "width": 400.0,
+            "height": 300.0,
+        }
+        summary = ChartSummary.model_validate(wire)
+        assert summary.name == "Chart 1"
+        assert summary.chart_type == "ColumnClustered"
+        assert summary.title == "销售数据"
+        assert summary.model_dump(by_alias=True) == wire
+
+
+class TestChartOperationResult:
+    """Test ChartOperationResult data model (excel:insert/update:chart response, shared {name})"""
+
+    def test_round_trip(self) -> None:
+        data = ChartOperationResult.model_validate({"name": "Chart 1"})
+        assert data.name == "Chart 1"
+        assert data.model_dump(by_alias=True) == {"name": "Chart 1"}
+
+    def test_name_required(self) -> None:
+        with pytest.raises(ValidationError):
+            ChartOperationResult.model_validate({})
+
+
+class TestGetChartsData:
+    """Test GetChartsData data model (excel:get:charts response data)"""
+
+    def test_round_trip_reuses_chart_summary(self) -> None:
+        wire = {
+            "charts": [
+                {
+                    "name": "Chart 1",
+                    "chartType": "ColumnClustered",
+                    "title": "销售",
+                    "top": 200.0,
+                    "left": 300.0,
+                    "width": 400.0,
+                    "height": 300.0,
+                }
+            ]
+        }
+        data = GetChartsData.model_validate(wire)
+        assert len(data.charts) == 1
+        assert isinstance(data.charts[0], ChartSummary)
+        assert data.charts[0].name == "Chart 1"
+        assert data.model_dump(by_alias=True) == wire
+
+    def test_empty_list(self) -> None:
+        data = GetChartsData.model_validate({"charts": []})
+        assert data.charts == []
+
+
+class TestDeleteChartData:
+    """Test DeleteChartData data model (excel:delete:chart response data)"""
+
+    def test_round_trip(self) -> None:
+        data = DeleteChartData.model_validate({"deleted": True})
+        assert data.deleted is True
+        assert data.model_dump(by_alias=True) == {"deleted": True}

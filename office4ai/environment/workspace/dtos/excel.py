@@ -32,7 +32,17 @@ Defines data structures for Excel-specific Socket.IO events (``/excel`` namespac
   ``excel:sort:table``。读侧两响应形态各异（``get:table`` 富 8 字段含列明细 /
   ``get:tables`` 精简 3 字段每条目），故**不**共用单一 ``TableInfo``（issue 文案
   「共享 TableInfo」与 spec type 不符 → 从 spec type）；4 个写结果亦各自建模。
-- 图表 / 透视表等其余数据结构随各自子 issue (#23–#25) 落地，避免提前过度建模。
+- #23 Chart — 图表操作: ``excel:insert:chart`` / ``excel:get:charts`` /
+  ``excel:update:chart`` / ``excel:delete:chart``。**按 spec type 实装**：Excel 图表
+  以 ``sourceAddress``（工作簿范围引用）+ ``chartType``（**开放字符串**，spec 类型为
+  ``string`` 而非闭合枚举）构建，**不**复用 PPT 的内联 ``ChartData`` 判别联合，也无
+  ``3015 INVALID_CHART_DATA``（issue/北极星文案「复用 ChartData / 3015」描述的是
+  ``data-structures.md`` 标注的「未来 Excel」设想，events-excel.md 当前 4 个事件并未
+  采纳 → 从 spec type）。无效类型→AddIn 返回 4002，无效范围→5002，图表不存在→5007。
+  ``insert`` 与 ``update`` 响应同为 ``{name}`` → 共用 ``ChartOperationResult``（同 #19
+  ``RangeOperationResult`` 的「形态相同则共用」原则）；``ChartPosition`` 由 insert 与
+  update 复用。
+- 透视表 / 查找筛选等其余数据结构随各自子 issue (#24–#25) 落地，避免提前过度建模。
 """
 
 from typing import Any, ClassVar, Literal
@@ -365,6 +375,87 @@ class SortTableData(SocketIOBaseModel):
     sorted: bool = Field(..., alias="sorted", description="Whether the table was sorted")
 
 
+# ---- #23 Chart: nested + response data models ------------------------------
+#
+# 按 spec type 实装（events-excel.md §2023-2333）：Excel 图表以 sourceAddress +
+# chartType(开放字符串) 构建，不内联 ChartData，无 3015。详见模块 docstring §#23。
+#   insert:chart  — {name}           ┐ 形态相同 → 共用 ChartOperationResult
+#   update:chart  — {name}           ┘ （同 #19 RangeOperationResult 原则）
+#   get:charts    — {charts: [{name, chartType, title, top, left, width, height}]}
+#   delete:chart  — {deleted}
+# ChartPosition 由 insert 请求与 update properties 复用。
+# 错误码 4002 INVALID_PARAM / 5001 WORKSHEET_NOT_FOUND / 5002 RANGE_INVALID /
+# 5007 CHART_NOT_FOUND 均由 AddIn 产生，office4ai 透传 obs.error，不在此定义。
+
+# Excel 常见图表类型（chartType 开放字符串的常见取值，与 Office.js Excel.ChartType 对齐）。
+# 注意：Excel 散点图为 'XYScatter'（≠ PPT ChartType 的 'Scatter'），故各命名空间枚举不同，
+# 不复用 PPT 的闭合 ChartType Literal——保持开放 str 以接纳 AddIn 支持的其余类型。
+COMMON_CHART_TYPES = (
+    "ColumnClustered | ColumnStacked | BarClustered | Line | LineMarkers | Pie | Doughnut | Area | XYScatter | Radar"
+)
+
+
+class ChartPosition(SocketIOBaseModel):
+    """图表位置与尺寸 | Chart position/size in points (insert/update, all optional)."""
+
+    top: float | None = Field(default=None, alias="top", description="Top position in points")
+    left: float | None = Field(default=None, alias="left", description="Left position in points")
+    width: float | None = Field(default=None, alias="width", description="Width in points")
+    height: float | None = Field(default=None, alias="height", description="Height in points")
+
+
+class ChartUpdateProperties(SocketIOBaseModel):
+    """
+    图表属性偏更新 | ``excel:update:chart`` ``properties`` payload (all optional).
+
+    仅传入的属性会被修改（偏更新语义）。``chart_type`` 为开放字符串（见 COMMON_CHART_TYPES）。
+    """
+
+    title: str | None = Field(default=None, alias="title", description="New chart title")
+    chart_type: str | None = Field(
+        default=None, alias="chartType", description=f"New chart type (open string; common: {COMMON_CHART_TYPES})"
+    )
+    source_address: str | None = Field(
+        default=None, alias="sourceAddress", description="New data source range, e.g. 'A1:C4'"
+    )
+    position: ChartPosition | None = Field(default=None, alias="position", description="New position/size")
+
+
+class ChartSummary(SocketIOBaseModel):
+    """图表概要条目 | Chart summary entry (``excel:get:charts`` response)."""
+
+    name: str = Field(..., alias="name", description="Chart name")
+    chart_type: str = Field(..., alias="chartType", description="Chart type")
+    title: str = Field(..., alias="title", description="Chart title")
+    top: float = Field(..., alias="top", description="Top position in points")
+    left: float = Field(..., alias="left", description="Left position in points")
+    width: float = Field(..., alias="width", description="Width in points")
+    height: float = Field(..., alias="height", description="Height in points")
+
+
+class ChartOperationResult(SocketIOBaseModel):
+    """
+    图表写操作结果 | Shared write-op response data.
+
+    ``excel:insert:chart`` 与 ``excel:update:chart`` 的响应同为 ``{name}``，共用本模型
+    （同 #19 ``RangeOperationResult`` 的「形态相同则共用」原则）。
+    """
+
+    name: str = Field(..., alias="name", description="Chart name")
+
+
+class GetChartsData(SocketIOBaseModel):
+    """图表列表 | ``excel:get:charts`` response data."""
+
+    charts: list[ChartSummary] = Field(..., alias="charts", description="Chart summaries in the worksheet")
+
+
+class DeleteChartData(SocketIOBaseModel):
+    """删除图表结果 | ``excel:delete:chart`` response data."""
+
+    deleted: bool = Field(..., alias="deleted", description="Whether the chart was deleted")
+
+
 # ============================================================================
 # Request DTOs (Server → AddIn, 自动注册 via event_name)
 # ============================================================================
@@ -678,4 +769,60 @@ class ExcelSortTableRequest(BaseRequest):
 
     table_id: str = Field(..., alias="tableId", description="Table name or ID")
     sort_fields: list[SortField] = Field(..., alias="sortFields", description="Sort keys in priority order")
+    worksheet_name: str | None = Field(default=None, alias="worksheetName", description="Worksheet name")
+
+
+# ---- #23 Chart: 图表操作 ----------------------------------------------------
+#
+# 字段形态以 spec type 为准（events-excel.md §2023-2333）：
+#   insert:chart  — sourceAddress + chartType 必填；title / position / worksheetName 可选
+#   get:charts    — 仅 worksheetName 可选
+#   update:chart  — chartName + properties 必填（properties 内全可选，偏更新）；worksheetName 可选
+#   delete:chart  — chartName 必填；worksheetName 可选
+# chartType 为开放字符串（spec 类型 string，非闭合枚举）→ 用 str 透传，不锁定 Literal，
+# 以免拒绝 AddIn 支持的合法 Office.js 类型；无效类型由 AddIn 返回 4002。
+
+
+class ExcelInsertChartRequest(BaseRequest):
+    """Request: ``excel:insert:chart`` — 根据数据范围创建图表。"""
+
+    event_name: ClassVar[str] = "excel:insert:chart"
+
+    source_address: str = Field(..., alias="sourceAddress", description="Data source range, e.g. 'A1:C4'")
+    chart_type: str = Field(
+        ..., alias="chartType", description=f"Chart type (open string; common: {COMMON_CHART_TYPES})"
+    )
+    title: str | None = Field(default=None, alias="title", description="Chart title")
+    position: ChartPosition | None = Field(default=None, alias="position", description="Position/size in points")
+    worksheet_name: str | None = Field(default=None, alias="worksheetName", description="Worksheet name")
+
+
+class ExcelGetChartsRequest(BaseRequest):
+    """Request: ``excel:get:charts`` — 获取工作表中所有图表的信息。"""
+
+    event_name: ClassVar[str] = "excel:get:charts"
+
+    worksheet_name: str | None = Field(
+        default=None, alias="worksheetName", description="Worksheet name; omitted = active worksheet"
+    )
+
+
+class ExcelUpdateChartRequest(BaseRequest):
+    """Request: ``excel:update:chart`` — 更新图表属性（偏更新，仅传入属性被改）。"""
+
+    event_name: ClassVar[str] = "excel:update:chart"
+
+    chart_name: str = Field(..., alias="chartName", description="Chart name")
+    properties: ChartUpdateProperties = Field(
+        ..., alias="properties", description="Properties to update (all optional)"
+    )
+    worksheet_name: str | None = Field(default=None, alias="worksheetName", description="Worksheet name")
+
+
+class ExcelDeleteChartRequest(BaseRequest):
+    """Request: ``excel:delete:chart`` — 删除指定图表。"""
+
+    event_name: ClassVar[str] = "excel:delete:chart"
+
+    chart_name: str = Field(..., alias="chartName", description="Chart name")
     worksheet_name: str | None = Field(default=None, alias="worksheetName", description="Worksheet name")

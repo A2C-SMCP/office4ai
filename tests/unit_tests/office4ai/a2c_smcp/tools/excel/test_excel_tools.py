@@ -22,9 +22,11 @@ from office4ai.a2c_smcp.tools.excel import (
     ExcelClearConditionalFormatTool,
     ExcelClearRangeTool,
     ExcelCopyRangeTool,
+    ExcelDeleteChartTool,
     ExcelDeleteRangeTool,
     ExcelDeleteTableRowTool,
     ExcelDeleteWorksheetTool,
+    ExcelGetChartsTool,
     ExcelGetRangeFormatTool,
     ExcelGetRangeTool,
     ExcelGetSelectedRangeTool,
@@ -33,6 +35,7 @@ from office4ai.a2c_smcp.tools.excel import (
     ExcelGetWorkbookInfoTool,
     ExcelGetWorksheetInfoTool,
     ExcelGetWorksheetsTool,
+    ExcelInsertChartTool,
     ExcelInsertRangeTool,
     ExcelInsertTableTool,
     ExcelMergeCellsTool,
@@ -42,6 +45,7 @@ from office4ai.a2c_smcp.tools.excel import (
     ExcelSetRangeTool,
     ExcelSortTableTool,
     ExcelUnmergeCellsTool,
+    ExcelUpdateChartTool,
 )
 from office4ai.environment.workspace.base import OfficeObs
 
@@ -94,6 +98,11 @@ class TestToolMetadata:
         (ExcelAddTableRowTool, "excel_add_table_row", "excel", "add:tableRow"),
         (ExcelDeleteTableRowTool, "excel_delete_table_row", "excel", "delete:tableRow"),
         (ExcelSortTableTool, "excel_sort_table", "excel", "sort:table"),
+        # Chart 操作 (#23)
+        (ExcelInsertChartTool, "excel_insert_chart", "excel", "insert:chart"),
+        (ExcelGetChartsTool, "excel_get_charts", "excel", "get:charts"),
+        (ExcelUpdateChartTool, "excel_update_chart", "excel", "update:chart"),
+        (ExcelDeleteChartTool, "excel_delete_chart", "excel", "delete:chart"),
     ]
 
     @pytest.mark.parametrize("tool_cls,expected_name,expected_category,expected_event", TOOL_SPECS)
@@ -144,6 +153,10 @@ class TestToolMetadata:
             "excel_add_table_row": "excel:add:tableRow",
             "excel_delete_table_row": "excel:delete:tableRow",
             "excel_sort_table": "excel:sort:table",
+            "excel_insert_chart": "excel:insert:chart",
+            "excel_get_charts": "excel:get:charts",
+            "excel_update_chart": "excel:update:chart",
+            "excel_delete_chart": "excel:delete:chart",
         }
         for tool_cls, name, _, _ in self.TOOL_SPECS:
             tool = tool_cls(mock_workspace)
@@ -644,6 +657,112 @@ class TestExecuteFlow:
         assert result["success"] is False
         mock_workspace.execute.assert_not_called()
 
+    # ---- #23 Chart 操作 ----------------------------------------------------
+
+    @pytest.mark.asyncio
+    async def test_insert_chart_passes_required_and_drops_optionals(self, mock_workspace):
+        """source_address + chart_type 流入 params；title/position/worksheet_name 省略时被剔除。"""
+        mock_workspace.execute.return_value = OfficeObs(success=True, data={"name": "Chart 1"})
+
+        tool = ExcelInsertChartTool(mock_workspace)
+        await tool.execute(
+            {"document_uri": "file:///data.xlsx", "source_address": "A1:C4", "chart_type": "ColumnClustered"}
+        )
+
+        action = mock_workspace.execute.call_args[0][0]
+        assert action.category == "excel"
+        assert action.action_name == "insert:chart"
+        assert action.params["source_address"] == "A1:C4"
+        assert action.params["chart_type"] == "ColumnClustered"
+        assert "title" not in action.params
+        assert "position" not in action.params
+        assert "worksheet_name" not in action.params
+
+    @pytest.mark.asyncio
+    async def test_insert_chart_passes_title_and_nested_position(self, mock_workspace):
+        """position 经 MCP 输入 (snake) → params 以嵌套字典流入；top=0 保留, height 省略剔除。"""
+        mock_workspace.execute.return_value = OfficeObs(success=True, data={"name": "Chart 1"})
+
+        tool = ExcelInsertChartTool(mock_workspace)
+        await tool.execute(
+            {
+                "document_uri": "file:///data.xlsx",
+                "source_address": "A1:C4",
+                "chart_type": "Pie",
+                "title": "占比",
+                "position": {"top": 0, "left": 300, "width": 400},
+            }
+        )
+
+        action = mock_workspace.execute.call_args[0][0]
+        assert action.params["title"] == "占比"
+        assert action.params["position"] == {"top": 0, "left": 300, "width": 400}
+
+    @pytest.mark.asyncio
+    async def test_insert_chart_requires_source_address_and_chart_type(self, mock_workspace):
+        """source_address 与 chart_type 必填: 缺其一即校验失败, 不触达 workspace。"""
+        tool = ExcelInsertChartTool(mock_workspace)
+        result = await tool.execute({"document_uri": "file:///data.xlsx", "source_address": "A1:C4"})
+        assert result["success"] is False
+        mock_workspace.execute.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_get_charts_builds_correct_action(self, mock_workspace):
+        """get:charts 仅 worksheet_name 可选, 省略时 params 仅有 document_uri。"""
+        mock_workspace.execute.return_value = OfficeObs(success=True, data={"charts": []})
+
+        tool = ExcelGetChartsTool(mock_workspace)
+        await tool.execute({"document_uri": "file:///data.xlsx"})
+
+        action = mock_workspace.execute.call_args[0][0]
+        assert action.action_name == "get:charts"
+        assert "worksheet_name" not in action.params
+
+    @pytest.mark.asyncio
+    async def test_update_chart_passes_nested_properties(self, mock_workspace):
+        """properties 经 MCP 输入 (snake) → params 以 snake_case 嵌套字典流入；偏更新省略字段剔除。"""
+        mock_workspace.execute.return_value = OfficeObs(success=True, data={"name": "Chart 1"})
+
+        tool = ExcelUpdateChartTool(mock_workspace)
+        await tool.execute(
+            {
+                "document_uri": "file:///data.xlsx",
+                "chart_name": "Chart 1",
+                "properties": {"chart_type": "Line", "source_address": "A1:D9"},
+            }
+        )
+
+        action = mock_workspace.execute.call_args[0][0]
+        assert action.action_name == "update:chart"
+        assert action.params["chart_name"] == "Chart 1"
+        assert action.params["properties"] == {"chart_type": "Line", "source_address": "A1:D9"}
+
+    @pytest.mark.asyncio
+    async def test_update_chart_requires_chart_name_and_properties(self, mock_workspace):
+        tool = ExcelUpdateChartTool(mock_workspace)
+        result = await tool.execute({"document_uri": "file:///data.xlsx", "chart_name": "Chart 1"})
+        assert result["success"] is False
+        mock_workspace.execute.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_delete_chart_passes_chart_name(self, mock_workspace):
+        mock_workspace.execute.return_value = OfficeObs(success=True, data={"deleted": True})
+
+        tool = ExcelDeleteChartTool(mock_workspace)
+        await tool.execute({"document_uri": "file:///data.xlsx", "chart_name": "Chart 1"})
+
+        action = mock_workspace.execute.call_args[0][0]
+        assert action.action_name == "delete:chart"
+        assert action.params["chart_name"] == "Chart 1"
+        assert "worksheet_name" not in action.params
+
+    @pytest.mark.asyncio
+    async def test_delete_chart_requires_chart_name(self, mock_workspace):
+        tool = ExcelDeleteChartTool(mock_workspace)
+        result = await tool.execute({"document_uri": "file:///data.xlsx"})
+        assert result["success"] is False
+        mock_workspace.execute.assert_not_called()
+
 
 # ============================================================================
 # format_result Tests (获取类工具: content + data)
@@ -988,3 +1107,151 @@ class TestFormatResult:
         result = tool.format_result(obs)
         assert result == {"success": True, "data": {"sorted": True}}
         assert "content" not in result
+
+    # ---- #23 Chart 操作 ----------------------------------------------------
+
+    def test_get_charts_summary(self, mock_workspace):
+        """get:charts 覆写 format_result: 返回图表名列表 content + 完整 data。"""
+        tool = ExcelGetChartsTool(mock_workspace)
+        obs = OfficeObs(
+            success=True,
+            data={
+                "charts": [
+                    {
+                        "name": "Chart 1",
+                        "chartType": "ColumnClustered",
+                        "title": "销售",
+                        "top": 200.0,
+                        "left": 300.0,
+                        "width": 400.0,
+                        "height": 300.0,
+                    },
+                    {
+                        "name": "趋势图",
+                        "chartType": "Line",
+                        "title": "趋势",
+                        "top": 10.0,
+                        "left": 20.0,
+                        "width": 300.0,
+                        "height": 200.0,
+                    },
+                ]
+            },
+        )
+        result = tool.format_result(obs)
+        assert result["success"] is True
+        assert "2 chart(s)" in result["content"]
+        assert "Chart 1" in result["content"]
+        assert "趋势图" in result["content"]
+        assert len(result["data"]["charts"]) == 2
+
+    def test_get_charts_empty_summary(self, mock_workspace):
+        tool = ExcelGetChartsTool(mock_workspace)
+        obs = OfficeObs(success=True, data={"charts": []})
+        result = tool.format_result(obs)
+        assert result["success"] is True
+        assert "0 chart(s)" in result["content"]
+
+    def test_get_charts_missing_key_falls_back(self, mock_workspace):
+        """data 缺 'charts' 键时, .get 兜底为空列表 → '0 chart(s)' 不崩溃。"""
+        tool = ExcelGetChartsTool(mock_workspace)
+        obs = OfficeObs(success=True, data={})
+        result = tool.format_result(obs)
+        assert result["success"] is True
+        assert "0 chart(s)" in result["content"]
+
+    def test_get_charts_filters_non_dict_entries(self, mock_workspace):
+        """data['charts'] 含非 dict 畸形条目时, isinstance 过滤 → 计数与名称列表一致 (不计入畸形项)。"""
+        tool = ExcelGetChartsTool(mock_workspace)
+        obs = OfficeObs(
+            success=True,
+            data={
+                "charts": [
+                    {
+                        "name": "C1",
+                        "chartType": "Pie",
+                        "title": "",
+                        "top": 0.0,
+                        "left": 0.0,
+                        "width": 1.0,
+                        "height": 1.0,
+                    },
+                    "garbage",
+                    7,
+                ]
+            },
+        )
+        result = tool.format_result(obs)
+        assert result["success"] is True
+        # 仅 1 个合法 dict 条目 → 计数为 1, 与名称列表一致 (不是原始 len 3)
+        assert "1 chart(s)" in result["content"]
+        assert "C1" in result["content"]
+        assert "garbage" not in result["content"]
+
+    def test_get_charts_dict_entry_missing_name_uses_placeholder(self, mock_workspace):
+        """合法 dict 但缺 'name' 键时, .get 兜底 '?' 占位并计入 (与 get_tables 同语义)。"""
+        tool = ExcelGetChartsTool(mock_workspace)
+        obs = OfficeObs(success=True, data={"charts": [{"chartType": "Line", "title": "无名图"}]})
+        result = tool.format_result(obs)
+        assert result["success"] is True
+        # dict 条目被保留并计数 (isinstance 通过)，缺名以 '?' 占位
+        assert "1 chart(s): ?" in result["content"]
+
+    def test_get_charts_surfaces_worksheet_not_found(self, mock_workspace):
+        """工作表不存在由 AddIn 返回 5001 WORKSHEET_NOT_FOUND；consumer 透传。"""
+        tool = ExcelGetChartsTool(mock_workspace)
+        obs = OfficeObs(success=False, data={}, error="5001 WORKSHEET_NOT_FOUND")
+        result = tool.format_result(obs)
+        assert result["success"] is False
+        assert result["error"] == "5001 WORKSHEET_NOT_FOUND"
+
+    def test_insert_chart_uses_base_format_result(self, mock_workspace):
+        """写工具不覆写 format_result: 成功时返回 {success, data}，无 content。"""
+        tool = ExcelInsertChartTool(mock_workspace)
+        obs = OfficeObs(success=True, data={"name": "Chart 1"})
+        result = tool.format_result(obs)
+        assert result == {"success": True, "data": {"name": "Chart 1"}}
+        assert "content" not in result
+
+    def test_insert_chart_surfaces_invalid_chart_type(self, mock_workspace):
+        """无效 chartType 由 AddIn 返回 4002 INVALID_PARAM；consumer 透传 (按 spec 非 3015)。"""
+        tool = ExcelInsertChartTool(mock_workspace)
+        obs = OfficeObs(success=False, data={}, error="4002 INVALID_PARAM")
+        result = tool.format_result(obs)
+        assert result["success"] is False
+        assert result["error"] == "4002 INVALID_PARAM"
+
+    def test_insert_chart_surfaces_range_invalid(self, mock_workspace):
+        """无效数据源范围由 AddIn 返回 5002 RANGE_INVALID；consumer 透传。"""
+        tool = ExcelInsertChartTool(mock_workspace)
+        obs = OfficeObs(success=False, data={}, error="5002 RANGE_INVALID")
+        result = tool.format_result(obs)
+        assert result["success"] is False
+        assert result["error"] == "5002 RANGE_INVALID"
+
+    def test_update_chart_uses_base_format_result(self, mock_workspace):
+        tool = ExcelUpdateChartTool(mock_workspace)
+        obs = OfficeObs(success=True, data={"name": "Chart 1"})
+        result = tool.format_result(obs)
+        assert result == {"success": True, "data": {"name": "Chart 1"}}
+
+    def test_update_chart_surfaces_chart_not_found(self, mock_workspace):
+        """图表不存在由 AddIn 返回 5007 CHART_NOT_FOUND；consumer 透传。"""
+        tool = ExcelUpdateChartTool(mock_workspace)
+        obs = OfficeObs(success=False, data={}, error="5007 CHART_NOT_FOUND")
+        result = tool.format_result(obs)
+        assert result["success"] is False
+        assert result["error"] == "5007 CHART_NOT_FOUND"
+
+    def test_delete_chart_uses_base_format_result(self, mock_workspace):
+        tool = ExcelDeleteChartTool(mock_workspace)
+        obs = OfficeObs(success=True, data={"deleted": True})
+        result = tool.format_result(obs)
+        assert result == {"success": True, "data": {"deleted": True}}
+
+    def test_delete_chart_surfaces_chart_not_found(self, mock_workspace):
+        tool = ExcelDeleteChartTool(mock_workspace)
+        obs = OfficeObs(success=False, data={}, error="5007 CHART_NOT_FOUND")
+        result = tool.format_result(obs)
+        assert result["success"] is False
+        assert result["error"] == "5007 CHART_NOT_FOUND"

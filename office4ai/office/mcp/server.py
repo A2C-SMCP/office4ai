@@ -181,9 +181,11 @@ class OfficeMCPServer(BaseMCPServer):
             ExcelClearConditionalFormatTool,
             ExcelClearRangeTool,
             ExcelCopyRangeTool,
+            ExcelDeleteChartTool,
             ExcelDeleteRangeTool,
             ExcelDeleteTableRowTool,
             ExcelDeleteWorksheetTool,
+            ExcelGetChartsTool,
             ExcelGetRangeFormatTool,
             ExcelGetRangeTool,
             ExcelGetSelectedRangeTool,
@@ -192,6 +194,7 @@ class OfficeMCPServer(BaseMCPServer):
             ExcelGetWorkbookInfoTool,
             ExcelGetWorksheetInfoTool,
             ExcelGetWorksheetsTool,
+            ExcelInsertChartTool,
             ExcelInsertRangeTool,
             ExcelInsertTableTool,
             ExcelMergeCellsTool,
@@ -201,6 +204,7 @@ class OfficeMCPServer(BaseMCPServer):
             ExcelSetRangeTool,
             ExcelSortTableTool,
             ExcelUnmergeCellsTool,
+            ExcelUpdateChartTool,
         )
 
         excel_tools = [
@@ -236,6 +240,11 @@ class OfficeMCPServer(BaseMCPServer):
             ExcelAddTableRowTool(self.workspace),
             ExcelDeleteTableRowTool(self.workspace),
             ExcelSortTableTool(self.workspace),
+            # Chart 操作 (OASP /excel Draft 0.3.0, issue #23)
+            ExcelInsertChartTool(self.workspace),
+            ExcelGetChartsTool(self.workspace),
+            ExcelUpdateChartTool(self.workspace),
+            ExcelDeleteChartTool(self.workspace),
         ]
 
         for tool in excel_tools:

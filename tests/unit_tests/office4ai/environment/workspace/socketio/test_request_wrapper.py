@@ -280,6 +280,45 @@ class TestWrapRequest:
         assert "sort_fields" not in wrapped
         assert "column_index" not in wrapped["sortFields"][0]
 
+    def test_wrap_excel_insert_chart(self) -> None:
+        """Test wrapping excel:insert:chart (sourceAddress/chartType + nested position camelCase)"""
+        business_params = {
+            "document_uri": "file:///test.xlsx",
+            "source_address": "A1:C4",
+            "chart_type": "ColumnClustered",
+            "title": "销售对比",
+            "position": {"top": 0, "left": 300, "width": 400},
+        }
+
+        wrapped = wrap_request("excel:insert:chart", business_params)
+
+        assert wrapped["sourceAddress"] == "A1:C4"
+        assert wrapped["chartType"] == "ColumnClustered"
+        assert wrapped["title"] == "销售对比"
+        # nested position: top=0 是合法位置, exclude_none 不得剔除 (0 ≠ None); height 省略 → 剔除
+        assert wrapped["position"] == {"top": 0, "left": 300, "width": 400}
+        # snake_case keys must not leak to the wire payload
+        assert "source_address" not in wrapped
+        assert "chart_type" not in wrapped
+
+    def test_wrap_excel_update_chart_nested_properties(self) -> None:
+        """Test wrapping excel:update:chart (nested properties partial → camelCase, None dropped)"""
+        business_params = {
+            "document_uri": "file:///test.xlsx",
+            "chart_name": "Chart 1",
+            "properties": {"chart_type": "Line", "source_address": "A1:D9"},
+        }
+
+        wrapped = wrap_request("excel:update:chart", business_params)
+
+        assert wrapped["chartName"] == "Chart 1"
+        # 偏更新: 仅传入 chartType/sourceAddress; title/position 省略 → exclude_none 剔除
+        assert wrapped["properties"] == {"chartType": "Line", "sourceAddress": "A1:D9"}
+        # snake_case keys must not leak (top-level or nested)
+        assert "chart_name" not in wrapped
+        assert "chart_type" not in wrapped["properties"]
+        assert "source_address" not in wrapped["properties"]
+
     def test_wrap_ppt_insert_text(self) -> None:
         """Test wrapping ppt:insert:text"""
         business_params = {
@@ -335,7 +374,8 @@ class TestGetRegisteredEvents:
         events = get_registered_events()
         excel_events = [e for e in events if e.startswith("excel:")]
         # #18 read slice (3) + #19 Range CRUD + 公式 (7) + #20 Format/条件格式/合并 (6)
-        # + #21 Worksheet 管理 (5) + #22 Table 操作 (6); remaining /excel events land with #23–#26.
+        # + #21 Worksheet 管理 (5) + #22 Table 操作 (6) + #23 Chart 操作 (4);
+        # remaining /excel events land with #24–#26.
         assert set(excel_events) >= {
             "excel:get:workbookInfo",
             "excel:get:worksheetInfo",
@@ -364,6 +404,10 @@ class TestGetRegisteredEvents:
             "excel:add:tableRow",
             "excel:delete:tableRow",
             "excel:sort:table",
+            "excel:insert:chart",
+            "excel:get:charts",
+            "excel:update:chart",
+            "excel:delete:chart",
         }
 
     def test_contains_all_ppt_events(self) -> None:
