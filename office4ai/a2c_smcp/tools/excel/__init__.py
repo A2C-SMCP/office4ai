@@ -8,10 +8,12 @@ from office4ai.a2c_smcp.tools.excel.clear_conditional_format import ExcelClearCo
 from office4ai.a2c_smcp.tools.excel.clear_range import ExcelClearRangeTool
 from office4ai.a2c_smcp.tools.excel.copy_range import ExcelCopyRangeTool
 from office4ai.a2c_smcp.tools.excel.delete_chart import ExcelDeleteChartTool
+from office4ai.a2c_smcp.tools.excel.delete_pivot_table import ExcelDeletePivotTableTool
 from office4ai.a2c_smcp.tools.excel.delete_range import ExcelDeleteRangeTool
 from office4ai.a2c_smcp.tools.excel.delete_table_row import ExcelDeleteTableRowTool
 from office4ai.a2c_smcp.tools.excel.delete_worksheet import ExcelDeleteWorksheetTool
 from office4ai.a2c_smcp.tools.excel.get_charts import ExcelGetChartsTool
+from office4ai.a2c_smcp.tools.excel.get_pivot_tables import ExcelGetPivotTablesTool
 from office4ai.a2c_smcp.tools.excel.get_range import ExcelGetRangeTool
 from office4ai.a2c_smcp.tools.excel.get_range_format import ExcelGetRangeFormatTool
 from office4ai.a2c_smcp.tools.excel.get_selected_range import ExcelGetSelectedRangeTool
@@ -21,6 +23,7 @@ from office4ai.a2c_smcp.tools.excel.get_workbook_info import ExcelGetWorkbookInf
 from office4ai.a2c_smcp.tools.excel.get_worksheet_info import ExcelGetWorksheetInfoTool
 from office4ai.a2c_smcp.tools.excel.get_worksheets import ExcelGetWorksheetsTool
 from office4ai.a2c_smcp.tools.excel.insert_chart import ExcelInsertChartTool
+from office4ai.a2c_smcp.tools.excel.insert_pivot_table import ExcelInsertPivotTableTool
 from office4ai.a2c_smcp.tools.excel.insert_range import ExcelInsertRangeTool
 from office4ai.a2c_smcp.tools.excel.insert_table import ExcelInsertTableTool
 from office4ai.a2c_smcp.tools.excel.merge_cells import ExcelMergeCellsTool
@@ -70,4 +73,8 @@ __all__ = [
     "ExcelGetChartsTool",
     "ExcelUpdateChartTool",
     "ExcelDeleteChartTool",
+    # PivotTable 操作 (issue #24)
+    "ExcelInsertPivotTableTool",
+    "ExcelGetPivotTablesTool",
+    "ExcelDeletePivotTableTool",
 ]

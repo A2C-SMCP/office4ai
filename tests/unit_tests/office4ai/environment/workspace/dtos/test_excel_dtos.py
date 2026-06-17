@@ -36,6 +36,7 @@ from office4ai.environment.workspace.dtos.excel import (
     ChartUpdateProperties,
     ConditionalFormatRule,
     DeleteChartData,
+    DeletePivotTableData,
     DeleteTableRowData,
     DeleteWorksheetData,
     ExcelActivateWorksheetRequest,
@@ -46,10 +47,12 @@ from office4ai.environment.workspace.dtos.excel import (
     ExcelClearRangeRequest,
     ExcelCopyRangeRequest,
     ExcelDeleteChartRequest,
+    ExcelDeletePivotTableRequest,
     ExcelDeleteRangeRequest,
     ExcelDeleteTableRowRequest,
     ExcelDeleteWorksheetRequest,
     ExcelGetChartsRequest,
+    ExcelGetPivotTablesRequest,
     ExcelGetRangeFormatRequest,
     ExcelGetRangeRequest,
     ExcelGetSelectedRangeRequest,
@@ -59,6 +62,7 @@ from office4ai.environment.workspace.dtos.excel import (
     ExcelGetWorksheetInfoRequest,
     ExcelGetWorksheetsRequest,
     ExcelInsertChartRequest,
+    ExcelInsertPivotTableRequest,
     ExcelInsertRangeRequest,
     ExcelInsertTableRequest,
     ExcelMergeCellsRequest,
@@ -70,12 +74,15 @@ from office4ai.environment.workspace.dtos.excel import (
     ExcelUnmergeCellsRequest,
     ExcelUpdateChartRequest,
     GetChartsData,
+    GetPivotTablesData,
     GetRangeData,
     GetRangeFormatData,
     GetTableData,
     GetTablesData,
     GetWorksheetsData,
     InsertTableData,
+    PivotTableOperationResult,
+    PivotTableSummary,
     RangeFormatInfo,
     RangeOperationResult,
     RenameWorksheetData,
@@ -193,7 +200,7 @@ class TestExcelGetSelectedRangeRequest:
 
 
 class TestRequestRegistration:
-    """读事件 (#18) + Range/公式 (#19) + Format/条件格式/合并 (#20) + Worksheet (#21) + Table (#22) + Chart (#23) 应自动注册。"""
+    """读事件 (#18) + Range/公式 (#19) + Format/条件格式/合并 (#20) + Worksheet (#21) + Table (#22) + Chart (#23) + PivotTable (#24) 应自动注册。"""
 
     @pytest.mark.parametrize(
         "event,dto_cls",
@@ -229,6 +236,9 @@ class TestRequestRegistration:
             ("excel:get:charts", ExcelGetChartsRequest),
             ("excel:update:chart", ExcelUpdateChartRequest),
             ("excel:delete:chart", ExcelDeleteChartRequest),
+            ("excel:insert:pivotTable", ExcelInsertPivotTableRequest),
+            ("excel:get:pivotTables", ExcelGetPivotTablesRequest),
+            ("excel:delete:pivotTable", ExcelDeletePivotTableRequest),
         ],
     )
     def test_event_registered(self, event: str, dto_cls: type) -> None:
@@ -1470,5 +1480,147 @@ class TestDeleteChartData:
 
     def test_round_trip(self) -> None:
         data = DeleteChartData.model_validate({"deleted": True})
+        assert data.deleted is True
+        assert data.model_dump(by_alias=True) == {"deleted": True}
+
+
+# ============================================================================
+# #24 PivotTable: Request DTOs (按 spec type: sourceAddress + targetAddress, 无 行/列/值/筛选)
+# ============================================================================
+
+
+class TestExcelInsertPivotTableRequest:
+    """Test ExcelInsertPivotTableRequest DTO (excel:insert:pivotTable) — source_address + target_address 必填"""
+
+    def test_event_name_attribute(self) -> None:
+        assert ExcelInsertPivotTableRequest.event_name == "excel:insert:pivotTable"
+
+    def test_required_source_and_target_address(self) -> None:
+        # 缺 target_address
+        with pytest.raises(ValidationError):
+            ExcelInsertPivotTableRequest(requestId="r", documentUri="file:///d.xlsx", sourceAddress="A1:D100")  # type: ignore[call-arg]
+        # 缺 source_address
+        with pytest.raises(ValidationError):
+            ExcelInsertPivotTableRequest(requestId="r", documentUri="file:///d.xlsx", targetAddress="F1")  # type: ignore[call-arg]
+
+    def test_payload_minimal_drops_optionals(self) -> None:
+        """name / worksheetName 省略时 exclude_none 剔除；snake_case 不泄漏到 wire。"""
+        payload = ExcelInsertPivotTableRequest.build(
+            document_uri="file:///d.xlsx", source_address="A1:D100", target_address="F1"
+        ).to_payload()
+        assert payload["sourceAddress"] == "A1:D100"
+        assert payload["targetAddress"] == "F1"
+        assert "name" not in payload
+        assert "worksheetName" not in payload
+        assert "source_address" not in payload
+        assert "target_address" not in payload
+
+    def test_payload_with_name_and_worksheet(self) -> None:
+        payload = ExcelInsertPivotTableRequest.build(
+            document_uri="file:///d.xlsx",
+            source_address="A1:D100",
+            target_address="F1",
+            name="销售汇总",
+            worksheet_name="Sheet2",
+        ).to_payload()
+        assert payload["name"] == "销售汇总"
+        assert payload["worksheetName"] == "Sheet2"
+
+
+class TestExcelGetPivotTablesRequest:
+    """Test ExcelGetPivotTablesRequest DTO (excel:get:pivotTables) — 仅 worksheet_name 可选"""
+
+    def test_event_name_attribute(self) -> None:
+        assert ExcelGetPivotTablesRequest.event_name == "excel:get:pivotTables"
+
+    def test_payload_minimal_omits_worksheet(self) -> None:
+        payload = ExcelGetPivotTablesRequest.build(document_uri="file:///d.xlsx").to_payload()
+        assert payload["documentUri"] == "file:///d.xlsx"
+        assert "worksheetName" not in payload
+
+    def test_payload_with_worksheet(self) -> None:
+        payload = ExcelGetPivotTablesRequest.build(document_uri="file:///d.xlsx", worksheet_name="Sheet2").to_payload()
+        assert payload["worksheetName"] == "Sheet2"
+
+
+class TestExcelDeletePivotTableRequest:
+    """Test ExcelDeletePivotTableRequest DTO (excel:delete:pivotTable) — pivot_table_name 必填"""
+
+    def test_event_name_attribute(self) -> None:
+        assert ExcelDeletePivotTableRequest.event_name == "excel:delete:pivotTable"
+
+    def test_required_pivot_table_name(self) -> None:
+        with pytest.raises(ValidationError):
+            ExcelDeletePivotTableRequest(requestId="r", documentUri="file:///d.xlsx")  # type: ignore[call-arg]
+
+    def test_payload_snake_to_camel(self) -> None:
+        payload = ExcelDeletePivotTableRequest.build(
+            document_uri="file:///d.xlsx", pivot_table_name="销售汇总"
+        ).to_payload()
+        assert payload["pivotTableName"] == "销售汇总"
+        assert "pivot_table_name" not in payload
+        assert "worksheetName" not in payload
+
+
+# ============================================================================
+# #24 PivotTable: response data models
+# ============================================================================
+
+
+class TestPivotTableOperationResult:
+    """Test PivotTableOperationResult data model (excel:insert:pivotTable response, {name})"""
+
+    def test_round_trip(self) -> None:
+        data = PivotTableOperationResult.model_validate({"name": "PivotTable1"})
+        assert data.name == "PivotTable1"
+        assert data.model_dump(by_alias=True) == {"name": "PivotTable1"}
+
+    def test_name_required(self) -> None:
+        with pytest.raises(ValidationError):
+            PivotTableOperationResult.model_validate({})
+
+
+class TestPivotTableSummary:
+    """Test PivotTableSummary nested model (excel:get:pivotTables entry, {name, id})"""
+
+    def test_round_trip(self) -> None:
+        wire = {"name": "销售汇总", "id": "{abcd-1234}"}
+        summary = PivotTableSummary.model_validate(wire)
+        assert summary.name == "销售汇总"
+        assert summary.id == "{abcd-1234}"
+        assert summary.model_dump(by_alias=True) == wire
+
+    def test_both_fields_required(self) -> None:
+        # 缺 id
+        with pytest.raises(ValidationError):
+            PivotTableSummary.model_validate({"name": "销售汇总"})
+
+
+class TestGetPivotTablesData:
+    """Test GetPivotTablesData data model (excel:get:pivotTables response data)"""
+
+    def test_round_trip_reuses_summary(self) -> None:
+        wire = {
+            "pivotTables": [
+                {"name": "销售汇总", "id": "{abcd-1234}"},
+                {"name": "PivotTable2", "id": "{efgh-5678}"},
+            ]
+        }
+        data = GetPivotTablesData.model_validate(wire)
+        assert len(data.pivot_tables) == 2
+        assert isinstance(data.pivot_tables[0], PivotTableSummary)
+        assert data.pivot_tables[0].name == "销售汇总"
+        assert data.model_dump(by_alias=True) == wire
+
+    def test_empty_list(self) -> None:
+        data = GetPivotTablesData.model_validate({"pivotTables": []})
+        assert data.pivot_tables == []
+
+
+class TestDeletePivotTableData:
+    """Test DeletePivotTableData data model (excel:delete:pivotTable response data)"""
+
+    def test_round_trip(self) -> None:
+        data = DeletePivotTableData.model_validate({"deleted": True})
         assert data.deleted is True
         assert data.model_dump(by_alias=True) == {"deleted": True}

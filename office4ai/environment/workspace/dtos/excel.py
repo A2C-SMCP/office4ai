@@ -42,7 +42,15 @@ Defines data structures for Excel-specific Socket.IO events (``/excel`` namespac
   ``insert`` 与 ``update`` 响应同为 ``{name}`` → 共用 ``ChartOperationResult``（同 #19
   ``RangeOperationResult`` 的「形态相同则共用」原则）；``ChartPosition`` 由 insert 与
   update 复用。
-- 透视表 / 查找筛选等其余数据结构随各自子 issue (#24–#25) 落地，避免提前过度建模。
+- #24 PivotTable — 透视表操作: ``excel:insert:pivotTable`` / ``excel:get:pivotTables`` /
+  ``excel:delete:pivotTable``。**按 spec type 实装**：透视表以 ``sourceAddress`` +
+  ``targetAddress`` 放置创建，spec 未定义 rows/columns/values/filters 字段或聚合函数枚举
+  （issue/北极星文案「行/列/值/筛选 + 聚合枚举 / 共享 PivotTableInfo」描述的富模型，
+  events-excel.md 当前 3 个事件并未采纳 → 从 spec type，避免发明协议外 surface）。
+  ``insert`` 响应 ``{name}`` 与 ``get`` 条目 ``{name, id}`` 形态不同 → **不**强行共用单一
+  ``PivotTableInfo``（同 #22 TableInfo / #23 ChartSummary 的「形态不同不共用」原则）。
+  无效范围→AddIn 返回 5002，透视表不存在→5008，平台不支持→5010。
+- 查找与筛选数据结构随子 issue (#25) 落地，避免提前过度建模。
 """
 
 from typing import Any, ClassVar, Literal
@@ -456,6 +464,46 @@ class DeleteChartData(SocketIOBaseModel):
     deleted: bool = Field(..., alias="deleted", description="Whether the chart was deleted")
 
 
+# ---- #24 PivotTable: response data models ----------------------------------
+#
+# 按 spec type 实装（events-excel.md §2335-2533）：透视表以 sourceAddress +
+# targetAddress 放置创建，spec 未定义 rows/columns/values/filters 字段或聚合枚举。
+#   insert:pivotTable  — {name}
+#   get:pivotTables    — {pivotTables: [{name, id}]}
+#   delete:pivotTable  — {deleted}
+# insert 响应 {name} 与 get 条目 {name, id} 形态不同 → 不强行共用单一 PivotTableInfo
+# （同 #22 TableInfo / #23 ChartSummary 的「形态不同不共用」原则）。
+# 错误码 5001 WORKSHEET_NOT_FOUND / 5002 RANGE_INVALID / 5008 PIVOT_NOT_FOUND /
+# 5010 NOT_SUPPORTED 均由 AddIn 产生，office4ai 透传 obs.error，不在此定义。
+
+
+class PivotTableOperationResult(SocketIOBaseModel):
+    """透视表写操作结果 | ``excel:insert:pivotTable`` response data (``{name}``)."""
+
+    name: str = Field(..., alias="name", description="Pivot table name")
+
+
+class PivotTableSummary(SocketIOBaseModel):
+    """透视表概要条目 | Pivot-table summary entry (``excel:get:pivotTables`` response)."""
+
+    name: str = Field(..., alias="name", description="Pivot table name")
+    id: str = Field(..., alias="id", description="Pivot table ID")
+
+
+class GetPivotTablesData(SocketIOBaseModel):
+    """透视表列表 | ``excel:get:pivotTables`` response data."""
+
+    pivot_tables: list[PivotTableSummary] = Field(
+        ..., alias="pivotTables", description="Pivot-table summaries in the worksheet"
+    )
+
+
+class DeletePivotTableData(SocketIOBaseModel):
+    """删除透视表结果 | ``excel:delete:pivotTable`` response data."""
+
+    deleted: bool = Field(..., alias="deleted", description="Whether the pivot table was deleted")
+
+
 # ============================================================================
 # Request DTOs (Server → AddIn, 自动注册 via event_name)
 # ============================================================================
@@ -825,4 +873,47 @@ class ExcelDeleteChartRequest(BaseRequest):
     event_name: ClassVar[str] = "excel:delete:chart"
 
     chart_name: str = Field(..., alias="chartName", description="Chart name")
+    worksheet_name: str | None = Field(default=None, alias="worksheetName", description="Worksheet name")
+
+
+# ---- #24 PivotTable: 透视表操作 --------------------------------------------
+#
+# 字段形态以 spec type 为准（events-excel.md §2335-2533）：
+#   insert:pivotTable  — sourceAddress + targetAddress 必填；name / worksheetName 可选
+#   get:pivotTables    — 仅 worksheetName 可选
+#   delete:pivotTable  — pivotTableName 必填；worksheetName 可选
+# spec 未定义 rows/columns/values/filters 与聚合枚举 → 不建相关字段，避免发明协议外
+# surface（参见 #18 namespace 越界教训）。无效范围→5002 / 透视表不存在→5008 /
+# 平台不支持→5010 由 AddIn 产生，office4ai 透传。
+
+
+class ExcelInsertPivotTableRequest(BaseRequest):
+    """Request: ``excel:insert:pivotTable`` — 基于数据源范围创建透视表。"""
+
+    event_name: ClassVar[str] = "excel:insert:pivotTable"
+
+    source_address: str = Field(..., alias="sourceAddress", description="Data source range, e.g. 'A1:D100'")
+    target_address: str = Field(
+        ..., alias="targetAddress", description="Top-left cell to place the pivot table, e.g. 'F1'"
+    )
+    name: str | None = Field(default=None, alias="name", description="Pivot table name; omitted = auto-generated")
+    worksheet_name: str | None = Field(default=None, alias="worksheetName", description="Worksheet name")
+
+
+class ExcelGetPivotTablesRequest(BaseRequest):
+    """Request: ``excel:get:pivotTables`` — 获取工作表中所有透视表列表。"""
+
+    event_name: ClassVar[str] = "excel:get:pivotTables"
+
+    worksheet_name: str | None = Field(
+        default=None, alias="worksheetName", description="Worksheet name; omitted = active worksheet"
+    )
+
+
+class ExcelDeletePivotTableRequest(BaseRequest):
+    """Request: ``excel:delete:pivotTable`` — 删除指定透视表。"""
+
+    event_name: ClassVar[str] = "excel:delete:pivotTable"
+
+    pivot_table_name: str = Field(..., alias="pivotTableName", description="Pivot table name")
     worksheet_name: str | None = Field(default=None, alias="worksheetName", description="Worksheet name")

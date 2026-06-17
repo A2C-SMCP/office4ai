@@ -17,7 +17,7 @@ from office4ai.environment.workspace.dtos.common import (
     ErrorResponse,
 )
 
-# Excel DTOs (OASP 0.3.0 events-excel.md, milestone #3 — #18 read + #19 Range + #20 Format + #21 Worksheet + #22 Table + #23 Chart)
+# Excel DTOs (OASP 0.3.0 events-excel.md, milestone #3 — #18 read + #19 Range + #20 Format + #21 Worksheet + #22 Table + #23 Chart + #24 PivotTable)
 from office4ai.environment.workspace.dtos.excel import (
     ActivateWorksheetData,
     AddTableRowData,
@@ -29,6 +29,7 @@ from office4ai.environment.workspace.dtos.excel import (
     ChartUpdateProperties,
     ConditionalFormatRule,
     DeleteChartData,
+    DeletePivotTableData,
     DeleteTableRowData,
     DeleteWorksheetData,
     ExcelActivateWorksheetRequest,
@@ -39,10 +40,12 @@ from office4ai.environment.workspace.dtos.excel import (
     ExcelClearRangeRequest,
     ExcelCopyRangeRequest,
     ExcelDeleteChartRequest,
+    ExcelDeletePivotTableRequest,
     ExcelDeleteRangeRequest,
     ExcelDeleteTableRowRequest,
     ExcelDeleteWorksheetRequest,
     ExcelGetChartsRequest,
+    ExcelGetPivotTablesRequest,
     ExcelGetRangeFormatRequest,
     ExcelGetRangeRequest,
     ExcelGetSelectedRangeRequest,
@@ -52,6 +55,7 @@ from office4ai.environment.workspace.dtos.excel import (
     ExcelGetWorksheetInfoRequest,
     ExcelGetWorksheetsRequest,
     ExcelInsertChartRequest,
+    ExcelInsertPivotTableRequest,
     ExcelInsertRangeRequest,
     ExcelInsertTableRequest,
     ExcelMergeCellsRequest,
@@ -63,12 +67,15 @@ from office4ai.environment.workspace.dtos.excel import (
     ExcelUnmergeCellsRequest,
     ExcelUpdateChartRequest,
     GetChartsData,
+    GetPivotTablesData,
     GetRangeData,
     GetRangeFormatData,
     GetTableData,
     GetTablesData,
     GetWorksheetsData,
     InsertTableData,
+    PivotTableOperationResult,
+    PivotTableSummary,
     RangeBorders,
     RangeFillInfo,
     RangeFontInfo,
@@ -226,6 +233,14 @@ __all__ = [
     "ChartOperationResult",
     "GetChartsData",
     "DeleteChartData",
+    # Excel PivotTable 操作 (#24)
+    "ExcelInsertPivotTableRequest",
+    "ExcelGetPivotTablesRequest",
+    "ExcelDeletePivotTableRequest",
+    "PivotTableOperationResult",
+    "PivotTableSummary",
+    "GetPivotTablesData",
+    "DeletePivotTableData",
     # PPT
     "PptGetCurrentSlideElementsRequest",
     "PptGetSlideElementsRequest",

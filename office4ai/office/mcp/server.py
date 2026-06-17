@@ -182,10 +182,12 @@ class OfficeMCPServer(BaseMCPServer):
             ExcelClearRangeTool,
             ExcelCopyRangeTool,
             ExcelDeleteChartTool,
+            ExcelDeletePivotTableTool,
             ExcelDeleteRangeTool,
             ExcelDeleteTableRowTool,
             ExcelDeleteWorksheetTool,
             ExcelGetChartsTool,
+            ExcelGetPivotTablesTool,
             ExcelGetRangeFormatTool,
             ExcelGetRangeTool,
             ExcelGetSelectedRangeTool,
@@ -195,6 +197,7 @@ class OfficeMCPServer(BaseMCPServer):
             ExcelGetWorksheetInfoTool,
             ExcelGetWorksheetsTool,
             ExcelInsertChartTool,
+            ExcelInsertPivotTableTool,
             ExcelInsertRangeTool,
             ExcelInsertTableTool,
             ExcelMergeCellsTool,
@@ -245,6 +248,10 @@ class OfficeMCPServer(BaseMCPServer):
             ExcelGetChartsTool(self.workspace),
             ExcelUpdateChartTool(self.workspace),
             ExcelDeleteChartTool(self.workspace),
+            # PivotTable 操作 (OASP /excel Draft 0.3.0, issue #24)
+            ExcelInsertPivotTableTool(self.workspace),
+            ExcelGetPivotTablesTool(self.workspace),
+            ExcelDeletePivotTableTool(self.workspace),
         ]
 
         for tool in excel_tools:

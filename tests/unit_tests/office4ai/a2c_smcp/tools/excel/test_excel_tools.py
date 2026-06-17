@@ -23,10 +23,12 @@ from office4ai.a2c_smcp.tools.excel import (
     ExcelClearRangeTool,
     ExcelCopyRangeTool,
     ExcelDeleteChartTool,
+    ExcelDeletePivotTableTool,
     ExcelDeleteRangeTool,
     ExcelDeleteTableRowTool,
     ExcelDeleteWorksheetTool,
     ExcelGetChartsTool,
+    ExcelGetPivotTablesTool,
     ExcelGetRangeFormatTool,
     ExcelGetRangeTool,
     ExcelGetSelectedRangeTool,
@@ -36,6 +38,7 @@ from office4ai.a2c_smcp.tools.excel import (
     ExcelGetWorksheetInfoTool,
     ExcelGetWorksheetsTool,
     ExcelInsertChartTool,
+    ExcelInsertPivotTableTool,
     ExcelInsertRangeTool,
     ExcelInsertTableTool,
     ExcelMergeCellsTool,
@@ -103,6 +106,10 @@ class TestToolMetadata:
         (ExcelGetChartsTool, "excel_get_charts", "excel", "get:charts"),
         (ExcelUpdateChartTool, "excel_update_chart", "excel", "update:chart"),
         (ExcelDeleteChartTool, "excel_delete_chart", "excel", "delete:chart"),
+        # PivotTable 操作 (#24)
+        (ExcelInsertPivotTableTool, "excel_insert_pivot_table", "excel", "insert:pivotTable"),
+        (ExcelGetPivotTablesTool, "excel_get_pivot_tables", "excel", "get:pivotTables"),
+        (ExcelDeletePivotTableTool, "excel_delete_pivot_table", "excel", "delete:pivotTable"),
     ]
 
     @pytest.mark.parametrize("tool_cls,expected_name,expected_category,expected_event", TOOL_SPECS)
@@ -157,6 +164,9 @@ class TestToolMetadata:
             "excel_get_charts": "excel:get:charts",
             "excel_update_chart": "excel:update:chart",
             "excel_delete_chart": "excel:delete:chart",
+            "excel_insert_pivot_table": "excel:insert:pivotTable",
+            "excel_get_pivot_tables": "excel:get:pivotTables",
+            "excel_delete_pivot_table": "excel:delete:pivotTable",
         }
         for tool_cls, name, _, _ in self.TOOL_SPECS:
             tool = tool_cls(mock_workspace)
@@ -763,6 +773,82 @@ class TestExecuteFlow:
         assert result["success"] is False
         mock_workspace.execute.assert_not_called()
 
+    # ---- #24 PivotTable 操作 ------------------------------------------------
+
+    @pytest.mark.asyncio
+    async def test_insert_pivot_table_passes_required_and_drops_optionals(self, mock_workspace):
+        """source_address + target_address 流入 params；name/worksheet_name 省略时被剔除。"""
+        mock_workspace.execute.return_value = OfficeObs(success=True, data={"name": "PivotTable1"})
+
+        tool = ExcelInsertPivotTableTool(mock_workspace)
+        await tool.execute({"document_uri": "file:///data.xlsx", "source_address": "A1:D100", "target_address": "F1"})
+
+        action = mock_workspace.execute.call_args[0][0]
+        assert action.category == "excel"
+        assert action.action_name == "insert:pivotTable"
+        assert action.params["source_address"] == "A1:D100"
+        assert action.params["target_address"] == "F1"
+        assert "name" not in action.params
+        assert "worksheet_name" not in action.params
+
+    @pytest.mark.asyncio
+    async def test_insert_pivot_table_passes_name_and_worksheet(self, mock_workspace):
+        mock_workspace.execute.return_value = OfficeObs(success=True, data={"name": "销售汇总"})
+
+        tool = ExcelInsertPivotTableTool(mock_workspace)
+        await tool.execute(
+            {
+                "document_uri": "file:///data.xlsx",
+                "source_address": "A1:D100",
+                "target_address": "F1",
+                "name": "销售汇总",
+                "worksheet_name": "Sheet2",
+            }
+        )
+
+        action = mock_workspace.execute.call_args[0][0]
+        assert action.params["name"] == "销售汇总"
+        assert action.params["worksheet_name"] == "Sheet2"
+
+    @pytest.mark.asyncio
+    async def test_insert_pivot_table_requires_source_and_target(self, mock_workspace):
+        """source_address 与 target_address 必填: 缺其一即校验失败, 不触达 workspace。"""
+        tool = ExcelInsertPivotTableTool(mock_workspace)
+        result = await tool.execute({"document_uri": "file:///data.xlsx", "source_address": "A1:D100"})
+        assert result["success"] is False
+        mock_workspace.execute.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_get_pivot_tables_builds_correct_action(self, mock_workspace):
+        """get:pivotTables 仅 worksheet_name 可选, 省略时 params 仅有 document_uri。"""
+        mock_workspace.execute.return_value = OfficeObs(success=True, data={"pivotTables": []})
+
+        tool = ExcelGetPivotTablesTool(mock_workspace)
+        await tool.execute({"document_uri": "file:///data.xlsx"})
+
+        action = mock_workspace.execute.call_args[0][0]
+        assert action.action_name == "get:pivotTables"
+        assert "worksheet_name" not in action.params
+
+    @pytest.mark.asyncio
+    async def test_delete_pivot_table_passes_pivot_table_name(self, mock_workspace):
+        mock_workspace.execute.return_value = OfficeObs(success=True, data={"deleted": True})
+
+        tool = ExcelDeletePivotTableTool(mock_workspace)
+        await tool.execute({"document_uri": "file:///data.xlsx", "pivot_table_name": "销售汇总"})
+
+        action = mock_workspace.execute.call_args[0][0]
+        assert action.action_name == "delete:pivotTable"
+        assert action.params["pivot_table_name"] == "销售汇总"
+        assert "worksheet_name" not in action.params
+
+    @pytest.mark.asyncio
+    async def test_delete_pivot_table_requires_pivot_table_name(self, mock_workspace):
+        tool = ExcelDeletePivotTableTool(mock_workspace)
+        result = await tool.execute({"document_uri": "file:///data.xlsx"})
+        assert result["success"] is False
+        mock_workspace.execute.assert_not_called()
+
 
 # ============================================================================
 # format_result Tests (获取类工具: content + data)
@@ -1255,3 +1341,107 @@ class TestFormatResult:
         result = tool.format_result(obs)
         assert result["success"] is False
         assert result["error"] == "5007 CHART_NOT_FOUND"
+
+    # ---- #24 PivotTable 操作 ------------------------------------------------
+
+    def test_get_pivot_tables_summary(self, mock_workspace):
+        """get:pivotTables 覆写 format_result: 返回透视表名列表 content + 完整 data。"""
+        tool = ExcelGetPivotTablesTool(mock_workspace)
+        obs = OfficeObs(
+            success=True,
+            data={
+                "pivotTables": [
+                    {"name": "销售汇总", "id": "{abcd-1234}"},
+                    {"name": "PivotTable2", "id": "{efgh-5678}"},
+                ]
+            },
+        )
+        result = tool.format_result(obs)
+        assert result["success"] is True
+        assert "2 pivot table(s)" in result["content"]
+        assert "销售汇总" in result["content"]
+        assert "PivotTable2" in result["content"]
+        assert len(result["data"]["pivotTables"]) == 2
+
+    def test_get_pivot_tables_empty_summary(self, mock_workspace):
+        tool = ExcelGetPivotTablesTool(mock_workspace)
+        obs = OfficeObs(success=True, data={"pivotTables": []})
+        result = tool.format_result(obs)
+        assert result["success"] is True
+        assert "0 pivot table(s)" in result["content"]
+
+    def test_get_pivot_tables_missing_key_falls_back(self, mock_workspace):
+        """data 缺 'pivotTables' 键时, .get 兜底为空列表 → '0 pivot table(s)' 不崩溃。"""
+        tool = ExcelGetPivotTablesTool(mock_workspace)
+        obs = OfficeObs(success=True, data={})
+        result = tool.format_result(obs)
+        assert result["success"] is True
+        assert "0 pivot table(s)" in result["content"]
+
+    def test_get_pivot_tables_filters_non_dict_entries(self, mock_workspace):
+        """data['pivotTables'] 含非 dict 畸形条目时, isinstance 过滤 → 计数与名称列表一致。"""
+        tool = ExcelGetPivotTablesTool(mock_workspace)
+        obs = OfficeObs(
+            success=True,
+            data={"pivotTables": [{"name": "P1", "id": "{x}"}, "garbage", 7]},
+        )
+        result = tool.format_result(obs)
+        assert result["success"] is True
+        # 仅 1 个合法 dict 条目 → 计数为 1, 与名称列表一致 (不是原始 len 3)
+        assert "1 pivot table(s)" in result["content"]
+        assert "P1" in result["content"]
+        assert "garbage" not in result["content"]
+
+    def test_get_pivot_tables_dict_entry_missing_name_uses_placeholder(self, mock_workspace):
+        """合法 dict 但缺 'name' 键时, .get 兜底 '?' 占位并计入 (与 get_charts 同语义)。"""
+        tool = ExcelGetPivotTablesTool(mock_workspace)
+        obs = OfficeObs(success=True, data={"pivotTables": [{"id": "{no-name}"}]})
+        result = tool.format_result(obs)
+        assert result["success"] is True
+        assert "1 pivot table(s): ?" in result["content"]
+
+    def test_get_pivot_tables_surfaces_worksheet_not_found(self, mock_workspace):
+        """工作表不存在由 AddIn 返回 5001 WORKSHEET_NOT_FOUND；consumer 透传。"""
+        tool = ExcelGetPivotTablesTool(mock_workspace)
+        obs = OfficeObs(success=False, data={}, error="5001 WORKSHEET_NOT_FOUND")
+        result = tool.format_result(obs)
+        assert result["success"] is False
+        assert result["error"] == "5001 WORKSHEET_NOT_FOUND"
+
+    def test_insert_pivot_table_uses_base_format_result(self, mock_workspace):
+        """写工具不覆写 format_result: 成功时返回 {success, data}，无 content。"""
+        tool = ExcelInsertPivotTableTool(mock_workspace)
+        obs = OfficeObs(success=True, data={"name": "PivotTable1"})
+        result = tool.format_result(obs)
+        assert result == {"success": True, "data": {"name": "PivotTable1"}}
+        assert "content" not in result
+
+    def test_insert_pivot_table_surfaces_range_invalid(self, mock_workspace):
+        """无效数据源范围由 AddIn 返回 5002 RANGE_INVALID；consumer 透传。"""
+        tool = ExcelInsertPivotTableTool(mock_workspace)
+        obs = OfficeObs(success=False, data={}, error="5002 RANGE_INVALID")
+        result = tool.format_result(obs)
+        assert result["success"] is False
+        assert result["error"] == "5002 RANGE_INVALID"
+
+    def test_insert_pivot_table_surfaces_not_supported(self, mock_workspace):
+        """平台不支持透视表时由 AddIn 返回 5010 NOT_SUPPORTED；consumer 透传。"""
+        tool = ExcelInsertPivotTableTool(mock_workspace)
+        obs = OfficeObs(success=False, data={}, error="5010 NOT_SUPPORTED")
+        result = tool.format_result(obs)
+        assert result["success"] is False
+        assert result["error"] == "5010 NOT_SUPPORTED"
+
+    def test_delete_pivot_table_uses_base_format_result(self, mock_workspace):
+        tool = ExcelDeletePivotTableTool(mock_workspace)
+        obs = OfficeObs(success=True, data={"deleted": True})
+        result = tool.format_result(obs)
+        assert result == {"success": True, "data": {"deleted": True}}
+
+    def test_delete_pivot_table_surfaces_pivot_not_found(self, mock_workspace):
+        """透视表不存在由 AddIn 返回 5008 PIVOT_NOT_FOUND；consumer 透传。"""
+        tool = ExcelDeletePivotTableTool(mock_workspace)
+        obs = OfficeObs(success=False, data={}, error="5008 PIVOT_NOT_FOUND")
+        result = tool.format_result(obs)
+        assert result["success"] is False
+        assert result["error"] == "5008 PIVOT_NOT_FOUND"

@@ -319,6 +319,39 @@ class TestWrapRequest:
         assert "chart_type" not in wrapped["properties"]
         assert "source_address" not in wrapped["properties"]
 
+    def test_wrap_excel_insert_pivot_table(self) -> None:
+        """Test wrapping excel:insert:pivotTable (sourceAddress/targetAddress snake → camelCase)"""
+        business_params = {
+            "document_uri": "file:///test.xlsx",
+            "source_address": "A1:D100",
+            "target_address": "F1",
+            "name": "销售汇总",
+        }
+
+        wrapped = wrap_request("excel:insert:pivotTable", business_params)
+
+        assert wrapped["sourceAddress"] == "A1:D100"
+        assert wrapped["targetAddress"] == "F1"
+        assert wrapped["name"] == "销售汇总"
+        # worksheetName omitted → exclude_none drops it
+        assert "worksheetName" not in wrapped
+        # snake_case keys must not leak to the wire payload
+        assert "source_address" not in wrapped
+        assert "target_address" not in wrapped
+
+    def test_wrap_excel_delete_pivot_table(self) -> None:
+        """Test wrapping excel:delete:pivotTable (pivot_table_name → pivotTableName)"""
+        business_params = {
+            "document_uri": "file:///test.xlsx",
+            "pivot_table_name": "销售汇总",
+        }
+
+        wrapped = wrap_request("excel:delete:pivotTable", business_params)
+
+        assert wrapped["pivotTableName"] == "销售汇总"
+        assert "pivot_table_name" not in wrapped
+        assert "worksheetName" not in wrapped
+
     def test_wrap_ppt_insert_text(self) -> None:
         """Test wrapping ppt:insert:text"""
         business_params = {
@@ -374,8 +407,8 @@ class TestGetRegisteredEvents:
         events = get_registered_events()
         excel_events = [e for e in events if e.startswith("excel:")]
         # #18 read slice (3) + #19 Range CRUD + 公式 (7) + #20 Format/条件格式/合并 (6)
-        # + #21 Worksheet 管理 (5) + #22 Table 操作 (6) + #23 Chart 操作 (4);
-        # remaining /excel events land with #24–#26.
+        # + #21 Worksheet 管理 (5) + #22 Table 操作 (6) + #23 Chart 操作 (4)
+        # + #24 PivotTable 操作 (3); remaining /excel events land with #25–#26.
         assert set(excel_events) >= {
             "excel:get:workbookInfo",
             "excel:get:worksheetInfo",
@@ -408,6 +441,9 @@ class TestGetRegisteredEvents:
             "excel:get:charts",
             "excel:update:chart",
             "excel:delete:chart",
+            "excel:insert:pivotTable",
+            "excel:get:pivotTables",
+            "excel:delete:pivotTable",
         }
 
     def test_contains_all_ppt_events(self) -> None:
