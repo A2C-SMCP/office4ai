@@ -39,10 +39,10 @@ class TestOfficeMCPServer:
             server = OfficeMCPServer(config)
 
             # 25 Word (21 + 4 OASP v0.2.0 table tools) + 24 PPT (21 + 3 OASP v0.2.0 chart tools)
-            # + 34 Excel (OASP 0.3.0 Draft: #18 read slice 3 + #19 Range CRUD/公式 7
+            # + 37 Excel (OASP 0.3.0 Draft: #18 read slice 3 + #19 Range CRUD/公式 7
             #   + #20 Format/条件格式/合并 6 + #21 Worksheet 管理 5 + #22 Table 操作 6
-            #   + #23 Chart 操作 4 + #24 PivotTable 操作 3) = 83
-            assert len(server.tools) == 83
+            #   + #23 Chart 操作 4 + #24 PivotTable 操作 3 + #25 Find&Filter 操作 3) = 86
+            assert len(server.tools) == 86
 
             expected_tools = [
                 # Word Get tools
@@ -147,6 +147,10 @@ class TestOfficeMCPServer:
                 "excel_insert_pivot_table",
                 "excel_get_pivot_tables",
                 "excel_delete_pivot_table",
+                # Excel Find & Filter 操作 tools (OASP /excel Draft 0.3.0, #25)
+                "excel_find_values",
+                "excel_set_auto_filter",
+                "excel_clear_auto_filter",
             ]
             for tool_name in expected_tools:
                 assert tool_name in server.tools, f"Tool {tool_name} not registered"

@@ -30,10 +30,12 @@ from office4ai.environment.workspace.dtos.excel import (
     ActivateWorksheetData,
     AddTableRowData,
     AddWorksheetData,
+    AutoFilterCriterion,
     ChartOperationResult,
     ChartPosition,
     ChartSummary,
     ChartUpdateProperties,
+    ClearAutoFilterData,
     ConditionalFormatRule,
     DeleteChartData,
     DeletePivotTableData,
@@ -43,6 +45,7 @@ from office4ai.environment.workspace.dtos.excel import (
     ExcelAddConditionalFormatRequest,
     ExcelAddTableRowRequest,
     ExcelAddWorksheetRequest,
+    ExcelClearAutoFilterRequest,
     ExcelClearConditionalFormatRequest,
     ExcelClearRangeRequest,
     ExcelCopyRangeRequest,
@@ -51,6 +54,7 @@ from office4ai.environment.workspace.dtos.excel import (
     ExcelDeleteRangeRequest,
     ExcelDeleteTableRowRequest,
     ExcelDeleteWorksheetRequest,
+    ExcelFindValuesRequest,
     ExcelGetChartsRequest,
     ExcelGetPivotTablesRequest,
     ExcelGetRangeFormatRequest,
@@ -67,12 +71,15 @@ from office4ai.environment.workspace.dtos.excel import (
     ExcelInsertTableRequest,
     ExcelMergeCellsRequest,
     ExcelRenameWorksheetRequest,
+    ExcelSetAutoFilterRequest,
     ExcelSetFormulaRequest,
     ExcelSetRangeFormatRequest,
     ExcelSetRangeRequest,
     ExcelSortTableRequest,
     ExcelUnmergeCellsRequest,
     ExcelUpdateChartRequest,
+    FindMatch,
+    FindValuesData,
     GetChartsData,
     GetPivotTablesData,
     GetRangeData,
@@ -87,6 +94,7 @@ from office4ai.environment.workspace.dtos.excel import (
     RangeOperationResult,
     RenameWorksheetData,
     SelectedRangeInfo,
+    SetAutoFilterData,
     SetRangeFormatOptions,
     SheetInfo,
     SortField,
@@ -200,7 +208,7 @@ class TestExcelGetSelectedRangeRequest:
 
 
 class TestRequestRegistration:
-    """读事件 (#18) + Range/公式 (#19) + Format/条件格式/合并 (#20) + Worksheet (#21) + Table (#22) + Chart (#23) + PivotTable (#24) 应自动注册。"""
+    """读事件 (#18) + Range/公式 (#19) + Format/条件格式/合并 (#20) + Worksheet (#21) + Table (#22) + Chart (#23) + PivotTable (#24) + Find&Filter (#25) 应自动注册。"""
 
     @pytest.mark.parametrize(
         "event,dto_cls",
@@ -239,6 +247,9 @@ class TestRequestRegistration:
             ("excel:insert:pivotTable", ExcelInsertPivotTableRequest),
             ("excel:get:pivotTables", ExcelGetPivotTablesRequest),
             ("excel:delete:pivotTable", ExcelDeletePivotTableRequest),
+            ("excel:find:values", ExcelFindValuesRequest),
+            ("excel:set:autoFilter", ExcelSetAutoFilterRequest),
+            ("excel:clear:autoFilter", ExcelClearAutoFilterRequest),
         ],
     )
     def test_event_registered(self, event: str, dto_cls: type) -> None:
@@ -1624,3 +1635,183 @@ class TestDeletePivotTableData:
         data = DeletePivotTableData.model_validate({"deleted": True})
         assert data.deleted is True
         assert data.model_dump(by_alias=True) == {"deleted": True}
+
+
+# ============================================================================
+# #25 Find&Filter: Request DTOs (按 spec type: matchEntireCell / filterOn 开放字符串)
+# ============================================================================
+
+
+class TestExcelFindValuesRequest:
+    """Test ExcelFindValuesRequest DTO (excel:find:values) — search_text 必填, 其余可选"""
+
+    def test_event_name_attribute(self) -> None:
+        assert ExcelFindValuesRequest.event_name == "excel:find:values"
+
+    def test_required_search_text(self) -> None:
+        with pytest.raises(ValidationError):
+            ExcelFindValuesRequest(requestId="r", documentUri="file:///d.xlsx")  # type: ignore[call-arg]
+
+    def test_payload_minimal_drops_optionals(self) -> None:
+        """address / worksheetName / matchCase / matchEntireCell 省略时 exclude_none 剔除。"""
+        payload = ExcelFindValuesRequest.build(document_uri="file:///d.xlsx", search_text="张三").to_payload()
+        assert payload["searchText"] == "张三"
+        assert "address" not in payload
+        assert "worksheetName" not in payload
+        assert "matchCase" not in payload
+        assert "matchEntireCell" not in payload
+        assert "search_text" not in payload
+
+    def test_payload_with_all_options(self) -> None:
+        payload = ExcelFindValuesRequest.build(
+            document_uri="file:///d.xlsx",
+            search_text="张三",
+            address="A1:D100",
+            worksheet_name="Sheet2",
+            match_case=True,
+            match_entire_cell=True,
+        ).to_payload()
+        assert payload["address"] == "A1:D100"
+        assert payload["worksheetName"] == "Sheet2"
+        assert payload["matchCase"] is True
+        assert payload["matchEntireCell"] is True
+
+    def test_payload_keeps_explicit_false_flags(self) -> None:
+        """matchCase / matchEntireCell 显式 False 是 falsy 但非 None → 不被 exclude_none 剔除。"""
+        payload = ExcelFindValuesRequest.build(
+            document_uri="file:///d.xlsx", search_text="x", match_case=False, match_entire_cell=False
+        ).to_payload()
+        assert payload["matchCase"] is False
+        assert payload["matchEntireCell"] is False
+
+
+class TestExcelSetAutoFilterRequest:
+    """Test ExcelSetAutoFilterRequest DTO (excel:set:autoFilter) — address + criteria 必填, 含嵌套 AutoFilterCriterion"""
+
+    def test_event_name_attribute(self) -> None:
+        assert ExcelSetAutoFilterRequest.event_name == "excel:set:autoFilter"
+
+    def test_required_address_and_criteria(self) -> None:
+        with pytest.raises(ValidationError):
+            ExcelSetAutoFilterRequest(requestId="r", documentUri="file:///d.xlsx", address="A1:C10")  # type: ignore[call-arg]
+
+    def test_payload_nested_criteria_camel_case(self) -> None:
+        """criteria 内嵌 columnIndex / filterOn (camel)；values 省略时 exclude_none 剔除。"""
+        payload = ExcelSetAutoFilterRequest.build(
+            document_uri="file:///d.xlsx",
+            address="A1:C10",
+            criteria=[
+                AutoFilterCriterion(column_index=2, filter_on="Values", values=["北京", "上海"]),
+                AutoFilterCriterion(column_index=0, filter_on="CellColor"),
+            ],
+        ).to_payload()
+        assert payload["address"] == "A1:C10"
+        assert payload["criteria"][0] == {"columnIndex": 2, "filterOn": "Values", "values": ["北京", "上海"]}
+        # 第二条省略 values → exclude_none 剔除, 仅余 columnIndex + filterOn
+        assert payload["criteria"][1] == {"columnIndex": 0, "filterOn": "CellColor"}
+        assert "worksheetName" not in payload
+        assert "criteria" in payload
+
+    def test_criterion_accepts_snake_and_camel(self) -> None:
+        """populate_by_name: AutoFilterCriterion 内部链路接受 snake_case column_index / filter_on。"""
+        snake = AutoFilterCriterion(column_index=1, filter_on="Values")
+        camel = AutoFilterCriterion.model_validate({"columnIndex": 1, "filterOn": "Values"})
+        assert snake.column_index == camel.column_index == 1
+        assert snake.filter_on == camel.filter_on == "Values"
+        assert snake.values is None
+
+
+class TestExcelClearAutoFilterRequest:
+    """Test ExcelClearAutoFilterRequest DTO (excel:clear:autoFilter) — 仅 worksheet_name 可选"""
+
+    def test_event_name_attribute(self) -> None:
+        assert ExcelClearAutoFilterRequest.event_name == "excel:clear:autoFilter"
+
+    def test_payload_minimal_omits_worksheet(self) -> None:
+        payload = ExcelClearAutoFilterRequest.build(document_uri="file:///d.xlsx").to_payload()
+        assert payload["documentUri"] == "file:///d.xlsx"
+        assert "worksheetName" not in payload
+
+    def test_payload_with_worksheet(self) -> None:
+        payload = ExcelClearAutoFilterRequest.build(document_uri="file:///d.xlsx", worksheet_name="Sheet2").to_payload()
+        assert payload["worksheetName"] == "Sheet2"
+
+
+# ============================================================================
+# #25 Find&Filter: nested + response data models
+# ============================================================================
+
+
+class TestAutoFilterCriterion:
+    """Test AutoFilterCriterion nested model (excel:set:autoFilter request entry)"""
+
+    def test_round_trip_with_values(self) -> None:
+        wire = {"columnIndex": 2, "filterOn": "Values", "values": ["北京", "上海"]}
+        criterion = AutoFilterCriterion.model_validate(wire)
+        assert criterion.column_index == 2
+        assert criterion.filter_on == "Values"
+        assert criterion.values == ["北京", "上海"]
+        assert criterion.model_dump(by_alias=True) == wire
+
+    def test_column_index_and_filter_on_required(self) -> None:
+        # 缺 filter_on
+        with pytest.raises(ValidationError):
+            AutoFilterCriterion.model_validate({"columnIndex": 0})
+
+
+class TestFindMatch:
+    """Test FindMatch nested model (excel:find:values response entry, {address, value})"""
+
+    def test_round_trip_any_value(self) -> None:
+        wire = {"address": "Sheet1!A2", "value": "张三"}
+        match = FindMatch.model_validate(wire)
+        assert match.address == "Sheet1!A2"
+        assert match.value == "张三"
+        assert match.model_dump(by_alias=True) == wire
+
+    def test_value_accepts_non_string(self) -> None:
+        match = FindMatch.model_validate({"address": "Sheet1!B5", "value": 42})
+        assert match.value == 42
+
+    def test_address_required(self) -> None:
+        with pytest.raises(ValidationError):
+            FindMatch.model_validate({"value": "张三"})
+
+
+class TestFindValuesData:
+    """Test FindValuesData data model (excel:find:values response data)"""
+
+    def test_round_trip_reuses_match(self) -> None:
+        wire = {
+            "matches": [
+                {"address": "Sheet1!A2", "value": "张三"},
+                {"address": "Sheet1!A15", "value": "张三"},
+            ]
+        }
+        data = FindValuesData.model_validate(wire)
+        assert len(data.matches) == 2
+        assert isinstance(data.matches[0], FindMatch)
+        assert data.matches[0].address == "Sheet1!A2"
+        assert data.model_dump(by_alias=True) == wire
+
+    def test_empty_list(self) -> None:
+        data = FindValuesData.model_validate({"matches": []})
+        assert data.matches == []
+
+
+class TestSetAutoFilterData:
+    """Test SetAutoFilterData data model (excel:set:autoFilter response data)"""
+
+    def test_round_trip(self) -> None:
+        data = SetAutoFilterData.model_validate({"address": "A1:C10"})
+        assert data.address == "A1:C10"
+        assert data.model_dump(by_alias=True) == {"address": "A1:C10"}
+
+
+class TestClearAutoFilterData:
+    """Test ClearAutoFilterData data model (excel:clear:autoFilter response data)"""
+
+    def test_round_trip(self) -> None:
+        data = ClearAutoFilterData.model_validate({"cleared": True})
+        assert data.cleared is True
+        assert data.model_dump(by_alias=True) == {"cleared": True}

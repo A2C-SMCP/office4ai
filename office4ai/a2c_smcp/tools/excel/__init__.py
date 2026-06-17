@@ -4,6 +4,7 @@ from office4ai.a2c_smcp.tools.excel.activate_worksheet import ExcelActivateWorks
 from office4ai.a2c_smcp.tools.excel.add_conditional_format import ExcelAddConditionalFormatTool
 from office4ai.a2c_smcp.tools.excel.add_table_row import ExcelAddTableRowTool
 from office4ai.a2c_smcp.tools.excel.add_worksheet import ExcelAddWorksheetTool
+from office4ai.a2c_smcp.tools.excel.clear_auto_filter import ExcelClearAutoFilterTool
 from office4ai.a2c_smcp.tools.excel.clear_conditional_format import ExcelClearConditionalFormatTool
 from office4ai.a2c_smcp.tools.excel.clear_range import ExcelClearRangeTool
 from office4ai.a2c_smcp.tools.excel.copy_range import ExcelCopyRangeTool
@@ -12,6 +13,7 @@ from office4ai.a2c_smcp.tools.excel.delete_pivot_table import ExcelDeletePivotTa
 from office4ai.a2c_smcp.tools.excel.delete_range import ExcelDeleteRangeTool
 from office4ai.a2c_smcp.tools.excel.delete_table_row import ExcelDeleteTableRowTool
 from office4ai.a2c_smcp.tools.excel.delete_worksheet import ExcelDeleteWorksheetTool
+from office4ai.a2c_smcp.tools.excel.find_values import ExcelFindValuesTool
 from office4ai.a2c_smcp.tools.excel.get_charts import ExcelGetChartsTool
 from office4ai.a2c_smcp.tools.excel.get_pivot_tables import ExcelGetPivotTablesTool
 from office4ai.a2c_smcp.tools.excel.get_range import ExcelGetRangeTool
@@ -28,6 +30,7 @@ from office4ai.a2c_smcp.tools.excel.insert_range import ExcelInsertRangeTool
 from office4ai.a2c_smcp.tools.excel.insert_table import ExcelInsertTableTool
 from office4ai.a2c_smcp.tools.excel.merge_cells import ExcelMergeCellsTool
 from office4ai.a2c_smcp.tools.excel.rename_worksheet import ExcelRenameWorksheetTool
+from office4ai.a2c_smcp.tools.excel.set_auto_filter import ExcelSetAutoFilterTool
 from office4ai.a2c_smcp.tools.excel.set_formula import ExcelSetFormulaTool
 from office4ai.a2c_smcp.tools.excel.set_range import ExcelSetRangeTool
 from office4ai.a2c_smcp.tools.excel.set_range_format import ExcelSetRangeFormatTool
@@ -77,4 +80,8 @@ __all__ = [
     "ExcelInsertPivotTableTool",
     "ExcelGetPivotTablesTool",
     "ExcelDeletePivotTableTool",
+    # Find & Filter 操作 (issue #25)
+    "ExcelFindValuesTool",
+    "ExcelSetAutoFilterTool",
+    "ExcelClearAutoFilterTool",
 ]

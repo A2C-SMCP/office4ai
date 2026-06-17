@@ -352,6 +352,60 @@ class TestWrapRequest:
         assert "pivot_table_name" not in wrapped
         assert "worksheetName" not in wrapped
 
+    def test_wrap_excel_find_values_keeps_false_flags(self) -> None:
+        """Test wrapping excel:find:values (searchText snake → camel; matchCase=False survives exclude_none)"""
+        business_params = {
+            "document_uri": "file:///test.xlsx",
+            "search_text": "张三",
+            "match_case": False,
+            "match_entire_cell": True,
+        }
+
+        wrapped = wrap_request("excel:find:values", business_params)
+
+        assert wrapped["searchText"] == "张三"
+        # matchCase=False 是 falsy 但非 None → 不得被 exclude_none 剔除
+        assert wrapped["matchCase"] is False
+        assert wrapped["matchEntireCell"] is True
+        # address/worksheetName omitted → dropped
+        assert "address" not in wrapped
+        assert "worksheetName" not in wrapped
+        assert "search_text" not in wrapped
+
+    def test_wrap_excel_set_auto_filter_nested_criteria(self) -> None:
+        """Test wrapping excel:set:autoFilter (nested criteria → columnIndex/filterOn camelCase, None dropped)"""
+        business_params = {
+            "document_uri": "file:///test.xlsx",
+            "address": "A1:C10",
+            "criteria": [
+                {"column_index": 2, "filter_on": "Values", "values": ["北京", "上海"]},
+                {"column_index": 0, "filter_on": "CellColor"},
+            ],
+        }
+
+        wrapped = wrap_request("excel:set:autoFilter", business_params)
+
+        assert wrapped["address"] == "A1:C10"
+        assert wrapped["criteria"][0] == {"columnIndex": 2, "filterOn": "Values", "values": ["北京", "上海"]}
+        # 第二项省略 values → exclude_none 剔除, 仅余 columnIndex + filterOn
+        assert wrapped["criteria"][1] == {"columnIndex": 0, "filterOn": "CellColor"}
+        # snake_case keys must not leak (top-level or nested)
+        assert "column_index" not in wrapped["criteria"][0]
+        assert "filter_on" not in wrapped["criteria"][0]
+        assert "worksheetName" not in wrapped
+
+    def test_wrap_excel_clear_auto_filter(self) -> None:
+        """Test wrapping excel:clear:autoFilter (worksheetName snake → camel)"""
+        business_params = {
+            "document_uri": "file:///test.xlsx",
+            "worksheet_name": "Sheet2",
+        }
+
+        wrapped = wrap_request("excel:clear:autoFilter", business_params)
+
+        assert wrapped["worksheetName"] == "Sheet2"
+        assert "worksheet_name" not in wrapped
+
     def test_wrap_ppt_insert_text(self) -> None:
         """Test wrapping ppt:insert:text"""
         business_params = {
@@ -408,7 +462,7 @@ class TestGetRegisteredEvents:
         excel_events = [e for e in events if e.startswith("excel:")]
         # #18 read slice (3) + #19 Range CRUD + 公式 (7) + #20 Format/条件格式/合并 (6)
         # + #21 Worksheet 管理 (5) + #22 Table 操作 (6) + #23 Chart 操作 (4)
-        # + #24 PivotTable 操作 (3); remaining /excel events land with #25–#26.
+        # + #24 PivotTable 操作 (3) + #25 Find&Filter 操作 (3); E2E 收口随 #26.
         assert set(excel_events) >= {
             "excel:get:workbookInfo",
             "excel:get:worksheetInfo",
@@ -444,6 +498,9 @@ class TestGetRegisteredEvents:
             "excel:insert:pivotTable",
             "excel:get:pivotTables",
             "excel:delete:pivotTable",
+            "excel:find:values",
+            "excel:set:autoFilter",
+            "excel:clear:autoFilter",
         }
 
     def test_contains_all_ppt_events(self) -> None:

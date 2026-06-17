@@ -19,6 +19,7 @@ from office4ai.a2c_smcp.tools.excel import (
     ExcelAddConditionalFormatTool,
     ExcelAddTableRowTool,
     ExcelAddWorksheetTool,
+    ExcelClearAutoFilterTool,
     ExcelClearConditionalFormatTool,
     ExcelClearRangeTool,
     ExcelCopyRangeTool,
@@ -27,6 +28,7 @@ from office4ai.a2c_smcp.tools.excel import (
     ExcelDeleteRangeTool,
     ExcelDeleteTableRowTool,
     ExcelDeleteWorksheetTool,
+    ExcelFindValuesTool,
     ExcelGetChartsTool,
     ExcelGetPivotTablesTool,
     ExcelGetRangeFormatTool,
@@ -43,6 +45,7 @@ from office4ai.a2c_smcp.tools.excel import (
     ExcelInsertTableTool,
     ExcelMergeCellsTool,
     ExcelRenameWorksheetTool,
+    ExcelSetAutoFilterTool,
     ExcelSetFormulaTool,
     ExcelSetRangeFormatTool,
     ExcelSetRangeTool,
@@ -110,6 +113,10 @@ class TestToolMetadata:
         (ExcelInsertPivotTableTool, "excel_insert_pivot_table", "excel", "insert:pivotTable"),
         (ExcelGetPivotTablesTool, "excel_get_pivot_tables", "excel", "get:pivotTables"),
         (ExcelDeletePivotTableTool, "excel_delete_pivot_table", "excel", "delete:pivotTable"),
+        # Find & Filter 操作 (#25)
+        (ExcelFindValuesTool, "excel_find_values", "excel", "find:values"),
+        (ExcelSetAutoFilterTool, "excel_set_auto_filter", "excel", "set:autoFilter"),
+        (ExcelClearAutoFilterTool, "excel_clear_auto_filter", "excel", "clear:autoFilter"),
     ]
 
     @pytest.mark.parametrize("tool_cls,expected_name,expected_category,expected_event", TOOL_SPECS)
@@ -167,6 +174,9 @@ class TestToolMetadata:
             "excel_insert_pivot_table": "excel:insert:pivotTable",
             "excel_get_pivot_tables": "excel:get:pivotTables",
             "excel_delete_pivot_table": "excel:delete:pivotTable",
+            "excel_find_values": "excel:find:values",
+            "excel_set_auto_filter": "excel:set:autoFilter",
+            "excel_clear_auto_filter": "excel:clear:autoFilter",
         }
         for tool_cls, name, _, _ in self.TOOL_SPECS:
             tool = tool_cls(mock_workspace)
@@ -849,6 +859,125 @@ class TestExecuteFlow:
         assert result["success"] is False
         mock_workspace.execute.assert_not_called()
 
+    # ---- #25 Find & Filter 操作 --------------------------------------------
+
+    @pytest.mark.asyncio
+    async def test_find_values_passes_required_and_drops_optionals(self, mock_workspace):
+        """search_text 流入 params；address/worksheet_name/match_* 省略时被剔除。"""
+        mock_workspace.execute.return_value = OfficeObs(success=True, data={"matches": []})
+
+        tool = ExcelFindValuesTool(mock_workspace)
+        await tool.execute({"document_uri": "file:///data.xlsx", "search_text": "张三"})
+
+        action = mock_workspace.execute.call_args[0][0]
+        assert action.category == "excel"
+        assert action.action_name == "find:values"
+        assert action.params["search_text"] == "张三"
+        assert "address" not in action.params
+        assert "worksheet_name" not in action.params
+        assert "match_case" not in action.params
+        assert "match_entire_cell" not in action.params
+
+    @pytest.mark.asyncio
+    async def test_find_values_passes_all_options(self, mock_workspace):
+        mock_workspace.execute.return_value = OfficeObs(success=True, data={"matches": []})
+
+        tool = ExcelFindValuesTool(mock_workspace)
+        await tool.execute(
+            {
+                "document_uri": "file:///data.xlsx",
+                "search_text": "张三",
+                "address": "A1:D100",
+                "worksheet_name": "Sheet2",
+                "match_case": True,
+                "match_entire_cell": True,
+            }
+        )
+
+        action = mock_workspace.execute.call_args[0][0]
+        assert action.params["address"] == "A1:D100"
+        assert action.params["worksheet_name"] == "Sheet2"
+        assert action.params["match_case"] is True
+        assert action.params["match_entire_cell"] is True
+
+    @pytest.mark.asyncio
+    async def test_find_values_keeps_explicit_false_flags(self, mock_workspace):
+        """match_case / match_entire_cell 显式 False 是 falsy 但非 None → 不被剔除。"""
+        mock_workspace.execute.return_value = OfficeObs(success=True, data={"matches": []})
+
+        tool = ExcelFindValuesTool(mock_workspace)
+        await tool.execute(
+            {
+                "document_uri": "file:///data.xlsx",
+                "search_text": "x",
+                "match_case": False,
+                "match_entire_cell": False,
+            }
+        )
+
+        action = mock_workspace.execute.call_args[0][0]
+        assert action.params["match_case"] is False
+        assert action.params["match_entire_cell"] is False
+
+    @pytest.mark.asyncio
+    async def test_find_values_requires_search_text(self, mock_workspace):
+        tool = ExcelFindValuesTool(mock_workspace)
+        result = await tool.execute({"document_uri": "file:///data.xlsx"})
+        assert result["success"] is False
+        mock_workspace.execute.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_set_auto_filter_passes_nested_criteria(self, mock_workspace):
+        """address + criteria 流入 params；criteria 内嵌 columnIndex/filterOn/values。"""
+        mock_workspace.execute.return_value = OfficeObs(success=True, data={"address": "A1:C10"})
+
+        tool = ExcelSetAutoFilterTool(mock_workspace)
+        await tool.execute(
+            {
+                "document_uri": "file:///data.xlsx",
+                "address": "A1:C10",
+                "criteria": [{"column_index": 2, "filter_on": "Values", "values": ["北京", "上海"]}],
+            }
+        )
+
+        action = mock_workspace.execute.call_args[0][0]
+        assert action.action_name == "set:autoFilter"
+        assert action.params["address"] == "A1:C10"
+        assert action.params["criteria"][0]["column_index"] == 2
+        assert action.params["criteria"][0]["filter_on"] == "Values"
+        assert action.params["criteria"][0]["values"] == ["北京", "上海"]
+        assert "worksheet_name" not in action.params
+
+    @pytest.mark.asyncio
+    async def test_set_auto_filter_requires_address_and_criteria(self, mock_workspace):
+        """address 与 criteria 必填: 缺 criteria 即校验失败, 不触达 workspace。"""
+        tool = ExcelSetAutoFilterTool(mock_workspace)
+        result = await tool.execute({"document_uri": "file:///data.xlsx", "address": "A1:C10"})
+        assert result["success"] is False
+        mock_workspace.execute.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_clear_auto_filter_builds_correct_action(self, mock_workspace):
+        """clear:autoFilter 仅 worksheet_name 可选, 省略时 params 仅有 document_uri。"""
+        mock_workspace.execute.return_value = OfficeObs(success=True, data={"cleared": True})
+
+        tool = ExcelClearAutoFilterTool(mock_workspace)
+        await tool.execute({"document_uri": "file:///data.xlsx"})
+
+        action = mock_workspace.execute.call_args[0][0]
+        assert action.action_name == "clear:autoFilter"
+        assert "worksheet_name" not in action.params
+
+    @pytest.mark.asyncio
+    async def test_clear_auto_filter_passes_worksheet(self, mock_workspace):
+        mock_workspace.execute.return_value = OfficeObs(success=True, data={"cleared": True})
+
+        tool = ExcelClearAutoFilterTool(mock_workspace)
+        await tool.execute({"document_uri": "file:///data.xlsx", "worksheet_name": "Sheet2"})
+
+        action = mock_workspace.execute.call_args[0][0]
+        assert action.params["worksheet_name"] == "Sheet2"
+
 
 # ============================================================================
 # format_result Tests (获取类工具: content + data)
@@ -1445,3 +1574,99 @@ class TestFormatResult:
         result = tool.format_result(obs)
         assert result["success"] is False
         assert result["error"] == "5008 PIVOT_NOT_FOUND"
+
+    # ---- #25 Find & Filter 操作 --------------------------------------------
+
+    def test_find_values_summary(self, mock_workspace):
+        """find:values 覆写 format_result: 返回命中地址列表 content + 完整 data。"""
+        tool = ExcelFindValuesTool(mock_workspace)
+        obs = OfficeObs(
+            success=True,
+            data={
+                "matches": [
+                    {"address": "Sheet1!A2", "value": "张三"},
+                    {"address": "Sheet1!A15", "value": "张三"},
+                ]
+            },
+        )
+        result = tool.format_result(obs)
+        assert result["success"] is True
+        assert "2 match(es)" in result["content"]
+        assert "Sheet1!A2" in result["content"]
+        assert "Sheet1!A15" in result["content"]
+        assert len(result["data"]["matches"]) == 2
+
+    def test_find_values_empty_summary(self, mock_workspace):
+        tool = ExcelFindValuesTool(mock_workspace)
+        obs = OfficeObs(success=True, data={"matches": []})
+        result = tool.format_result(obs)
+        assert result["success"] is True
+        assert "0 match(es)" in result["content"]
+
+    def test_find_values_missing_key_falls_back(self, mock_workspace):
+        """data 缺 'matches' 键时, .get 兜底为空列表 → '0 match(es)' 不崩溃。"""
+        tool = ExcelFindValuesTool(mock_workspace)
+        obs = OfficeObs(success=True, data={})
+        result = tool.format_result(obs)
+        assert result["success"] is True
+        assert "0 match(es)" in result["content"]
+
+    def test_find_values_filters_non_dict_entries(self, mock_workspace):
+        """data['matches'] 含非 dict 畸形条目时, isinstance 过滤 → 计数与地址列表一致。"""
+        tool = ExcelFindValuesTool(mock_workspace)
+        obs = OfficeObs(
+            success=True,
+            data={"matches": [{"address": "Sheet1!A2", "value": "张三"}, "garbage", 7]},
+        )
+        result = tool.format_result(obs)
+        assert result["success"] is True
+        # 仅 1 个合法 dict 条目 → 计数为 1, 与地址列表一致 (不是原始 len 3)
+        assert "1 match(es)" in result["content"]
+        assert "Sheet1!A2" in result["content"]
+        assert "garbage" not in result["content"]
+
+    def test_find_values_dict_entry_missing_address_uses_placeholder(self, mock_workspace):
+        """合法 dict 但缺 'address' 键时, .get 兜底 '?' 占位并计入 (与 get_charts 同语义)。"""
+        tool = ExcelFindValuesTool(mock_workspace)
+        obs = OfficeObs(success=True, data={"matches": [{"value": "no-address"}]})
+        result = tool.format_result(obs)
+        assert result["success"] is True
+        assert "1 match(es): ?" in result["content"]
+
+    def test_find_values_surfaces_range_invalid(self, mock_workspace):
+        """无效搜索范围由 AddIn 返回 5002 RANGE_INVALID；consumer 透传。"""
+        tool = ExcelFindValuesTool(mock_workspace)
+        obs = OfficeObs(success=False, data={}, error="5002 RANGE_INVALID")
+        result = tool.format_result(obs)
+        assert result["success"] is False
+        assert result["error"] == "5002 RANGE_INVALID"
+
+    def test_set_auto_filter_uses_base_format_result(self, mock_workspace):
+        """写工具不覆写 format_result: 成功时返回 {success, data}，无 content。"""
+        tool = ExcelSetAutoFilterTool(mock_workspace)
+        obs = OfficeObs(success=True, data={"address": "A1:C10"})
+        result = tool.format_result(obs)
+        assert result == {"success": True, "data": {"address": "A1:C10"}}
+        assert "content" not in result
+
+    def test_set_auto_filter_surfaces_param_out_of_range(self, mock_workspace):
+        """列索引越界由 AddIn 返回 4004 PARAM_OUT_OF_RANGE；consumer 透传。"""
+        tool = ExcelSetAutoFilterTool(mock_workspace)
+        obs = OfficeObs(success=False, data={}, error="4004 PARAM_OUT_OF_RANGE")
+        result = tool.format_result(obs)
+        assert result["success"] is False
+        assert result["error"] == "4004 PARAM_OUT_OF_RANGE"
+
+    def test_clear_auto_filter_uses_base_format_result(self, mock_workspace):
+        tool = ExcelClearAutoFilterTool(mock_workspace)
+        obs = OfficeObs(success=True, data={"cleared": True})
+        result = tool.format_result(obs)
+        assert result == {"success": True, "data": {"cleared": True}}
+
+    def test_clear_auto_filter_surfaces_worksheet_not_found(self, mock_workspace):
+        """工作表不存在由 AddIn 返回 5001 WORKSHEET_NOT_FOUND；consumer 透传。"""
+        tool = ExcelClearAutoFilterTool(mock_workspace)
+        obs = OfficeObs(success=False, data={}, error="5001 WORKSHEET_NOT_FOUND")
+        result = tool.format_result(obs)
+        assert result["success"] is False
+        assert result["error"] == "5001 WORKSHEET_NOT_FOUND"

@@ -178,6 +178,7 @@ class OfficeMCPServer(BaseMCPServer):
             ExcelAddConditionalFormatTool,
             ExcelAddTableRowTool,
             ExcelAddWorksheetTool,
+            ExcelClearAutoFilterTool,
             ExcelClearConditionalFormatTool,
             ExcelClearRangeTool,
             ExcelCopyRangeTool,
@@ -186,6 +187,7 @@ class OfficeMCPServer(BaseMCPServer):
             ExcelDeleteRangeTool,
             ExcelDeleteTableRowTool,
             ExcelDeleteWorksheetTool,
+            ExcelFindValuesTool,
             ExcelGetChartsTool,
             ExcelGetPivotTablesTool,
             ExcelGetRangeFormatTool,
@@ -202,6 +204,7 @@ class OfficeMCPServer(BaseMCPServer):
             ExcelInsertTableTool,
             ExcelMergeCellsTool,
             ExcelRenameWorksheetTool,
+            ExcelSetAutoFilterTool,
             ExcelSetFormulaTool,
             ExcelSetRangeFormatTool,
             ExcelSetRangeTool,
@@ -252,6 +255,10 @@ class OfficeMCPServer(BaseMCPServer):
             ExcelInsertPivotTableTool(self.workspace),
             ExcelGetPivotTablesTool(self.workspace),
             ExcelDeletePivotTableTool(self.workspace),
+            # Find & Filter 操作 (OASP /excel Draft 0.3.0, issue #25)
+            ExcelFindValuesTool(self.workspace),
+            ExcelSetAutoFilterTool(self.workspace),
+            ExcelClearAutoFilterTool(self.workspace),
         ]
 
         for tool in excel_tools:

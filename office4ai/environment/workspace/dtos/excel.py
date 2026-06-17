@@ -50,7 +50,14 @@ Defines data structures for Excel-specific Socket.IO events (``/excel`` namespac
   ``insert`` 响应 ``{name}`` 与 ``get`` 条目 ``{name, id}`` 形态不同 → **不**强行共用单一
   ``PivotTableInfo``（同 #22 TableInfo / #23 ChartSummary 的「形态不同不共用」原则）。
   无效范围→AddIn 返回 5002，透视表不存在→5008，平台不支持→5010。
-- 查找与筛选数据结构随子 issue (#25) 落地，避免提前过度建模。
+- #25 Find&Filter — 查找与筛选: ``excel:find:values`` / ``excel:set:autoFilter`` /
+  ``excel:clear:autoFilter``。**按 spec type 实装**：``find:values`` 用 ``matchCase`` /
+  ``matchEntireCell``（issue 文案「matchEntireContents」与 spec 字段名不符 → 从 spec），
+  返回 ``{matches: [{address, value}]}``；``set:autoFilter`` 的 ``criteria[].filterOn``
+  为**开放字符串**（spec 类型 ``string``，注释 "Values, CellColor, FontColor 等"，
+  issue 文案「枚举 / 按颜色 / 自定义条件」描述的闭合枚举与结构化颜色字段并未被 spec
+  采纳 → 从 spec type，criterion 仅 ``{columnIndex, filterOn, values?}``，不发明协议外
+  surface）。无效范围→AddIn 返回 5002，工作表不存在→5001，列索引越界→4004。
 """
 
 from typing import Any, ClassVar, Literal
@@ -504,6 +511,41 @@ class DeletePivotTableData(SocketIOBaseModel):
     deleted: bool = Field(..., alias="deleted", description="Whether the pivot table was deleted")
 
 
+# ---- #25 Find&Filter: response data models ---------------------------------
+#
+# 按 spec type 实装（events-excel.md §2536-2744）：
+#   find:values        — {matches: [{address, value}]}（value 为任意类型 unknown）
+#   set:autoFilter     — {address}
+#   clear:autoFilter   — {cleared}
+# 错误码 5001 WORKSHEET_NOT_FOUND / 5002 RANGE_INVALID / 4004 PARAM_OUT_OF_RANGE
+# 均由 AddIn 产生，office4ai 透传 obs.error，不在此定义。
+
+
+class FindMatch(SocketIOBaseModel):
+    """查找命中条目 | One match entry (``excel:find:values`` response)."""
+
+    address: str = Field(..., alias="address", description="Matched cell address, e.g. 'Sheet1!A2'")
+    value: Any = Field(..., alias="value", description="Cell value (any type)")
+
+
+class FindValuesData(SocketIOBaseModel):
+    """查找结果 | ``excel:find:values`` response data."""
+
+    matches: list[FindMatch] = Field(..., alias="matches", description="Matched cells in search order")
+
+
+class SetAutoFilterData(SocketIOBaseModel):
+    """自动筛选结果 | ``excel:set:autoFilter`` response data."""
+
+    address: str = Field(..., alias="address", description="The range the auto-filter was applied to")
+
+
+class ClearAutoFilterData(SocketIOBaseModel):
+    """清除自动筛选结果 | ``excel:clear:autoFilter`` response data."""
+
+    cleared: bool = Field(..., alias="cleared", description="Whether the auto-filter was cleared")
+
+
 # ============================================================================
 # Request DTOs (Server → AddIn, 自动注册 via event_name)
 # ============================================================================
@@ -917,3 +959,64 @@ class ExcelDeletePivotTableRequest(BaseRequest):
 
     pivot_table_name: str = Field(..., alias="pivotTableName", description="Pivot table name")
     worksheet_name: str | None = Field(default=None, alias="worksheetName", description="Worksheet name")
+
+
+# ---- #25 Find&Filter: 查找与筛选 -------------------------------------------
+#
+# 字段形态以 spec type 为准（events-excel.md §2536-2744）：
+#   find:values        — searchText 必填；address / worksheetName / matchCase /
+#                        matchEntireCell 可选（matchCase / matchEntireCell 默认 false）
+#   set:autoFilter     — address + criteria 必填；worksheetName 可选
+#   clear:autoFilter   — 仅 worksheetName 可选
+# criterion.filterOn 为开放字符串（spec type ``string``，常见取值 "Values" /
+# "CellColor" / "FontColor"）→ 不建闭合枚举、不建颜色/自定义条件字段，避免发明协议外
+# surface（参见 #18 namespace 越界教训 / #24 PivotTableInfo 教训）。
+# 工作表不存在→5001 / 无效范围→5002 / 列索引越界→4004 由 AddIn 产生，office4ai 透传。
+
+
+class AutoFilterCriterion(SocketIOBaseModel):
+    """单列筛选条件 | One auto-filter criterion (``excel:set:autoFilter`` request)."""
+
+    column_index: int = Field(..., alias="columnIndex", description="Column index (0-based)")
+    filter_on: str = Field(..., alias="filterOn", description="Filter mode, e.g. 'Values' / 'CellColor' / 'FontColor'")
+    values: list[str] | None = Field(
+        default=None, alias="values", description="Filter values (used when filterOn is 'Values')"
+    )
+
+
+class ExcelFindValuesRequest(BaseRequest):
+    """Request: ``excel:find:values`` — 在指定范围内搜索值，返回命中地址列表。"""
+
+    event_name: ClassVar[str] = "excel:find:values"
+
+    search_text: str = Field(..., alias="searchText", description="Text to search for")
+    address: str | None = Field(default=None, alias="address", description="Search range; omitted = whole worksheet")
+    worksheet_name: str | None = Field(default=None, alias="worksheetName", description="Worksheet name")
+    match_case: bool | None = Field(
+        default=None, alias="matchCase", description="Case-sensitive match; omitted = false (AddIn default)"
+    )
+    match_entire_cell: bool | None = Field(
+        default=None,
+        alias="matchEntireCell",
+        description="Require full-cell match; omitted = false (AddIn default)",
+    )
+
+
+class ExcelSetAutoFilterRequest(BaseRequest):
+    """Request: ``excel:set:autoFilter`` — 对指定范围应用自动筛选。"""
+
+    event_name: ClassVar[str] = "excel:set:autoFilter"
+
+    address: str = Field(..., alias="address", description="Filter range address, e.g. 'A1:C10'")
+    criteria: list[AutoFilterCriterion] = Field(..., alias="criteria", description="Per-column filter criteria")
+    worksheet_name: str | None = Field(default=None, alias="worksheetName", description="Worksheet name")
+
+
+class ExcelClearAutoFilterRequest(BaseRequest):
+    """Request: ``excel:clear:autoFilter`` — 清除工作表上的自动筛选。"""
+
+    event_name: ClassVar[str] = "excel:clear:autoFilter"
+
+    worksheet_name: str | None = Field(
+        default=None, alias="worksheetName", description="Worksheet name; omitted = active worksheet"
+    )
