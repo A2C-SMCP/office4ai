@@ -55,17 +55,21 @@ class ExcelCase:
         validator: 成功路径验证器（可选）；双参时第二参为 :class:`WorkbookReader`。
         expect_error_code: 错误码路径——置位时**预期失败**且 error 含该码（如 ``"5001"``）。
         pre_ops: 量测动作前的预备操作 ``[(action, params), ...]``（如先 set 再 get）。
+        flow: 自定义多步流——``async (workspace, document_uri, reader) -> bool``。置位时**取代**
+            标准「单 action + validator」路径（在 pre_ops 之后运行），用于需要「先 insert 拿
+            自动生成的名字，再 update/delete，最后 get 回读核对」这类无法用单 action 表达的场景。
         tags: 标签。
     """
 
     name: str
     fixture_name: str
     description: str
-    action: str
+    action: str = ""
     params: dict[str, Any] = field(default_factory=dict)
     validator: Validator | None = None
     expect_error_code: str | None = None
     pre_ops: list[tuple[str, dict[str, Any]]] = field(default_factory=list)
+    flow: Callable[..., Any] | None = None
     select_hint: str | None = None
     applescript_select: str | None = None
     tags: list[str] = field(default_factory=list)
@@ -113,6 +117,14 @@ async def _run_single(runner: ExcelTestRunner, case: ExcelCase, number: int) -> 
                     input()
                 except EOFError:
                     print("   (无 stdin，跳过暂停；将读取当前选区)")
+
+            # 自定义多步 flow（取代标准单 action 路径）。
+            if case.flow is not None:
+                reader = WorkbookReader(fixture.working_path)
+                print("\n🔀 自定义 flow 执行...")
+                passed = await case.flow(workspace, fixture.document_uri, reader)
+                _verdict(number, passed)
+                return passed
 
             print(f"\n📝 执行: excel:{case.action} (params={case.params})...")
             start = time.time()

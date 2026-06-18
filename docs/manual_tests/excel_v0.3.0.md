@@ -286,6 +286,36 @@ uv run python manual_tests/excel/table_e2e/test_sort_table.py --test all
 
 ---
 
+### D.6 Chart 操作 — `chart_e2e/`（#34）
+
+目录：`manual_tests/excel/chart_e2e/`（`test_insert_chart.py` 5 例含 3000 /
+`test_get_charts.py` 4 例含 3000 / `test_update_chart.py` 4 例含 3000 /
+`test_delete_chart.py` 3 例含 3000）。覆盖 #23 Chart 切片 4 事件：`insert:chart` ·
+`get:charts` · `update:chart` · `delete:chart`。夹具 `chart.xlsx`（Data A1:C4 数值网格 /
+Blank 空表）。图表为视觉对象，以**协议层 get:charts 回读**为主验证（openpyxl chart_count best-effort）。
+
+```bash
+uv run python manual_tests/excel/chart_e2e/test_insert_chart.py --test all
+uv run python manual_tests/excel/chart_e2e/test_get_charts.py --test all
+uv run python manual_tests/excel/chart_e2e/test_update_chart.py --test all
+uv run python manual_tests/excel/chart_e2e/test_delete_chart.py --test all
+```
+
+- [x] **D.6.1 insert:chart**：ColumnClustered+title · Line · Pie（单列）· XYScatter+position → `{name}`（Excel 自动命名 "Chart N"）
+- [x] **D.6.2 get:charts**：回读 `[{name,chartType,title,top,left,width,height}]`；单图/多图/空表空列表
+- [x] **D.6.3 update:chart**：title · chartType（Column→Line）· position（回读核对生效）
+- [x] **D.6.4 delete:chart**：删其一保留其它 · 删唯一→空（返回 void）
+- [x] **D.6.5 错误码 3000**：非法 chartType（非空非法枚举）/ 图表不存在 / 不存在 worksheet → **3000 DOCUMENT_ERROR**（旧 DoD 4002/5007 dead code）
+- [ ] **D.6.6 视觉**：Data 表各类型图表就位；update 后类型/标题/位置变化；双击为原生可编辑图表
+
+> ✅ **D.6 真机实测（2026-06-18）**：16/16 全过（insert 5/5 · get 4/4 · update 4/4 · delete 3/3），协议 get:charts 回读双重验证通过（openpyxl chart_count 旁证读到图表）。
+>
+> 🔧 **harness 引入 `ExcelCase.flow`**：图表名由 Excel 自动生成（"Chart 1"），update/delete 无法用单 action 表达，故用 `flow`（`async (workspace, uri, reader) -> bool`）做「insert 拿 name → 操作 → get:charts 回读核对」多步流。复用于 #35 PivotTable。
+>
+> ⚠️ **DTO-vs-wire（delete:chart 返回 void）**：真机响应 `data={}`，靠 get:charts 回读验证，不断言响应体。
+
+---
+
 ## 验收完成后
 
 1. 全部 A/B 项打勾 → 把勾选状态复制到 Issue #26 评论
