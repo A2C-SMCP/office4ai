@@ -85,6 +85,7 @@ TEST_CASES: list[ExcelCase] = [
         description="请先在 Excel 选中 A1（单格），验证 1x1 结构",
         action="get:selectedRange",
         validator=validate_single_cell,
+        select_hint="选中单元格 A1",
         tags=["basic"],
     ),
     ExcelCase(
@@ -93,6 +94,8 @@ TEST_CASES: list[ExcelCase] = [
         description="请先选中 A1:C2，验证 2 行 3 列 2D values",
         action="get:selectedRange",
         validator=validate_2d_values,
+        applescript_select="A1:C2",
+        select_hint="选中区域 A1:C2（2 行 3 列）",
         tags=["2d"],
     ),
     ExcelCase(
@@ -101,6 +104,8 @@ TEST_CASES: list[ExcelCase] = [
         description="请先选中空白单元格 F10，验证空值结构",
         action="get:selectedRange",
         validator=validate_empty_selection,
+        applescript_select="F10",
+        select_hint="选中空白单元格 F10",
         tags=["empty"],
     ),
     ExcelCase(
@@ -109,6 +114,8 @@ TEST_CASES: list[ExcelCase] = [
         description="请先选中 A1:C1（字符串/数字/布尔），验证混合类型",
         action="get:selectedRange",
         validator=validate_mixed_types,
+        applescript_select="A1:C1",
+        select_hint="选中区域 A1:C1（含字符串/数字/布尔）",
         tags=["mixed"],
     ),
 ]

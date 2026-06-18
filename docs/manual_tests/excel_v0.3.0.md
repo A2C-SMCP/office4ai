@@ -163,9 +163,13 @@ uv run python manual_tests/excel/read_state_e2e/test_selected_range.py --test al
 
 - [ ] **D.1.1 workbookInfo**：多 sheet 列表完整；隐藏表 `isHidden=true`（openpyxl `sheet_state=hidden` 核对）；`activeSheet` 与 `isActive` 一致；`fileName` 为 `.xlsx`
 - [ ] **D.1.2 worksheetInfo**：默认活动表 / 指定 `worksheetName`；`usedRange` 4×3 与 openpyxl `max_row/max_column` 一致；空表 usedRange 极小；`tableCount/chartCount` 字段就绪
-- [ ] **D.1.3 selectedRange**：单格 1×1；A1:C2 的 2D values（2 行 3 列）；空选区；A1:C1 混合类型（字符串/数字/布尔，含 falsy `0`/`False`/空串）
-- [ ] **D.1.4 错误码 5001**：`get:worksheetInfo` 传 ghost 表名 → WORKSHEET_NOT_FOUND
+- [x] **D.1.3 selectedRange**：单格 1×1；A1:C2 的 2D values（2 行 3 列，AppleScript 自动选区）；空选区 F10；A1:C1 混合类型——**真机实测 falsy `0`/`False`/`''` 已落 wire**：`[['Hello', 42, True], [0, False, '']]`
+- [x] **D.1.4 错误码 3000**：`get:worksheetInfo` 传 ghost 表名 → **3000 DOCUMENT_ERROR**（真机实测；旧 DoD 写的 5001 已过时，见下方 ⚠️）
 - [ ] **D.1.5 视觉**：底部三个标签页（Sheet1/Data/Report）；隐藏表夹具仅见 Visible 标签
+
+> ✅ **D.1 真机实测（2026-06-18）**：14/14 全过（workbook_info 4/4 · worksheet_info 6/6 · selectedRange 4/4），openpyxl 双重验证通过。
+>
+> ⚠️ **错误码现实修正（影响全 8 子问题 + B 节）**：Issue DoD / 旧注释里的 `5001–5010` Excel 错误码**实现里不存在**。Add-In 按 OASP 0.3.0 用 `3xxx`/`4xxx`（#26 已删 5xxx）。真机映射：5001→**3000** DOCUMENT_ERROR、5002→3009 RANGE_INVALID、5006→3010/3013、5007→3015、4002/4004 不变。**B 节与 `test_excel_e2e.py` foundation 冒烟里的 5xxx 断言需回头按真实码修订**。
 
 ---
 

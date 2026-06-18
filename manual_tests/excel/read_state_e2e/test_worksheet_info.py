@@ -128,12 +128,15 @@ TEST_CASES: list[ExcelCase] = [
         tags=["empty"],
     ),
     ExcelCase(
-        name="错误码 5001 — ghost 表名",
+        # 真机实测：Add-In 按 OASP 0.3.0 error-handling 表返回 3000 DOCUMENT_ERROR
+        # （error-codes.ts 无 5xxx 区段；Issue/旧 DTO 注释里的 5001 WORKSHEET_NOT_FOUND
+        # 为过时口径，详见 docs/manual_tests/excel_e2e_dev_plan.md「错误码现实」）。
+        name="错误码 3000 — ghost 表名（DOCUMENT_ERROR）",
         fixture_name=MULTI,
-        description="worksheetName 传不存在的表名 → WORKSHEET_NOT_FOUND",
+        description="worksheetName 传不存在的表名 → 3000（资源不存在；旧 DoD 写 5001 已过时）",
         action="get:worksheetInfo",
         params={"worksheet_name": "GhostSheet_xyz"},
-        expect_error_code="5001",
+        expect_error_code="3000",
         tags=["error"],
     ),
 ]

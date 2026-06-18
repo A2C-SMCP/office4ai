@@ -23,6 +23,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import inspect
+import os
 import sys
 import time
 import traceback
@@ -31,7 +32,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from manual_tests.excel.e2e_base import ExcelTestRunner, WorkbookReader
+from manual_tests.excel.e2e_base import ExcelTestRunner, WorkbookReader, _run_applescript
 from manual_tests.excel.test_helpers import excel_op
 
 # 所有 per-feature 夹具的根：manual_tests/excel/fixtures/
@@ -65,6 +66,8 @@ class ExcelCase:
     validator: Validator | None = None
     expect_error_code: str | None = None
     pre_ops: list[tuple[str, dict[str, Any]]] = field(default_factory=list)
+    select_hint: str | None = None
+    applescript_select: str | None = None
     tags: list[str] = field(default_factory=list)
 
 
@@ -90,6 +93,26 @@ async def _run_single(runner: ExcelTestRunner, case: ExcelCase, number: int) -> 
                 ok, _, err = await excel_op(workspace, fixture.document_uri, op_action, **op_params)
                 if not ok:
                     print(f"   ⚠️  预备操作失败 excel:{op_action}: {err}")
+
+            # 选区依赖类（如 get:selectedRange）：优先用 AppleScript 自动选区（全自动、可后台跑）；
+            # 设了 applescript_select 就不需要人工。失败时回退到 select_hint 人工提示。
+            if case.applescript_select:
+                ok_sel, out_sel = _run_applescript(
+                    f'tell application "Microsoft Excel"\n'
+                    f"    activate\n"
+                    f'    select range "{case.applescript_select}"\n'
+                    f"end tell"
+                )
+                print(f"   🖱️  AppleScript 选区 {case.applescript_select!r} → {'ok' if ok_sel else out_sel}")
+                await asyncio.sleep(0.5)
+
+            # EXCEL_E2E_PAUSE=1 时人工选区（无 AppleScript 自动化时的回退路径）。
+            if case.select_hint and os.environ.get("EXCEL_E2E_PAUSE"):
+                print(f"\n👉 请在 Excel 中{case.select_hint}，选好后按回车继续...")
+                try:
+                    input()
+                except EOFError:
+                    print("   (无 stdin，跳过暂停；将读取当前选区)")
 
             print(f"\n📝 执行: excel:{case.action} (params={case.params})...")
             start = time.time()
@@ -140,8 +163,11 @@ async def run_cases(
     cleanup_on_success: bool = True,
 ) -> bool:
     """按 indices 顺序运行用例，返回全部是否通过。"""
+    # 真机人机配合时给手动激活 Add-In 留足时间：EXCEL_E2E_TIMEOUT（秒），默认 30。
+    timeout = float(os.environ.get("EXCEL_E2E_TIMEOUT", "30"))
     runner = ExcelTestRunner(
         fixtures_dir=EXCEL_FIXTURES_ROOT,
+        connection_timeout=timeout,
         auto_open=auto_open,
         cleanup_on_success=cleanup_on_success,
     )

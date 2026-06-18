@@ -40,6 +40,27 @@
 
 ---
 
+## ⚠️ 错误码现实（真机实测，#29 发现，影响全部子问题）
+
+Issue #28–#36 的 DoD 与旧 DTO 注释写的 **`5001–5010` Excel 错误码在实现里不存在**。Add-In
+（`office-editor4ai/packages/shared/src/error-codes.ts`）按 **OASP 0.3.0 error-handling 表用 `3xxx`/`4xxx`**
+（#26 已删除历史 5xxx 漂移）。所有子问题的错误码用例**按真实码断言**：
+
+| 旧 DoD（过时） | 真实码 | 含义 |
+|---------------|-------|------|
+| 5001 WORKSHEET_NOT_FOUND | **3000** DOCUMENT_ERROR | worksheet/资源不存在 |
+| 5002 RANGE_INVALID | **3009** RANGE_INVALID | 无效区域地址 |
+| 5003 MERGE_CONFLICT | 3014 ALREADY_MERGED（待真机核实） | 合并冲突 |
+| 5006 TABLE_NOT_FOUND | **3010** ELEMENT_NOT_FOUND / 3013 NO_TABLE | 表/元素不存在 |
+| 5007 CHART_NOT_FOUND | 3010 / 3015 INVALID_CHART_DATA（待核实） | 图表相关 |
+| 5008 PIVOT_NOT_FOUND | 3010（待核实） | 透视表不存在 |
+| 4002 INVALID_PARAM / 4004 PARAM_OUT_OF_RANGE | 4002 / 4004 | 验证类一致 |
+
+> 标「待核实」的在做对应子问题时真机确认实际码。后续应回头修订 Issue DoD、
+> `docs/manual_tests/excel_v0.3.0.md` B 节、`manual_tests/excel/test_excel_e2e.py` foundation 冒烟里残留的 5xxx。
+
+---
+
 ## 三、每个子问题的 DoD（统一模板，对齐 #28）
 
 - [ ] `manual_tests/excel/<category>_e2e/` + `__init__.py`

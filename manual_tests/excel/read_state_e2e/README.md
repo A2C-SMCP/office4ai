@@ -55,7 +55,7 @@ uv run python manual_tests/excel/read_state_e2e/test_workbook_info.py --test all
 | 3 | usedRange 行列数 | `Data` | usedRange 4 行 × 3 列，与 openpyxl `max_row/max_column` 核对 |
 | 4 | tableCount/chartCount | `Data` | 两字段为整数（预填夹具应为 0/0） |
 | 5 | 空表 usedRange | `Report` | 空表 usedRange 极小（≤1×1） |
-| 6 | 错误码 5001 | `GhostSheet_xyz` | **预期失败**：WORKSHEET_NOT_FOUND（5001） |
+| 6 | 错误码 3000 | `GhostSheet_xyz` | **预期失败**：DOCUMENT_ERROR（3000，资源不存在）。⚠️ Issue DoD 写的 5001 已过时——见下「错误码现实」 |
 
 ```bash
 uv run python manual_tests/excel/read_state_e2e/test_worksheet_info.py --test 3
@@ -65,23 +65,41 @@ uv run python manual_tests/excel/read_state_e2e/test_worksheet_info.py --test al
 
 ### 3. 当前选中范围 (`test_selected_range.py`)
 
-读取 Excel **实时选区**，每个用例运行前需**手动在 Excel 中选好区域**。建议加
-`--no-auto-open`，在打开夹具后手动选区，再回车继续。
+读取 Excel **实时选区**。用例 2/3/4 通过 **AppleScript 自动选区**（`applescript_select`），
+**全自动、可后台跑，无需人工点选**；用例 1 用工作簿打开时的默认选区 A1。
 
-| 编号 | 名称 | 运行前请选中 | 验证 |
+| 编号 | 名称 | 选区（自动） | 验证 |
 |------|------|------------|------|
-| 1 | 单元格选区 | `A1` | 1×1，values=`[[x]]` |
-| 2 | 多单元格 2D values | `A1:C2` | 2 行 3 列，values 为 2D |
-| 3 | 空选区 | `F10`（空白） | 1×1，首格 None/空串 |
-| 4 | 混合类型值 | `A1:C1`（字符串/数字/布尔） | 同一选区含多种 Python 类型 |
+| 1 | 单元格选区 | `A1`（默认） | 1×1，values=`[[x]]` |
+| 2 | 多单元格 2D values | `A1:C2` | 2 行 3 列，2D；**falsy `0`/`False`/`''` 落 wire** |
+| 3 | 空选区 | `F10` | 1×1，首格空串 |
+| 4 | 混合类型值 | `A1:C1` | 同一选区含字符串/数字/布尔多种类型 |
 
 ```bash
-uv run python manual_tests/excel/read_state_e2e/test_selected_range.py --test 2 --no-auto-open
-uv run python manual_tests/excel/read_state_e2e/test_selected_range.py --test all --no-auto-open
+uv run python manual_tests/excel/read_state_e2e/test_selected_range.py --test all
 ```
 
-> `rowCount`/`columnCount` 与实际选区不符时打印 ⚠️（非失败），提醒你确认选区；结构不变量
-> （2D / 行列与 values 维度一致）不满足才判失败。
+> **若 AppleScript 选区不可用**（如权限受限），用 `EXCEL_E2E_PAUSE=1` 走人工回退：
+> 每个用例会打印「👉 请在 Excel 中选中 …，回车继续」，你手动选区再回车。需在真实终端跑（要 stdin）。
+>
+> `rowCount`/`columnCount` 与预期不符时打印 ⚠️（非失败）；结构不变量（2D / 行列与 values 维度一致）不满足才判失败。
+
+## 错误码现实（OASP 0.3.0：3xxx/4xxx，**非** 5xxx）
+
+> ⚠️ **重要**：Issue #28–#36 的 DoD 与旧 DTO 注释里写的 `5001–5010` Excel 错误码**在实现里不存在**。
+> Add-In（`office-editor4ai/packages/shared/src/error-codes.ts`）按 OASP 0.3.0 error-handling 表用
+> `3xxx`/`4xxx`（#26 已修正历史漂移、删除 5xxx）。真机实测映射：
+
+| 旧 DoD（过时） | 真实返回 | 含义 |
+|---------------|---------|------|
+| 5001 WORKSHEET_NOT_FOUND | **3000** DOCUMENT_ERROR | worksheet/资源不存在 |
+| 5002 RANGE_INVALID | 3009 RANGE_INVALID | 无效区域 |
+| 5006 TABLE_NOT_FOUND | 3010 / 3013 | 表/元素不存在 |
+| 5007 CHART_NOT_FOUND | 3015 等 | 图表相关 |
+| 4002 / 4004 | 4002 / 4004 | 同（验证类一致） |
+
+本套件错误码用例按**真实码**断言。后续 #30–#36 同样以 3xxx/4xxx 为准；建议回头修订 Issue DoD 与
+`docs/manual_tests/excel_v0.3.0.md` B 节、`test_excel_e2e.py` foundation 冒烟里残留的 5xxx 口径。
 
 ## 通用参数
 
