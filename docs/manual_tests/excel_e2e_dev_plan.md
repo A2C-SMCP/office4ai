@@ -54,7 +54,7 @@ Issue #28–#36 的 DoD 与旧 DTO 注释写的 **`5001–5010` Excel 错误码�
 | 5006 TABLE_NOT_FOUND / 5009 | **3000** DOCUMENT_ERROR ✅#33真机确认 | 表不存在/索引越界（"请求的表格不存在"；3010/3013 未发射） |
 | 5007 CHART_NOT_FOUND / 无效 chartType | **3000** DOCUMENT_ERROR ✅#34真机确认 | 图表不存在/非法类型枚举（4002/3015 未发射） |
 | 5008 PIVOT_NOT_FOUND / 5010 / 5002 | **3000** DOCUMENT_ERROR ✅#35真机确认 | 透视表/资源不存在（空串→4000） |
-| 4002 INVALID_PARAM / 4004 PARAM_OUT_OF_RANGE | **4000** VALIDATION_ERROR ✅#33真机确认 | Zod 校验失败（含 nonnegative）统一 4000，非 4002/4004 |
+| 4002 INVALID_PARAM / 4004 PARAM_OUT_OF_RANGE | **4000** VALIDATION_ERROR ✅#33/#36真机确认 | Zod 校验失败（含 nonnegative / min(1) 空串）统一 4000，非 4002/4004 |
 
 > 标「待核实」的在做对应子问题时真机确认实际码。后续应回头修订 Issue DoD、
 > `docs/manual_tests/excel_v0.3.0.md` B 节、`manual_tests/excel/test_excel_e2e.py` foundation 冒烟里残留的 5xxx。

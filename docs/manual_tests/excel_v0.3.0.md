@@ -342,6 +342,51 @@ uv run python manual_tests/excel/pivot_table_e2e/test_delete_pivot_table.py --te
 
 ---
 
+### D.8 Find & Filter — `find_filter_e2e/`（#36）
+
+目录：`manual_tests/excel/find_filter_e2e/`（`test_find_values.py` 5 例含 4000 /
+`test_auto_filter.py` 5 例含 4000+3000）。覆盖 #25 Find&Filter 切片 3 事件：`find:values` ·
+`set:autoFilter` · `clear:autoFilter`。夹具 `filt.xlsx`（Data A1:C5，Product 列大小写混合
+Apple/apple 以区分 matchCase）。
+
+```bash
+uv run python manual_tests/excel/find_filter_e2e/test_find_values.py --test all
+uv run python manual_tests/excel/find_filter_e2e/test_auto_filter.py --test all
+```
+
+- [x] **D.8.1 find:values**：默认（不区分大小写·子串）'apple'→B2/B3/B5 共 3；matchCase=true→仅 B3/B5；限定 address=A1:A5 'East'→A2/A4
+- [x] **D.8.2 find:values 无命中**：matchEntireCell=true 'App'→`matches=[]`（整单元格匹配排除子串）
+- [x] **D.8.3 set:autoFilter**：单列 Region=East / 多列 Region=East & Product∈{Apple,Banana} → `{address}` + openpyxl `auto_filter_ref='A1:C5'`
+- [x] **D.8.4 clear:autoFilter**：先 set → clear → `auto_filter_ref=None`（返回 void）
+- [x] **D.8.5 错误码 4000/3000**：searchText/address 空串（Zod min(1)）→ **4000**；非法 address → **3000**（旧 DoD 4004/5001/5002 dead code）
+
+> ✅ **D.8 真机实测（2026-06-18）**：10/10 全过（find 5/5 · filter 5/5），openpyxl `auto_filter_ref` 双重验证通过。
+>
+> ⚠️ **DTO-vs-wire（clear:autoFilter 返回 void）**：真机响应 `data={}`，靠 openpyxl `auto_filter_ref` 读盘验证，不断言响应体。
+
+---
+
+## 🏁 Excel per-feature E2E 全量收口（#28 子问题 #29–#36 全完成）
+
+| 子问题 | 切片 | 用例 | 真机结果 |
+|--------|------|------|---------|
+| #29 | Read/Foundation | 14 | ✅ 14/14 |
+| #30 | Range CRUD + 公式 | 21 | ✅ 21/21 |
+| #31 | Format/条件格式/合并 | 18 | ✅ 18/18 |
+| #32 | Worksheet 管理 | 12 | ✅ 12/12 |
+| #33 | Table 操作 | 18 | ✅ 18/18 |
+| #34 | Chart 操作 | 16 | ✅ 16/16 |
+| #35 | PivotTable 操作 | 11 | ✅ 11/11 |
+| #36 | Find & Filter | 10 | ✅ 10/10 |
+| **合计** | **#18–#25 全 37 事件** | **120** | **✅ 120/120** |
+
+> 错误码统一现实（全片真机确认）：**资源不存在/索引越界/非法 address/非法枚举 → `3000`**；
+> **Zod 校验失败（空串 min(1) / 负数 nonnegative）→ `4000`**。旧 DoD 的 `5xxx`/`4004`/`3009`/`3010`
+> /`3013`/`3015` 等细分码**全部 dead code**（`excelErrorCode()` 只发 4000/3000）。详见
+> `excel_e2e_dev_plan.md` 错误码表。
+
+---
+
 ## 验收完成后
 
 1. 全部 A/B 项打勾 → 把勾选状态复制到 Issue #26 评论
