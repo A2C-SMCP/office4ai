@@ -253,6 +253,39 @@ uv run python manual_tests/excel/worksheet_e2e/test_delete_worksheet.py --test a
 
 ---
 
+### D.5 Table 操作 — `table_e2e/`（#33）
+
+目录：`manual_tests/excel/table_e2e/`（`test_insert_table.py` 4 例含 3000 /
+`test_get_table.py` 4 例含 3000 / `test_table_rows.py` 6 例含 3000+4000 /
+`test_sort_table.py` 4 例含 3000）。覆盖 #22 Table 切片 6 事件：`insert:table` ·
+`get:table` · `get:tables` · `add:tableRow` · `delete:tableRow` · `sort:table`。夹具
+`tbl.xlsx`（Raw 纯数据 / Blank 空 / Sales[SalesTable A1:C5] / Roster[RosterTable A1:B4]，
+后两者由 openpyxl 预置 Excel 表，Office.js 识别带 GUID id）。
+
+```bash
+uv run python manual_tests/excel/table_e2e/test_insert_table.py --test all
+uv run python manual_tests/excel/table_e2e/test_get_table.py --test all
+uv run python manual_tests/excel/table_e2e/test_table_rows.py --test all
+uv run python manual_tests/excel/table_e2e/test_sort_table.py --test all
+```
+
+- [x] **D.5.1 insert:table**：已有数据建表（Raw!A1:C4）· 带 data 写空白区（hasHeaders=true 表头+正文）· styleName——openpyxl `table_names` 核对落盘
+- [x] **D.5.2 get:table**：富 `TableInfo`（name/id/address/rowCount/columnCount/columns[{name,index}]/styleName/showHeaders）；跨表按 `worksheet_name` 取
+- [x] **D.5.3 get:tables**：精简列表（每条仅 name/id/address）
+- [x] **D.5.4 add:tableRow**：末尾追加 `['R3row',40]`（→`{tableId}`）；openpyxl 读正文核对
+- [x] **D.5.5 delete:tableRow**：`rowIndex=0`（falsy 首行）· 中间行——返回 void，openpyxl 读「谁上移」核对
+- [x] **D.5.6 sort:table**：单列升/降（Age 唯一）· 多级 Score↑→Age↑（断 tie）——openpyxl 读 Name 列核对行序
+- [x] **D.5.7 错误码 3000/4000**：表不存在 / 索引越界 → **3000**；rowIndex 负数（Zod nonnegative）→ **4000**（非旧 DoD 的 4004/5006/5009）
+- [ ] **D.5.8 视觉**：Raw/Blank 新表带表格样式；Sales 排序后行序；Roster 增删行后表范围
+
+> ✅ **D.5 真机实测（2026-06-18）**：18/18 全过（insert 4/4 · get 4/4 · rows 6/6 · sort 4/4），openpyxl `table_names`/单元格读盘双重验证通过。
+>
+> ⚠️ **错误码现实**：表不存在→`3000`「请求的表格不存在」；rowIndex 越界（合法非负但 Office.js 拒绝）→`3000`；rowIndex 负数（Zod `nonnegative()` 失败）→`4000`「Too small: expected >=0」。旧 DoD 的 `5006/5009/4004` 均为 dead code。
+>
+> ⚠️ **DTO-vs-wire（delete:tableRow 返回 void）**：真机响应 `data={}`，靠 openpyxl 读盘验证，不断言响应体。
+
+---
+
 ## 验收完成后
 
 1. 全部 A/B 项打勾 → 把勾选状态复制到 Issue #26 评论

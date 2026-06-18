@@ -51,10 +51,10 @@ Issue #28–#36 的 DoD 与旧 DTO 注释写的 **`5001–5010` Excel 错误码�
 | 5001 WORKSHEET_NOT_FOUND | **3000** DOCUMENT_ERROR ✅#32真机确认 | worksheet/资源不存在（"请求的资源不存在"） |
 | 5002 RANGE_INVALID | **3000** DOCUMENT_ERROR ⚠️ | 非法/畸形 address（**非** 3009，见下） |
 | 5003 MERGE_CONFLICT | 3014 ALREADY_MERGED（待真机核实） | 合并冲突 |
-| 5006 TABLE_NOT_FOUND | **3010** ELEMENT_NOT_FOUND / 3013 NO_TABLE | 表/元素不存在 |
+| 5006 TABLE_NOT_FOUND / 5009 | **3000** DOCUMENT_ERROR ✅#33真机确认 | 表不存在/索引越界（"请求的表格不存在"；3010/3013 未发射） |
 | 5007 CHART_NOT_FOUND | 3010 / 3015 INVALID_CHART_DATA（待核实） | 图表相关 |
 | 5008 PIVOT_NOT_FOUND | 3010（待核实） | 透视表不存在 |
-| 4002 INVALID_PARAM / 4004 PARAM_OUT_OF_RANGE | 4002 / 4004 | 验证类一致 |
+| 4002 INVALID_PARAM / 4004 PARAM_OUT_OF_RANGE | **4000** VALIDATION_ERROR ✅#33真机确认 | Zod 校验失败（含 nonnegative）统一 4000，非 4002/4004 |
 
 > 标「待核实」的在做对应子问题时真机确认实际码。后续应回头修订 Issue DoD、
 > `docs/manual_tests/excel_v0.3.0.md` B 节、`manual_tests/excel/test_excel_e2e.py` foundation 冒烟里残留的 5xxx。
