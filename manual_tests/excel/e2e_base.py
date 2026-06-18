@@ -219,46 +219,16 @@ def close_excel_document(path: Path) -> bool:
 
 
 async def activate_excel_addin(addin_name: str = DEFAULT_EXCEL_ADDIN_NAME) -> bool:
-    """通过 AppleScript UI 自动化尝试激活 Excel Add-In（仅 macOS，best-effort）。
+    """提示用户手动激活 Excel Add-In（不再尝试 AppleScript 自动点击功能区按钮）。
 
-    与 PPT 版同构：尝试点击功能区「加载项 / Add-in」按钮；点不到则提示用户手动激活。
-    返回 True 仅表示已点击「加载项」按钮，最终激活仍可能需要用户在面板中点选。
+    自动点击「加载项」/功能区按钮的路线实测不可行已弃用：UI 树枚举不稳定，且功能区
+    可能同时存在多来源同名按钮（sideload + 商店/部署版），盲点会打开错误实例。
+    改为人工激活——**仅首个用例需点一次**：在 Excel「加载项」里点选本地 Add-In，激活后
+    Add-In 会在后续每个新打开的工作簿自动重连，无需再点。
+
+    始终返回 False（表示未自动激活），由调用方等待 Add-In 连接。
     """
-    if platform.system() != "Darwin":
-        print("⚠️  自动激活 Add-In 仅支持 macOS，请手动激活")
-        return False
-
-    print(f"🔌 尝试自动激活 Excel Add-In: {addin_name}...")
-    script = """
-tell application "Microsoft Excel" to activate
-delay 0.5
-
-tell application "System Events"
-    tell process "Microsoft Excel"
-        set tg to tab group 1 of front window
-        set allElems to entire contents of tg
-        repeat with elem in allElems
-            try
-                if role of elem is "AXButton" then
-                    set eName to name of elem
-                    if eName contains "加载项" or eName contains "Add-in" then
-                        click elem
-                        return "ok"
-                    end if
-                end if
-            end try
-        end repeat
-        return "not_found"
-    end tell
-end tell
-"""
-    ok, output = _run_applescript(script)
-    if not ok or output != "ok":
-        print(f"   ⚠️  未能自动点击「加载项」按钮 (原因: {output})")
-        print(f"   👆 请手动点击「加载项」→「{addin_name}...」")
-        return False
-    print("   ✅ 已点击「加载项」按钮")
-    print(f"   👆 请在弹出的加载项面板中点击「{addin_name}...」")
+    print("👆 请在 Excel「加载项」中点选本地 Add-In 激活（仅首个用例点一次，之后自动重连）")
     return False
 
 
@@ -284,9 +254,7 @@ class ExcelTestRunner(E2ETestRunner):
                 print("✅ Workspace 启动成功")
 
                 if self.auto_open and self.auto_activate:
-                    activated = await activate_excel_addin()
-                    if not activated:
-                        print(f"👆 请手动点击「加载项」→「{DEFAULT_EXCEL_ADDIN_NAME}...」激活 Add-In")
+                    await activate_excel_addin()
 
                 print("⏳ 等待 Excel Add-In 连接...")
                 connected = await workspace.wait_for_addin_connection(timeout=self.connection_timeout)
