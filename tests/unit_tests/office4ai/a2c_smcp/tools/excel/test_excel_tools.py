@@ -1670,3 +1670,114 @@ class TestFormatResult:
         result = tool.format_result(obs)
         assert result["success"] is False
         assert result["error"] == "5001 WORKSHEET_NOT_FOUND"
+
+
+# ============================================================================
+# #26 收口加固 —— 错误码全表 & get 工具家族摘要鲁棒性（跨工具一致性守卫）
+# ============================================================================
+#
+# 单个工具的错误码透传已在 TestFormatResult 中按工具散点覆盖。下面两个类做的是
+# **跨工具一致性守卫**（非散点重复）：
+#   1. 错误码完整表 × 两个工具家族 —— 把 events-excel.md 的 5001–5010（+ 4002/4004）
+#      整张表集中断言一次，任一码经 write/get 两类 format_result 均原样透传；spec 新增
+#      错误码而代码未处理时，这里会立即暴露。
+#   2. get 列表摘要家族 —— 5 个结构同构的 get 工具在空数据 / 缺键下统一 "0 X(s)" 不崩。
+
+# events-excel.md §错误码表（5001–5010）+ 通用参数错误码（图表/筛选用到的 4002/4004）。
+EXCEL_ERROR_CODES = [
+    ("5001", "WORKSHEET_NOT_FOUND"),
+    ("5002", "RANGE_INVALID"),
+    ("5003", "MERGE_CONFLICT"),
+    ("5004", "PROTECTED_SHEET"),
+    ("5005", "FORMULA_ERROR"),
+    ("5006", "TABLE_NOT_FOUND"),
+    ("5007", "CHART_NOT_FOUND"),
+    ("5008", "PIVOT_NOT_FOUND"),
+    ("5009", "DATA_TYPE_MISMATCH"),
+    ("5010", "NOT_SUPPORTED"),
+    ("4002", "INVALID_PARAM"),
+    ("4004", "PARAM_OUT_OF_RANGE"),
+]
+
+
+class TestExcelErrorCodeMatrix:
+    """错误码 5001–5010（+ 4002/4004）经两类 format_result 全表透传守卫（#26）。"""
+
+    @pytest.mark.parametrize(("code", "name"), EXCEL_ERROR_CODES)
+    def test_write_tool_propagates_every_error_code(self, mock_workspace, code, name):
+        """写工具（base format_result）对全表每个错误码原样透传，不吞码。"""
+        tool = ExcelSetRangeTool(mock_workspace)
+        # execute() 把 AddIn 的 {code, message} 拼为 'code: message' 字符串
+        obs = OfficeObs(success=False, data={}, error=f"{code}: {name}")
+        result = tool.format_result(obs)
+        assert result["success"] is False
+        assert "content" not in result
+        assert code in result["error"]
+        assert name in result["error"]
+
+    @pytest.mark.parametrize(("code", "name"), EXCEL_ERROR_CODES)
+    def test_get_tool_propagates_every_error_code(self, mock_workspace, code, name):
+        """get 工具（覆写 format_result）失败分支同样对全表透传，且不返回 content。"""
+        tool = ExcelGetWorksheetsTool(mock_workspace)
+        obs = OfficeObs(success=False, data={}, error=f"{code}: {name}")
+        result = tool.format_result(obs)
+        assert result["success"] is False
+        assert "content" not in result
+        assert code in result["error"]
+
+    # 全部覆写 format_result 的 get 工具（#18 状态读 + 各类列表/详情读）。
+    GET_TOOLS = [
+        ExcelGetWorkbookInfoTool,
+        ExcelGetWorksheetInfoTool,
+        ExcelGetSelectedRangeTool,
+        ExcelGetRangeTool,
+        ExcelGetRangeFormatTool,
+        ExcelGetWorksheetsTool,
+        ExcelGetTableTool,
+        ExcelGetTablesTool,
+        ExcelGetChartsTool,
+        ExcelGetPivotTablesTool,
+        ExcelFindValuesTool,
+    ]
+
+    @pytest.mark.parametrize("tool_cls", GET_TOOLS)
+    def test_every_get_tool_propagates_error(self, mock_workspace, tool_cls):
+        """每个 get 工具的失败分支都对错误码透传、不返回 content（覆盖全 get 家族失败路径）。"""
+        tool = tool_cls(mock_workspace)
+        obs = OfficeObs(success=False, data={}, error="5002: RANGE_INVALID")
+        result = tool.format_result(obs)
+        assert result["success"] is False
+        assert "content" not in result
+        assert "5002" in result["error"]
+
+
+class TestGetToolFamilySummaryRobustness:
+    """5 个列表摘要 get 工具在空数据 / 缺键下统一 '0 X(s)' 摘要、不崩溃（#26）。"""
+
+    # (工具, 列表数据键) —— 结构同构的 get 工具家族
+    SUMMARY_TOOLS = [
+        (ExcelGetWorksheetsTool, "worksheets"),
+        (ExcelGetTablesTool, "tables"),
+        (ExcelGetChartsTool, "charts"),
+        (ExcelGetPivotTablesTool, "pivotTables"),
+        (ExcelFindValuesTool, "matches"),
+    ]
+
+    @pytest.mark.parametrize(("tool_cls", "key"), SUMMARY_TOOLS)
+    def test_empty_list_yields_zero_summary(self, mock_workspace, tool_cls, key):
+        """空列表 → success + content 以 '0 ' 起始（统一空摘要）。"""
+        tool = tool_cls(mock_workspace)
+        obs = OfficeObs(success=True, data={key: []})
+        result = tool.format_result(obs)
+        assert result["success"] is True
+        assert result["content"].startswith("0 ")
+        assert result["data"] == {key: []}
+
+    @pytest.mark.parametrize(("tool_cls", "key"), SUMMARY_TOOLS)
+    def test_missing_key_falls_back_to_zero_summary(self, mock_workspace, tool_cls, key):
+        """data 缺列表键 → .get 兜底空列表，'0 X(s)' 不抛 KeyError。"""
+        tool = tool_cls(mock_workspace)
+        obs = OfficeObs(success=True, data={})
+        result = tool.format_result(obs)
+        assert result["success"] is True
+        assert result["content"].startswith("0 ")
