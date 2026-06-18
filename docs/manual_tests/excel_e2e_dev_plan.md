@@ -49,7 +49,7 @@ Issue #28–#36 的 DoD 与旧 DTO 注释写的 **`5001–5010` Excel 错误码�
 | 旧 DoD（过时） | 真实码 | 含义 |
 |---------------|-------|------|
 | 5001 WORKSHEET_NOT_FOUND | **3000** DOCUMENT_ERROR | worksheet/资源不存在 |
-| 5002 RANGE_INVALID | **3009** RANGE_INVALID | 无效区域地址 |
+| 5002 RANGE_INVALID | **3000** DOCUMENT_ERROR ⚠️ | 非法/畸形 address（**非** 3009，见下） |
 | 5003 MERGE_CONFLICT | 3014 ALREADY_MERGED（待真机核实） | 合并冲突 |
 | 5006 TABLE_NOT_FOUND | **3010** ELEMENT_NOT_FOUND / 3013 NO_TABLE | 表/元素不存在 |
 | 5007 CHART_NOT_FOUND | 3010 / 3015 INVALID_CHART_DATA（待核实） | 图表相关 |
@@ -58,6 +58,13 @@ Issue #28–#36 的 DoD 与旧 DTO 注释写的 **`5001–5010` Excel 错误码�
 
 > 标「待核实」的在做对应子问题时真机确认实际码。后续应回头修订 Issue DoD、
 > `docs/manual_tests/excel_v0.3.0.md` B 节、`manual_tests/excel/test_excel_e2e.py` foundation 冒烟里残留的 5xxx。
+>
+> ⚠️ **#30 真机修正：非法 address → 3000，不是 3009**。`3009 RANGE_INVALID` 在
+> `error-codes.ts` 有定义但**全仓 0 个 handler 发射**（dead code，仅 error-codes.ts + 对齐测试引用）。
+> `excel-handlers.ts` 的 `excelErrorCode()` 只把 **Zod 失败 → `4000` VALIDATION_ERROR**，其余一切
+> Office.js 运行期异常（含 `getRange`/`setFormula` 拒绝畸形地址）→ **`3000` OFFICE_API_ERROR**。
+> 故所有「非法范围地址」类错误码用例按 **3000** 断言；仅 **schema 违规**（类型错/缺必填）才得 `4000`。
+> 上表 3009/3010/3013/3015 等「待核实」码同样可能实为 3000——做到对应子问题时按此真机复核。
 
 ---
 

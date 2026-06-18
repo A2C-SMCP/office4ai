@@ -171,6 +171,34 @@ uv run python manual_tests/excel/read_state_e2e/test_selected_range.py --test al
 >
 > ⚠️ **错误码现实修正（影响全 8 子问题 + B 节）**：Issue DoD / 旧注释里的 `5001–5010` Excel 错误码**实现里不存在**。Add-In 按 OASP 0.3.0 用 `3xxx`/`4xxx`（#26 已删 5xxx）。真机映射：5001→**3000** DOCUMENT_ERROR、5002→3009 RANGE_INVALID、5006→3010/3013、5007→3015、4002/4004 不变。**B 节与 `test_excel_e2e.py` foundation 冒烟里的 5xxx 断言需回头按真实码修订**。
 
+### D.2 Range CRUD + 公式 — `range_e2e/`（#30）
+
+目录：`manual_tests/excel/range_e2e/`（`test_set_get_range.py` 6 例含 3009 /
+`test_clear_range.py` 4 例 / `test_copy_range.py` 3 例 /
+`test_shift_range.py` 4 例 / `test_set_formula.py` 4 例含 3009）。覆盖 #19 Range 切片
+7 事件：`set/get/clear/copy/insert/delete:range` + `set:formula`。夹具 `grid.xlsx`
+（Data 数值网格 / Blank 空表 / Shift 自描述 3×3 网格）。
+
+```bash
+uv run python manual_tests/excel/range_e2e/test_set_get_range.py --test all
+uv run python manual_tests/excel/range_e2e/test_clear_range.py --test all
+uv run python manual_tests/excel/range_e2e/test_copy_range.py --test all
+uv run python manual_tests/excel/range_e2e/test_shift_range.py --test all
+uv run python manual_tests/excel/range_e2e/test_set_formula.py --test all
+```
+
+- [x] **D.2.1 set/get:range**：2D 数组往返；标量 `'Z'` 填满；**falsy `0`/`False`/`''` 落 wire 存活**（真机 `[[0, False, '']]`）；读已有 Data!A1:C4（4×3）；`includeFormat=true` 返回 RangeFormatInfo（font=宋体）
+- [x] **D.2.2 clear:range**：`contents`/`all` 清空值；`formats` 保留内容；清子区域不影响相邻单元格（openpyxl 核对）
+- [x] **D.2.3 copy:range**：单行/数据块/单元格复制到空白区，目标=源且源不变
+- [x] **D.2.4 insert/delete:range**：`down`/`right` 让位、`up`/`left` 补位（Shift 自描述网格断言「谁落到哪」）
+- [x] **D.2.5 set:formula**：`=SUM(B2:C2)` / `=B3+C3` / `=B4*2` 公式串落盘（openpyxl `data_only=False` 读公式）
+- [x] **D.2.6 错误码 3000**：`get:range` / `set:formula` 传非法 address → **3000 DOCUMENT_ERROR**（真机实测；旧 DoD 5002 与「3009」均不成立，见下方 ⚠️）
+- [ ] **D.2.7 视觉**：复制后目标区域可见数据；插入/删除后单元格位移正确
+
+> ✅ **D.2 真机实测（2026-06-18）**：21/21 全过（set_get 6/6 · clear 4/4 · copy 3/3 · shift 4/4 · formula 4/4），openpyxl 双重验证通过。
+>
+> ⚠️ **错误码再修正：非法 address → 3000，不是 3009**。`3009 RANGE_INVALID` 在 `error-codes.ts` 有定义但**全仓 0 个 handler 发射**（dead code）；`excel-handlers.ts` 的 `excelErrorCode()` 仅把 Zod 失败→`4000` VALIDATION_ERROR，其余 Office.js 运行期异常（含 `getRange` 拒绝畸形地址）→`3000` OFFICE_API_ERROR。即 D.1.4「5002→3009」推断需进一步修正为 **5002→3000**（与 5001→3000 同源）。仅 schema 违规才得 `4000`。
+
 ---
 
 ## 验收完成后
