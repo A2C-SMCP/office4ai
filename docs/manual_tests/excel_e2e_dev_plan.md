@@ -48,7 +48,7 @@ Issue #28–#36 的 DoD 与旧 DTO 注释写的 **`5001–5010` Excel 错误码�
 
 | 旧 DoD（过时） | 真实码 | 含义 |
 |---------------|-------|------|
-| 5001 WORKSHEET_NOT_FOUND | **3000** DOCUMENT_ERROR | worksheet/资源不存在 |
+| 5001 WORKSHEET_NOT_FOUND | **3000** DOCUMENT_ERROR ✅#32真机确认 | worksheet/资源不存在（"请求的资源不存在"） |
 | 5002 RANGE_INVALID | **3000** DOCUMENT_ERROR ⚠️ | 非法/畸形 address（**非** 3009，见下） |
 | 5003 MERGE_CONFLICT | 3014 ALREADY_MERGED（待真机核实） | 合并冲突 |
 | 5006 TABLE_NOT_FOUND | **3010** ELEMENT_NOT_FOUND / 3013 NO_TABLE | 表/元素不存在 |

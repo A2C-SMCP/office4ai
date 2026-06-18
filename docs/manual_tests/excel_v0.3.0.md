@@ -223,7 +223,33 @@ uv run python manual_tests/excel/format_e2e/test_merge_cells.py --test all
 
 > ✅ **D.3 真机实测（2026-06-18）**：18/18 全过（set 6/6 · get 4/4 · conditionalFormat 4/4 · merge 4/4），openpyxl 双重验证通过。
 >
-> ⚠️ **DTO-vs-wire 不一致（get:rangeFormat）**：office4ai `GetRangeFormatData` 声明 `{address, format: RangeFormatInfo}`，但 AddIn `rangeFormat.ts::getRangeFormat()` 实际**直接返回扁平 RangeFormatInfo**（顶层 `font/fill/horizontalAlignment/verticalAlignment/wrapText/numberFormat`，无 `address`、无 `format` 包裹）。E2E 已按真机形态断言；建议后续对齐 DTO 或 AddIn（择一）。
+> ⚠️ **DTO-vs-wire 不一致（get:rangeFormat）**：office4ai `GetRangeFormatData` 声明 `{address, format: RangeFormatInfo}`，但 AddIn `rangeFormat.ts::getRangeFormat()` 实际**直接返回扁平 RangeFormatInfo**（顶层 `font/fill/horizontalAlignment/verticalAlignment/wrapText/numberFormat`，无 `address`、无 `format` 包裹）。E2E 已按真机形态断言；建议后续对齐 DTO 或 AddIn（择一）。注：本问题已由 AddIn 侧 `0be2056 fix(excel): get:rangeFormat 响应按契约包裹 (#52)` 修复并并入 main，后续可回归验证扁平→包裹的形态变化。
+
+---
+
+### D.4 Worksheet 管理 — `worksheet_e2e/`（#32）
+
+目录：`manual_tests/excel/worksheet_e2e/`（`test_add_worksheet.py` 5 例含 3000 /
+`test_rename_activate.py` 4 例含 2×3000 / `test_delete_worksheet.py` 3 例含 3000）。覆盖
+#21 Worksheet 切片 5 事件：`get:worksheets` · `add:worksheet` · `delete:worksheet` ·
+`rename:worksheet` · `activate:worksheet`。夹具 `book.xlsx`（4 张自描述表 Alpha[active]/Beta/Gamma/Delta）。
+
+```bash
+uv run python manual_tests/excel/worksheet_e2e/test_add_worksheet.py --test all
+uv run python manual_tests/excel/worksheet_e2e/test_rename_activate.py --test all
+uv run python manual_tests/excel/worksheet_e2e/test_delete_worksheet.py --test all
+```
+
+- [x] **D.4.1 add:worksheet**：命名（'Summary' → `{name,index}`）· 自动命名（省略 → Excel 'Sheet1'）——openpyxl `sheet_names` 核对落盘
+- [x] **D.4.2 get:worksheets**：4 表字段完整（name/index/isActive/isHidden），Alpha 唯一 active；实时反映新增 'Extra'
+- [x] **D.4.3 rename:worksheet**：Beta → BetaRenamed（`{name}`）；旧名消失、隔离表 Delta 保留
+- [x] **D.4.4 activate:worksheet**：activate Gamma → `get:worksheets` 断言 Gamma isActive（openpyxl `wb.active` 佐证）
+- [x] **D.4.5 delete:worksheet**：删 Beta → `sheet_names` 不含 Beta、其余保留；`get:worksheets` 实时反映
+- [x] **D.4.6 错误码 3000**：add 重名 / rename·activate·delete 不存在的表 → **3000 DOCUMENT_ERROR**（5001 为旧 DoD 残留，dead code）
+
+> ✅ **D.4 真机实测（2026-06-18）**：12/12 全过（add 5/5 · rename_activate 4/4 · delete 3/3），openpyxl `sheet_names`/`wb.active` 双重验证通过。
+>
+> ⚠️ **DTO-vs-wire（delete/activate 返回 void）**：office4ai `DeleteWorksheetData {deleted}` / `ActivateWorksheetData {activated}` 是声明式的，AddIn handler 实际返回 **void**，真机响应 `data={}` 无该字段。E2E 一律靠 openpyxl 读盘验证，不断言响应体。
 
 ---
 
