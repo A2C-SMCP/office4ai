@@ -316,6 +316,32 @@ uv run python manual_tests/excel/chart_e2e/test_delete_chart.py --test all
 
 ---
 
+### D.7 PivotTable 操作 — `pivot_table_e2e/`（#35）
+
+目录：`manual_tests/excel/pivot_table_e2e/`（`test_insert_pivot_table.py` 4 例含 3000+4000 /
+`test_get_pivot_tables.py` 4 例含 3000 / `test_delete_pivot_table.py` 3 例含 3000）。覆盖
+#24 PivotTable 切片 3 事件：`insert:pivotTable` · `get:pivotTables` · `delete:pivotTable`。
+夹具 `pivot.xlsx`（Data A1:C5 数据源 Region/Product/Amount / Blank 空表）。仅用
+sourceAddress + targetAddress 创建**空透视表骨架**，不构造 rows/columns/values/filters。
+
+```bash
+uv run python manual_tests/excel/pivot_table_e2e/test_insert_pivot_table.py --test all
+uv run python manual_tests/excel/pivot_table_e2e/test_get_pivot_tables.py --test all
+uv run python manual_tests/excel/pivot_table_e2e/test_delete_pivot_table.py --test all
+```
+
+- [x] **D.7.1 insert:pivotTable**：指定 name 'SalesPivot' / 默认 name 'PivotTable' → `{name}`（source 与 target 须同一 worksheet，target 用源表空白落点 E1/E20）
+- [x] **D.7.2 get:pivotTables**：回读 `[{name, id}]`（每条仅 2 字段）；单/多透视表/空表空列表
+- [x] **D.7.3 delete:pivotTable**：flow 删其一保留其它 / 删唯一→空（返回 void，get:pivotTables 回读核对）
+- [x] **D.7.4 错误码 3000/4000**：非法 source / 透视表不存在 / 不存在 worksheet → **3000**；source 空串（Zod min(1)）→ **4000**（旧 DoD 5008/5010/5002 dead code）
+- [ ] **D.7.5 视觉**：Data!E1 透视表骨架就位（空 PivotTable 占位框）
+
+> ✅ **D.7 真机实测（2026-06-18）**：11/11 全过（insert 4/4 · get 4/4 · delete 3/3），协议 get:pivotTables 回读双重验证通过。
+>
+> ⚠️ **DTO-vs-wire（delete:pivotTable 返回 void）**：真机响应 `data={}`，靠 get:pivotTables 回读验证，不断言响应体。复用 #34 的 `ExcelCase.flow` 做 insert→delete→get 多步流。
+
+---
+
 ## 验收完成后
 
 1. 全部 A/B 项打勾 → 把勾选状态复制到 Issue #26 评论
