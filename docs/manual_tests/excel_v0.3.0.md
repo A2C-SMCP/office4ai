@@ -145,6 +145,30 @@ uv run python manual_tests/excel/test_excel_e2e.py --mode full
 
 ---
 
+## D. per-feature E2E 套件（#28 子问题逐个落地）
+
+在 A/B「一条 smoke 工作流」之外，#28 把每类做深为独立 `*_e2e/` 目录（README + 多场景脚本
++ per-feature 夹具 + 编号用例 `--test N/all`），完整度对齐 word/ppt。以下按子问题勾验。
+
+### D.1 Read/Foundation — `read_state_e2e/`（#29）
+
+目录：`manual_tests/excel/read_state_e2e/`（`test_workbook_info.py` 4 例 /
+`test_worksheet_info.py` 6 例含 5001 / `test_selected_range.py` 4 例需手动选区）。
+
+```bash
+uv run python manual_tests/excel/read_state_e2e/test_workbook_info.py --test all
+uv run python manual_tests/excel/read_state_e2e/test_worksheet_info.py --test all
+uv run python manual_tests/excel/read_state_e2e/test_selected_range.py --test all --no-auto-open
+```
+
+- [ ] **D.1.1 workbookInfo**：多 sheet 列表完整；隐藏表 `isHidden=true`（openpyxl `sheet_state=hidden` 核对）；`activeSheet` 与 `isActive` 一致；`fileName` 为 `.xlsx`
+- [ ] **D.1.2 worksheetInfo**：默认活动表 / 指定 `worksheetName`；`usedRange` 4×3 与 openpyxl `max_row/max_column` 一致；空表 usedRange 极小；`tableCount/chartCount` 字段就绪
+- [ ] **D.1.3 selectedRange**：单格 1×1；A1:C2 的 2D values（2 行 3 列）；空选区；A1:C1 混合类型（字符串/数字/布尔，含 falsy `0`/`False`/空串）
+- [ ] **D.1.4 错误码 5001**：`get:worksheetInfo` 传 ghost 表名 → WORKSHEET_NOT_FOUND
+- [ ] **D.1.5 视觉**：底部三个标签页（Sheet1/Data/Report）；隐藏表夹具仅见 Visible 标签
+
+---
+
 ## 验收完成后
 
 1. 全部 A/B 项打勾 → 把勾选状态复制到 Issue #26 评论
