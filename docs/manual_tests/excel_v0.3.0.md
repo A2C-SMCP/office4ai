@@ -199,6 +199,32 @@ uv run python manual_tests/excel/range_e2e/test_set_formula.py --test all
 >
 > ⚠️ **错误码再修正：非法 address → 3000，不是 3009**。`3009 RANGE_INVALID` 在 `error-codes.ts` 有定义但**全仓 0 个 handler 发射**（dead code）；`excel-handlers.ts` 的 `excelErrorCode()` 仅把 Zod 失败→`4000` VALIDATION_ERROR，其余 Office.js 运行期异常（含 `getRange` 拒绝畸形地址）→`3000` OFFICE_API_ERROR。即 D.1.4「5002→3009」推断需进一步修正为 **5002→3000**（与 5001→3000 同源）。仅 schema 违规才得 `4000`。
 
+### D.3 Format / 条件格式 / 合并 — `format_e2e/`（#31）
+
+目录：`manual_tests/excel/format_e2e/`（`test_set_range_format.py` 6 例 /
+`test_get_range_format.py` 4 例含 3000 / `test_conditional_format.py` 4 例含 3000 /
+`test_merge_cells.py` 4 例含 3000）。覆盖 #20 Format 切片 6 事件：`get/set:rangeFormat` ·
+`add/clear:conditionalFormat` · `merge/unmerge:cells`。夹具 `fmt.xlsx`（Data 数值网格 /
+Merge 标签行）。
+
+```bash
+uv run python manual_tests/excel/format_e2e/test_set_range_format.py --test all
+uv run python manual_tests/excel/format_e2e/test_get_range_format.py --test all
+uv run python manual_tests/excel/format_e2e/test_conditional_format.py --test all
+uv run python manual_tests/excel/format_e2e/test_merge_cells.py --test all
+```
+
+- [x] **D.3.1 set:rangeFormat**：font（bold/italic/color）· fill · numberFormat · alignment（center/top/wrap）· borders（top=thick/bottom=thin）· **偏更新**（只改传入属性，其余保留）——openpyxl 读盘核对
+- [x] **D.3.2 get:rangeFormat**：RangeFormatInfo 字段完整（numberFormat 为 2D）；set→get 往返（bold + '0.00' 反映）；多格 2×3 维度
+- [x] **D.3.3 add/clear:conditionalFormat**：cellValue（>150 红底）/ colorScale 添加；clear 清除（协议成功，clear 后 openpyxl CF 计数=0）
+- [x] **D.3.4 merge/unmerge:cells**：合并保留左上 'M1' + B1/C1 清空；取消合并后 merged_ranges=[]（openpyxl 核对）
+- [x] **D.3.5 错误码 3000**：四类写/读传非法 address → **3000 DOCUMENT_ERROR**（3009 dead code）
+- [ ] **D.3.6 视觉**：A1:C1 红粗斜体表头；B 列条件格式高亮；Merge 表 A1:C1 合并居中
+
+> ✅ **D.3 真机实测（2026-06-18）**：18/18 全过（set 6/6 · get 4/4 · conditionalFormat 4/4 · merge 4/4），openpyxl 双重验证通过。
+>
+> ⚠️ **DTO-vs-wire 不一致（get:rangeFormat）**：office4ai `GetRangeFormatData` 声明 `{address, format: RangeFormatInfo}`，但 AddIn `rangeFormat.ts::getRangeFormat()` 实际**直接返回扁平 RangeFormatInfo**（顶层 `font/fill/horizontalAlignment/verticalAlignment/wrapText/numberFormat`，无 `address`、无 `format` 包裹）。E2E 已按真机形态断言；建议后续对齐 DTO 或 AddIn（择一）。
+
 ---
 
 ## 验收完成后
