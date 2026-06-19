@@ -24,7 +24,7 @@ from starlette.routing import Mount, Route
 from office4ai.a2c_smcp.config import MCPServerConfig
 from office4ai.a2c_smcp.resources.base import BaseResource
 from office4ai.a2c_smcp.subscriptions import SubscriptionManager
-from office4ai.a2c_smcp.tools.base import BaseTool
+from office4ai.a2c_smcp.tools.base import BaseTool, normalize_ref_siblings
 
 
 class BaseMCPServer(ABC):
@@ -114,7 +114,8 @@ class BaseMCPServer(ABC):
                 Tool(
                     name=tool.name,
                     description=tool.description,
-                    inputSchema=tool.input_schema,
+                    # office4ai #37: 归一化「裸 $ref + 兄弟键」, 否则模型把必填嵌套对象误填成 JSON 字符串
+                    inputSchema=normalize_ref_siblings(tool.input_schema),
                 )
                 for tool in self.tools.values()
             ]

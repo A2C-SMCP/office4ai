@@ -18,6 +18,37 @@ from office4ai.environment.workspace.office_workspace import OfficeWorkspace
 T = TypeVar("T", bound=BaseModel)
 
 
+def normalize_ref_siblings(schema: Any) -> Any:
+    """归一化 JSON Schema, 隔离「裸 ``$ref`` + 兄弟键」节点 | Isolate bare ``$ref`` carrying sibling keys.
+
+    office4ai #37: Pydantic v2 对**必填**嵌套对象字段 (``Field(...)``) 产出
+    ``{"$ref": "#/$defs/X", "description": "..."}`` —— ``$ref`` 与兄弟键同层。按 JSON Schema
+    (Draft-07 / OpenAPI 3.0) 语义, ``$ref`` 与兄弟键并存时兄弟键被忽略, function-calling / MCP
+    的 schema 预处理层据此无法正确内联展开, 模型拿不到内部字段结构, 退化为把对象误填成 JSON 字符串。
+
+    能正常工作的可选字段 (如 ``ppt_insert_shape.options``) 之所以正常, 是因为 Pydantic 把
+    ``$ref`` 隔离进 ``anyOf`` 独立分支 (分支内 ``$ref`` 无兄弟键)。本函数对必填字段复刻同样的隔离::
+
+        {"$ref": X, "description": Y}  ->  {"anyOf": [{"$ref": X}], "description": Y}
+
+    必填语义保留 (不加 ``null`` 分支、不加 ``default``)。变换是**幂等**的, 且对已隔离的
+    ``$ref`` (``anyOf``/``items`` 内, 或 ``{"$ref": ...}`` 独占) 是 no-op —— 仅当某对象
+    同时含 ``$ref`` 和其他键时才改写。``$defs`` 原样保留, 引用可解析。
+
+    选用 ``anyOf`` (而非等价的 OpenAPI 惯用 ``allOf``) 是为了与本项目可选字段既有形态
+    (``anyOf: [{$ref}, {type: null}]``) 对称, 隔离效果两者相同。
+    """
+    if isinstance(schema, dict):
+        if "$ref" in schema and len(schema) > 1:
+            ref = schema["$ref"]
+            siblings = {k: normalize_ref_siblings(v) for k, v in schema.items() if k != "$ref"}
+            return {"anyOf": [{"$ref": ref}], **siblings}
+        return {k: normalize_ref_siblings(v) for k, v in schema.items()}
+    if isinstance(schema, list):
+        return [normalize_ref_siblings(v) for v in schema]
+    return schema
+
+
 class BaseTool(ABC):
     """
     声明式工具基类 | Declarative Tool Base Class
