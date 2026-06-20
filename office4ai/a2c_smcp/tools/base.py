@@ -18,35 +18,77 @@ from office4ai.environment.workspace.office_workspace import OfficeWorkspace
 T = TypeVar("T", bound=BaseModel)
 
 
-def normalize_ref_siblings(schema: Any) -> Any:
-    """归一化 JSON Schema, 隔离「裸 ``$ref`` + 兄弟键」节点 | Isolate bare ``$ref`` carrying sibling keys.
+def _schema_has_ref(node: Any) -> bool:
+    """是否仍残留 ``$ref`` | Whether any ``$ref`` remains."""
+    if isinstance(node, dict):
+        if "$ref" in node:
+            return True
+        return any(_schema_has_ref(v) for v in node.values())
+    if isinstance(node, list):
+        return any(_schema_has_ref(v) for v in node)
+    return False
 
-    office4ai #37: Pydantic v2 对**必填**嵌套对象字段 (``Field(...)``) 产出
-    ``{"$ref": "#/$defs/X", "description": "..."}`` —— ``$ref`` 与兄弟键同层。按 JSON Schema
-    (Draft-07 / OpenAPI 3.0) 语义, ``$ref`` 与兄弟键并存时兄弟键被忽略, function-calling / MCP
-    的 schema 预处理层据此无法正确内联展开, 模型拿不到内部字段结构, 退化为把对象误填成 JSON 字符串。
 
-    能正常工作的可选字段 (如 ``ppt_insert_shape.options``) 之所以正常, 是因为 Pydantic 把
-    ``$ref`` 隔离进 ``anyOf`` 独立分支 (分支内 ``$ref`` 无兄弟键)。本函数对必填字段复刻同样的隔离::
+def _isolate_ref_siblings(node: dict[str, Any]) -> dict[str, Any]:
+    """``{"$ref": X, ...兄弟键}`` -> ``{"anyOf": [{"$ref": X}], ...兄弟键}`` (回退用)。"""
+    ref = node["$ref"]
+    siblings = {k: v for k, v in node.items() if k != "$ref"}
+    if not siblings:
+        return node
+    return {"anyOf": [{"$ref": ref}], **siblings}
 
-        {"$ref": X, "description": Y}  ->  {"anyOf": [{"$ref": X}], "description": Y}
 
-    必填语义保留 (不加 ``null`` 分支、不加 ``default``)。变换是**幂等**的, 且对已隔离的
-    ``$ref`` (``anyOf``/``items`` 内, 或 ``{"$ref": ...}`` 独占) 是 no-op —— 仅当某对象
-    同时含 ``$ref`` 和其他键时才改写。``$defs`` 原样保留, 引用可解析。
+def _inline_refs(node: Any, defs: dict[str, Any], stack: tuple[str, ...]) -> Any:
+    """递归把 ``$ref`` 解引用为 ``$defs`` 中的定义并内联展开。
 
-    选用 ``anyOf`` (而非等价的 OpenAPI 惯用 ``allOf``) 是为了与本项目可选字段既有形态
-    (``anyOf: [{$ref}, {type: null}]``) 对称, 隔离效果两者相同。
+    遇到 ``{"$ref": "#/$defs/X", ...兄弟键}``: 解析 X 的定义、递归内联其内部 ``$ref``,
+    再把兄弟键 (如字段级 ``description``) 覆盖合并到展开结果上 (字段级描述优先于定义级)。
+    遇到环或未知目标: 退回 ``_isolate_ref_siblings`` (避免裸 ``$ref`` + 兄弟键, 见 #37)。
     """
-    if isinstance(schema, dict):
-        if "$ref" in schema and len(schema) > 1:
-            ref = schema["$ref"]
-            siblings = {k: normalize_ref_siblings(v) for k, v in schema.items() if k != "$ref"}
-            return {"anyOf": [{"$ref": ref}], **siblings}
-        return {k: normalize_ref_siblings(v) for k, v in schema.items()}
-    if isinstance(schema, list):
-        return [normalize_ref_siblings(v) for v in schema]
-    return schema
+    if isinstance(node, dict):
+        if "$ref" in node:
+            name = node["$ref"].rsplit("/", 1)[-1]
+            if name in stack or name not in defs:  # 环 / 未知目标: 无法内联, 退回隔离
+                return _isolate_ref_siblings({k: _inline_refs(v, defs, stack) for k, v in node.items()})
+            resolved = _inline_refs(defs[name], defs, (*stack, name))
+            merged = dict(resolved) if isinstance(resolved, dict) else resolved
+            if isinstance(merged, dict):
+                for k, v in node.items():
+                    if k != "$ref":
+                        merged[k] = _inline_refs(v, defs, stack)
+            return merged
+        return {k: _inline_refs(v, defs, stack) for k, v in node.items()}
+    if isinstance(node, list):
+        return [_inline_refs(v, defs, stack) for v in node]
+    return node
+
+
+def inline_schema_refs(schema: Any) -> Any:
+    """内联 JSON Schema 的全部 ``$ref``, 产出自包含 (无 ``$ref``/``$defs``) 的 schema。
+
+    office4ai #37: MCP 工具的**必填**嵌套对象参数被模型误填成 JSON 字符串。根因经真机定位:
+    a2c 客户端把工具 ``inputSchema`` **原样透传**给模型 (不解析 ``$ref``), 而该 function-calling
+    栈不支持工具参数里的 ``$ref``/``$defs`` —— 凡走 ``$ref`` 的字段 (Pydantic 对嵌套对象一律
+    产出 ``$ref``) 模型都看不到内部结构, 必填字段遂退化为填 JSON 字符串; 可选字段"看似正常"
+    只是因为模型常省略不填。
+
+    最初尝试把「裸 ``$ref`` + 兄弟键」改写为 ``anyOf: [{$ref}]`` 隔离 ``$ref``, 真机验证仍失败
+    (``$ref`` 本身就不被支持)。故改为**完全内联**: 把每个 ``$ref`` 解引用展开成显式
+    ``{type, properties, ...}``, 并删除顶层 ``$defs``, 让每个工具 schema 自包含、无任何 ``$ref``。
+
+    字段级兄弟键 (如 ``description``) 在内联时覆盖合并到定义之上。对**无环**模型 (本项目现状)
+    完全内联、丢弃 ``$defs``; 极端**环引用**模型无法完全内联时, 保留 ``$defs`` 并对残留
+    ``$ref`` 做兄弟键隔离 (退回 #37 的次优形态), 避免重新引入裸 ``$ref`` + 兄弟键。
+    """
+    if not isinstance(schema, dict):
+        return schema
+    defs = schema.get("$defs", {})
+    body = {k: v for k, v in schema.items() if k != "$defs"}
+    inlined = _inline_refs(body, defs, ())
+    if isinstance(inlined, dict) and _schema_has_ref(inlined):
+        # 环 / 未知引用: 无法完全内联, 保留 $defs 供解析
+        inlined["$defs"] = defs
+    return inlined
 
 
 class BaseTool(ABC):
