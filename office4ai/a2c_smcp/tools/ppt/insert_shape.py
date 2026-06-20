@@ -24,7 +24,13 @@ class PptInsertShapeInput(BaseModel):
         "Arrow",
         "Star",
         "TextBox",
-    ] = Field(..., description="Shape type")
+    ] = Field(
+        ...,
+        description=(
+            "Shape type. 'TextBox' is a real text box (no fill, no border). "
+            "Note: 'Line' is currently unreliable (rendered like a rectangle, office-editor4ai #60) — avoid for now."
+        ),
+    )
     options: ShapeInsertOptions | None = Field(None, description="Shape insertion options (position, size, style)")
 
 
@@ -40,8 +46,10 @@ class PptInsertShapeTool(BaseTool):
         return (
             "Insert a geometric shape on a PowerPoint slide. "
             "Supports Rectangle, RoundedRectangle, Circle, Oval, Triangle, "
-            "Line, Arrow, Star, and TextBox shape types. "
-            "Supports optional position, size, fill color, border, and text settings."
+            "Line, Arrow, Star, and TextBox shape types "
+            "(TextBox = a real text box with no fill/border; 'Line' is unreliable, see office-editor4ai #60). "
+            "By default shapes have NO fill and NO border; set fillColor / borderColor (hex) to add them, "
+            "or pass 'none' / borderWidth=0 to explicitly disable. Supports optional position, size, and text."
         )
 
     @property
