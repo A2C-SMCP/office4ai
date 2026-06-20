@@ -117,11 +117,13 @@ class OfficeMCPServer(BaseMCPServer):
             PptGetSlideElementsTool,
             PptGetSlideInfoTool,
             PptGetSlideLayoutsTool,
+            PptGetSlideOoxmlTool,
             PptGetSlideScreenshotTool,
             PptGotoSlideTool,
             PptInsertChartTool,
             PptInsertImageTool,
             PptInsertShapeTool,
+            PptInsertSlidesOoxmlTool,
             PptInsertTableTool,
             PptInsertTextTool,
             PptMoveSlideTool,
@@ -158,6 +160,9 @@ class OfficeMCPServer(BaseMCPServer):
             PptInsertChartTool(self.workspace),
             PptGetChartTool(self.workspace),
             PptUpdateChartTool(self.workspace),
+            # Whole-slide OOXML tools (OASP /ppt v0.3.0 — high-fidelity, file-handle; office4ai #40)
+            PptInsertSlidesOoxmlTool(self.workspace),
+            PptGetSlideOoxmlTool(self.workspace),
             # Delete & layout tools
             PptDeleteElementTool(self.workspace),
             PptReorderElementTool(self.workspace),

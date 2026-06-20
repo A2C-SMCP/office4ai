@@ -38,11 +38,12 @@ class TestOfficeMCPServer:
             config = MCPServerConfig()
             server = OfficeMCPServer(config)
 
-            # 25 Word (21 + 4 OASP v0.2.0 table tools) + 24 PPT (21 + 3 OASP v0.2.0 chart tools)
+            # 25 Word (21 + 4 OASP v0.2.0 table tools)
+            # + 26 PPT (21 + 3 OASP v0.2.0 chart tools + 2 OASP v0.3.0 whole-slide OOXML tools, #40)
             # + 37 Excel (OASP 0.3.0 Draft: #18 read slice 3 + #19 Range CRUD/公式 7
             #   + #20 Format/条件格式/合并 6 + #21 Worksheet 管理 5 + #22 Table 操作 6
-            #   + #23 Chart 操作 4 + #24 PivotTable 操作 3 + #25 Find&Filter 操作 3) = 86
-            assert len(server.tools) == 86
+            #   + #23 Chart 操作 4 + #24 PivotTable 操作 3 + #25 Find&Filter 操作 3) = 88
+            assert len(server.tools) == 88
 
             expected_tools = [
                 # Word Get tools
@@ -98,6 +99,9 @@ class TestOfficeMCPServer:
                 "ppt_insert_chart",
                 "ppt_get_chart",
                 "ppt_update_chart",
+                # PPT whole-slide OOXML tools (OASP /ppt v0.3.0, file-handle; office4ai #40)
+                "ppt_insert_slides_ooxml",
+                "ppt_get_slide_ooxml",
                 # PPT Delete & layout tools
                 "ppt_delete_element",
                 "ppt_reorder_element",

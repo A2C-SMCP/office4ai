@@ -8,11 +8,13 @@ from office4ai.a2c_smcp.tools.ppt.get_current_slide_elements import PptGetCurren
 from office4ai.a2c_smcp.tools.ppt.get_slide_elements import PptGetSlideElementsTool
 from office4ai.a2c_smcp.tools.ppt.get_slide_info import PptGetSlideInfoTool
 from office4ai.a2c_smcp.tools.ppt.get_slide_layouts import PptGetSlideLayoutsTool
+from office4ai.a2c_smcp.tools.ppt.get_slide_ooxml import PptGetSlideOoxmlTool
 from office4ai.a2c_smcp.tools.ppt.get_slide_screenshot import PptGetSlideScreenshotTool
 from office4ai.a2c_smcp.tools.ppt.goto_slide import PptGotoSlideTool
 from office4ai.a2c_smcp.tools.ppt.insert_chart import PptInsertChartTool
 from office4ai.a2c_smcp.tools.ppt.insert_image import PptInsertImageTool
 from office4ai.a2c_smcp.tools.ppt.insert_shape import PptInsertShapeTool
+from office4ai.a2c_smcp.tools.ppt.insert_slides_ooxml import PptInsertSlidesOoxmlTool
 from office4ai.a2c_smcp.tools.ppt.insert_table import PptInsertTableTool
 from office4ai.a2c_smcp.tools.ppt.insert_text import PptInsertTextTool
 from office4ai.a2c_smcp.tools.ppt.move_slide import PptMoveSlideTool
@@ -48,6 +50,9 @@ __all__ = [
     "PptInsertChartTool",
     "PptGetChartTool",
     "PptUpdateChartTool",
+    # Whole-slide OOXML tools (OASP /ppt v0.3.0 — high-fidelity, file-handle; office4ai #40)
+    "PptInsertSlidesOoxmlTool",
+    "PptGetSlideOoxmlTool",
     # Delete & layout tools
     "PptDeleteElementTool",
     "PptReorderElementTool",
