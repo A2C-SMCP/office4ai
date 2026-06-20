@@ -179,8 +179,22 @@ class TextInsertOptions(SocketIOBaseModel):
     height: float | None = Field(default=None, description="Height (points)")
     font_size: int | None = Field(default=None, alias="fontSize", description="Font size")
     font_name: str | None = Field(default=None, alias="fontName", description="Font name")
-    color: str | None = Field(default=None, description="Font color (hex)")
-    fill_color: str | None = Field(default=None, alias="fillColor", description="Fill color (hex)")
+    color: str | None = Field(default=None, description="Font color (hex, e.g. '#333333')")
+    fill_color: str | None = Field(
+        default=None,
+        alias="fillColor",
+        description="Text box fill color (hex). Omit for no fill (default); 'none' to explicitly disable.",
+    )
+    border_color: str | None = Field(
+        default=None,
+        alias="borderColor",
+        description="Text box border color (hex). Omit for no border (default); 'none' to explicitly disable.",
+    )
+    border_width: float | None = Field(
+        default=None,
+        alias="borderWidth",
+        description="Text box border width (points). Omit or 0 for no border (default).",
+    )
 
 
 class SlideImageData(SocketIOBaseModel):
@@ -226,9 +240,21 @@ class ShapeInsertOptions(SocketIOBaseModel):
     top: float | None = Field(default=None, description="Top position (points)")
     width: float | None = Field(default=None, description="Width (points)")
     height: float | None = Field(default=None, description="Height (points)")
-    fill_color: str | None = Field(default=None, alias="fillColor", description="Fill color (hex)")
-    border_color: str | None = Field(default=None, alias="borderColor", description="Border color (hex)")
-    border_width: float | None = Field(default=None, alias="borderWidth", description="Border width (points)")
+    fill_color: str | None = Field(
+        default=None,
+        alias="fillColor",
+        description="Fill color (hex). Omit for no fill (default); 'none' to explicitly disable.",
+    )
+    border_color: str | None = Field(
+        default=None,
+        alias="borderColor",
+        description="Border color (hex). Omit for no border (default); 'none' to explicitly disable.",
+    )
+    border_width: float | None = Field(
+        default=None,
+        alias="borderWidth",
+        description="Border width (points). Omit or 0 for no border (default).",
+    )
     text: str | None = Field(default=None, description="Shape text")
 
 
