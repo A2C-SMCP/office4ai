@@ -1759,3 +1759,89 @@ class TestChartRouterPayloadContract:
 
         wrapped = wrap_request("ppt:get:slideOoxml", {"slideIndex": 3}, "file:///t.pptx")
         assert wrapped["slideIndex"] == 3
+
+
+# ============================================================================
+# MCP Content Mapping Tests (office4ai #42)
+# ============================================================================
+
+
+class TestMcpContentMapping:
+    """``to_mcp_content`` 内容类型分发测试 (office4ai #42)。
+
+    守护根因修复: 截图 base64 必须经 MCP ``image`` 内容类型回传, 不得内联进任何 ``text`` 块
+    (否则十余万字符 base64 撑爆 LLM 上下文 → 周期性压缩 → 死循环)。
+    """
+
+    # 一段足够长、可识别的伪 base64, 用于断言「未泄漏进 text」
+    BIG_B64 = "iVBORw0KGgoAAAANSUhEUgAA" + "A" * 2000
+
+    def test_screenshot_success_returns_image_not_text(self, mock_workspace):
+        """复现锚点: PNG 截图成功 → 单个 image 块, base64 在 data, 任何 text 块都不含 base64。"""
+        tool = PptGetSlideScreenshotTool(mock_workspace)
+        result = {
+            "success": True,
+            "content": f"Screenshot (png): {len(self.BIG_B64)} chars base64",
+            "data": {"base64": self.BIG_B64, "format": "png"},
+        }
+
+        blocks = tool.to_mcp_content(result)
+
+        assert len(blocks) == 1
+        assert blocks[0]["type"] == "image"
+        assert blocks[0]["data"] == self.BIG_B64
+        assert blocks[0]["mimeType"] == "image/png"
+        # 关键回归断言: base64 不得出现在任何 text 块
+        assert all(self.BIG_B64 not in block.get("text", "") for block in blocks)
+
+    def test_screenshot_jpeg_maps_to_jpeg_mime(self, mock_workspace):
+        """JPEG 截图 → image/jpeg。"""
+        tool = PptGetSlideScreenshotTool(mock_workspace)
+        result = {"success": True, "data": {"base64": self.BIG_B64, "format": "jpeg"}}
+
+        blocks = tool.to_mcp_content(result)
+
+        assert blocks[0]["type"] == "image"
+        assert blocks[0]["mimeType"] == "image/jpeg"
+
+    def test_screenshot_failure_falls_back_to_text(self, mock_workspace):
+        """失败 → 回退 text 块 (含 error), 无 image 块。"""
+        tool = PptGetSlideScreenshotTool(mock_workspace)
+        result = {"success": False, "error": "render failed"}
+
+        blocks = tool.to_mcp_content(result)
+
+        assert len(blocks) == 1
+        assert blocks[0]["type"] == "text"
+        assert "render failed" in blocks[0]["text"]
+
+    def test_screenshot_jpg_fallback_key_maps_to_jpeg_mime(self, mock_workspace):
+        """容错键: 协议虽只发 jpeg, 但 'jpg' 防御性键也应映射 image/jpeg。"""
+        tool = PptGetSlideScreenshotTool(mock_workspace)
+        result = {"success": True, "data": {"base64": self.BIG_B64, "format": "jpg"}}
+
+        blocks = tool.to_mcp_content(result)
+
+        assert blocks[0]["type"] == "image"
+        assert blocks[0]["mimeType"] == "image/jpeg"
+
+    def test_screenshot_unknown_format_falls_back_to_text_without_base64(self, mock_workspace):
+        """未知格式 → 保守回退 text, 不发错误 MIME, 且**绝不**把 base64 回灌进 text (#42 根因守护)。"""
+        tool = PptGetSlideScreenshotTool(mock_workspace)
+        result = {"success": True, "data": {"base64": self.BIG_B64, "format": "bmp"}}
+
+        blocks = tool.to_mcp_content(result)
+
+        assert blocks[0]["type"] == "text"
+        assert not any(block["type"] == "image" for block in blocks)
+        # 回退分支同样守护根因: base64 不得泄漏进任何 text 块
+        assert all(self.BIG_B64 not in block.get("text", "") for block in blocks)
+
+    def test_default_tool_returns_text_unchanged(self, mock_workspace):
+        """回归: 非截图工具沿用默认实现, 单个 text 块且逐字等于 str(result)。"""
+        tool = PptGetSlideInfoTool(mock_workspace)
+        result = {"success": True, "data": {"slideIndex": 0, "title": "Hello"}}
+
+        blocks = tool.to_mcp_content(result)
+
+        assert blocks == [{"type": "text", "text": str(result)}]

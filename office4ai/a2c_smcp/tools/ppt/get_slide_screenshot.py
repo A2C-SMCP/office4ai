@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Any, Literal
+from typing import Any, ClassVar, Literal
 
 from pydantic import BaseModel, Field
 
@@ -21,6 +21,10 @@ class PptGetSlideScreenshotInput(BaseModel):
 
 class PptGetSlideScreenshotTool(BaseTool):
     """获取幻灯片截图"""
+
+    # OASP format → MCP image MIME type (office4ai #42)
+    # 协议 (ScreenshotOptions.format) 只发 png/jpeg; "jpg" 为防御性容错键, 协议层不会命中
+    _FORMAT_MIME_MAP: ClassVar[dict[str, str]] = {"png": "image/png", "jpeg": "image/jpeg", "jpg": "image/jpeg"}
 
     @property
     def name(self) -> str:
@@ -58,3 +62,25 @@ class PptGetSlideScreenshotTool(BaseTool):
         base64_data = obs.data.get("base64", "")
         content = f"Screenshot ({fmt}): {len(base64_data)} chars base64"
         return {"success": True, "content": content, "data": obs.data}
+
+    def to_mcp_content(self, result: dict[str, Any]) -> list[dict[str, Any]]:
+        """截图以 MCP ``image`` 内容类型回传, 进入消费方视觉通道而非文本 prompt (office4ai #42)。
+
+        成功且格式已知 → 单个 ``image`` 块 (base64 落在 ``data`` 字段, 不入任何 text)。
+        失败 / 缺 base64 / 未知格式 → 保守回退默认 ``text`` 块, 既保留错误信息又不发错误 MIME。
+        """
+        # 失败: 沿用默认 text (业务返回为 {success, error}, 本就不含 base64)
+        if not result.get("success"):
+            return super().to_mcp_content(result)
+        data = result.get("data") or {}
+        base64_data = data.get("base64") or ""
+        fmt = str(data.get("format") or "").lower()
+        mime = self._FORMAT_MIME_MAP.get(fmt)
+        if base64_data and mime is not None:
+            return [{"type": "image", "data": base64_data, "mimeType": mime}]
+        # 成功但无法作为 image (缺 base64 / 未知格式): 降级 text, 但**绝不**回灌 base64,
+        # 否则未知格式分支会让 #42 根因 (base64 内联文本上下文) 无声复发。
+        suppressed = (
+            f"Screenshot unavailable as image (format={fmt or 'unknown'}, {len(base64_data)} chars base64 suppressed)"
+        )
+        return [{"type": "text", "text": suppressed}]
