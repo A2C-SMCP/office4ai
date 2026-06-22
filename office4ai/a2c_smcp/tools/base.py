@@ -209,6 +209,17 @@ class BaseTool(ABC):
             return {"success": False, "error": obs.error or "Unknown error"}
         return {"success": True, "data": obs.data}
 
+    def to_mcp_content(self, result: dict[str, Any]) -> list[dict[str, Any]]:
+        """将 ``execute()`` 的结果映射为 MCP 内容块 | Map ``execute()`` result to MCP content blocks.
+
+        默认行为: 整个结果序列化为单个 ``text`` 块, 与历史行为逐字一致。
+
+        需要返回大体积二进制/图片载荷的工具 (如截图) **必须** override 本方法, 改发 MCP
+        ``image`` 等内容类型, 否则十余万字符 base64 会被原样内联进 LLM 文本上下文, 撑爆
+        token 触发周期性压缩与死循环 (office4ai #42)。``call_tool`` 据此分发, 不再硬编码 text。
+        """
+        return [{"type": "text", "text": str(result)}]
+
     def validate_input(self, arguments: dict[str, Any], model: type[T]) -> T:
         """Pydantic 输入验证 | Pydantic input validation"""
         return model.model_validate(arguments)

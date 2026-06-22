@@ -9,15 +9,24 @@ BaseMCPServer 单元测试 | BaseMCPServer unit tests
 """
 
 import os
-from unittest.mock import patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from confz import DataSource
 from mcp.server import NotificationOptions
-from mcp.types import SubscribeRequest, UnsubscribeRequest
+from mcp.types import (
+    CallToolRequest,
+    CallToolRequestParams,
+    ImageContent,
+    SubscribeRequest,
+    TextContent,
+    UnsubscribeRequest,
+)
 
 from office4ai.a2c_smcp.config import MCPServerConfig
 from office4ai.a2c_smcp.server import BaseMCPServer
+from office4ai.a2c_smcp.tools.ppt import PptGetSlideInfoTool, PptGetSlideScreenshotTool
+from office4ai.environment.workspace.base import OfficeObs
 
 
 class ConcreteMCPServer(BaseMCPServer):
@@ -164,3 +173,65 @@ class TestSubscribeCapability:
 
         assert raw_cap.resources is not None
         assert raw_cap.resources.subscribe is False
+
+
+class TestCallToolContentDispatch:
+    """``call_tool`` 内容类型分发回归测试 (office4ai #42)。
+
+    守护根因修复: ``call_tool`` 必须委托 ``tool.to_mcp_content(result)`` 决定 MCP 内容类型,
+    不得再无条件 ``str(result)`` 包成 text。截图工具据此发 ``image`` 块, 否则十余万字符
+    base64 内联进 LLM 文本上下文 → 撑爆 token → 周期性压缩 → 死循环。
+
+    经 ``server.request_handlers[CallToolRequest]`` 触发真实 SDK 分发路径, 端到端覆盖
+    "工具 to_mcp_content → SDK CallToolResult" 这一出口契约。
+    """
+
+    def _make_server(self) -> ConcreteMCPServer:
+        with patch.dict(os.environ, {}, clear=True):
+            return ConcreteMCPServer(MCPServerConfig(), "test-server")
+
+    def _mock_workspace(self, obs: OfficeObs) -> MagicMock:
+        ws = MagicMock()
+        ws.execute = AsyncMock(return_value=obs)
+        return ws
+
+    async def _call(self, server: ConcreteMCPServer, name: str, arguments: dict):
+        handler = server.server.request_handlers[CallToolRequest]
+        req = CallToolRequest(method="tools/call", params=CallToolRequestParams(name=name, arguments=arguments))
+        result = await handler(req)
+        return result.root
+
+    @pytest.mark.asyncio
+    async def test_screenshot_dispatched_as_image_content(self):
+        """核心回归: 截图经 call_tool → MCP image 内容块, base64 落在 data, 不内联进 text。"""
+        server = self._make_server()
+        ws = self._mock_workspace(OfficeObs(success=True, data={"base64": "ABC123", "format": "png"}))
+        tool = PptGetSlideScreenshotTool(ws)
+        server.tools[tool.name] = tool
+
+        call_result = await self._call(
+            server, tool.name, {"document_uri": "file:///t.pptx", "slideIndex": 0}
+        )
+
+        assert call_result.isError is False
+        assert len(call_result.content) == 1
+        block = call_result.content[0]
+        assert isinstance(block, ImageContent)
+        assert block.data == "ABC123"
+        assert block.mimeType == "image/png"
+
+    @pytest.mark.asyncio
+    async def test_regular_tool_dispatched_as_text_content(self):
+        """回归保护: 非截图工具仍走默认 text 分支, call_tool 行为不变。"""
+        server = self._make_server()
+        ws = self._mock_workspace(OfficeObs(success=True, data={"slideIndex": 0, "title": "Hello"}))
+        tool = PptGetSlideInfoTool(ws)
+        server.tools[tool.name] = tool
+
+        call_result = await self._call(
+            server, tool.name, {"document_uri": "file:///t.pptx", "slideIndex": 0}
+        )
+
+        assert call_result.isError is False
+        assert len(call_result.content) == 1
+        assert isinstance(call_result.content[0], TextContent)
