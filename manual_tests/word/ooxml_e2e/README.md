@@ -2,7 +2,9 @@
 
 `word:get:ooxml` / `word:insert:ooxml` 事件对的端到端测试（自动化版本，OASP /word Draft v0.3.0，office4ai#46）。
 
-驱动 MCP 工具 `word_get_ooxml` / `word_insert_ooxml`（file-handle 读写逻辑在工具内），做 OOXML 片段 round-trip。
+驱动 MCP 工具 `word_get_ooxml` / `word_insert_ooxml`（file-handle 读写逻辑在工具内），做 OOXML **片段** round-trip。
+
+> ⚠️ **路径收窄（#46-D）**：`word_insert_ooxml` 仅吃**片段**；整篇文档包会被 Office.js `insertOoxml` 以 `GeneralException` 拒绝。**整篇 round-trip 已移到 [`../document_file_e2e/`](../document_file_e2e/)**（base64 `.docx` + `insertFileFromBase64`）。本套只覆盖片段/选区语义。
 
 ## ⚠️ 外部依赖（真机阻塞）
 
@@ -24,8 +26,8 @@ Add-In 就绪前，`get` 阶段会超时或返回 `3016 API_NOT_SUPPORTED`。脚
 
 | 测试编号 | 测试名称 | 描述 |
 |---------|---------|------|
-| 1 | 整篇 Body round-trip 保真 | `get(body)` → 落盘 Flat OPC → `insert(Replace, body)` → 校验文档已知文本保真（双重验证：协议 + 文档内容） |
-| 2 | Body OOXML 导出 | `get(body)` 落盘，校验 dest_path 为非空 Flat OPC、`data` 不回 inline `ooxml`、`scope` 回生效值 |
+| 1 | 选区片段 round-trip | `get(selection)` → 落盘片段 Flat OPC → `insert(Replace, selection)` → 校验正文保真（需先在 Word 手动选中一段文字；空选区会提示改用 `document_file_e2e`） |
+| 2 | Body OOXML 只读导出 | `get(body)` 落盘，校验 Flat OPC、`data` 不回 inline `ooxml`、`scope` 回生效值（整篇包仅可读，**不**经 `word_insert_ooxml` 回灌） |
 
 ## 运行方式
 

@@ -62,9 +62,12 @@ class WordGetOoxmlTool(BaseTool):
             "whole document body, written to `dest_path` on disk. Returns {scope, filePath, bytes} — the "
             "OOXML string is NOT returned inline (it stays on disk to keep it out of the model context). "
             "`scope=selection` falls back to the whole body when nothing is selected; the returned `scope` "
-            "reports the effective range actually used. The written file is a Flat OPC XML string suitable "
-            "as `source_path` for word_insert_ooxml (round-trip editing). Requires the document open in "
-            "Word via the Add-In (WordApi 1.1)."
+            "reports the effective range actually used. NOTE: `scope=selection` output is a fragment "
+            "suitable as `source_path` for word_insert_ooxml (fragment round-trip); `scope=body` output is "
+            "a WHOLE-DOCUMENT package that is EXPORT/READ-ONLY — it CANNOT be re-inserted via "
+            "word_insert_ooxml (Office.js rejects whole-document OOXML). For whole-document round-trip use "
+            "word_get_document_file / word_insert_document_file instead. Requires the document open in Word "
+            "via the Add-In (WordApi 1.1)."
         )
 
     @property

@@ -4,6 +4,7 @@ from office4ai.a2c_smcp.tools.word.append_text import WordAppendTextTool
 from office4ai.a2c_smcp.tools.word.delete_comment import WordDeleteCommentTool
 from office4ai.a2c_smcp.tools.word.export_content import WordExportContentTool
 from office4ai.a2c_smcp.tools.word.get_comments import WordGetCommentsTool
+from office4ai.a2c_smcp.tools.word.get_document_file import WordGetDocumentFileTool
 from office4ai.a2c_smcp.tools.word.get_document_stats import WordGetDocumentStatsTool
 from office4ai.a2c_smcp.tools.word.get_document_structure import WordGetDocumentStructureTool
 from office4ai.a2c_smcp.tools.word.get_ooxml import WordGetOoxmlTool
@@ -12,6 +13,7 @@ from office4ai.a2c_smcp.tools.word.get_selection import WordGetSelectionTool
 from office4ai.a2c_smcp.tools.word.get_styles import WordGetStylesTool
 from office4ai.a2c_smcp.tools.word.get_visible_content import WordGetVisibleContentTool
 from office4ai.a2c_smcp.tools.word.insert_comment import WordInsertCommentTool
+from office4ai.a2c_smcp.tools.word.insert_document_file import WordInsertDocumentFileTool
 from office4ai.a2c_smcp.tools.word.insert_equation import WordInsertEquationTool
 from office4ai.a2c_smcp.tools.word.insert_image import WordInsertImageTool
 from office4ai.a2c_smcp.tools.word.insert_ooxml import WordInsertOoxmlTool
@@ -57,6 +59,9 @@ __all__ = [
     # OOXML fragment round-trip tools (OASP /word Draft, v0.3.0)
     "WordGetOoxmlTool",
     "WordInsertOoxmlTool",
+    # Whole-document base64 .docx round-trip tools (OASP /word Draft, v0.3.0, #46-D)
+    "WordGetDocumentFileTool",
+    "WordInsertDocumentFileTool",
     # Comment tools
     "WordGetCommentsTool",
     "WordInsertCommentTool",

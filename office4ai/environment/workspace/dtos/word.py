@@ -1890,6 +1890,90 @@ class WordInsertOoxmlResponse(SocketIOBaseModel):
     timestamp: int = Field(..., alias="timestamp", description="Server timestamp in milliseconds")
 
 
+# ============================================================================
+# Whole-document base64 .docx carrier DTOs (OASP /word Draft, v0.3.0, #46-D)
+# ============================================================================
+# insertOoxml cannot ingest a whole-document Flat OPC package (getOoxml(body) output)
+# — it throws Office.js GeneralException. So whole-document round-trip goes through a
+# base64 .docx package + Office.js getFileAsync(Compressed) / insertFileFromBase64,
+# mirroring the PPT slide-OOXML carrier. The fragment path stays on word:*:ooxml.
+#
+# Contract re-locked with office-editor4ai (cross-ask, office4ai#46 / office-editor4ai#63):
+#   - carrier: base64 .docx (whole package), NOT a Flat OPC string
+#   - insertFileFromBase64 replaces body *content*; document-level parts (header/footer,
+#     document sectPr, docProps, customXml) are NOT guaranteed to round-trip — E2E must
+#     verify header/footer/section properties rather than assume byte-level symmetry.
+
+
+class WordGetDocumentFileRequest(BaseRequest):
+    """Export the whole document as a base64 .docx package (word:get:documentFile).
+
+    Whole-document only — Office.js getFileAsync(Compressed) has no sub-selection. For a
+    selection / fragment, use word:get:ooxml instead.
+    """
+
+    event_name: ClassVar[str] = "word:get:documentFile"
+
+
+class WordInsertDocumentFileRequest(BaseRequest):
+    """Insert a whole .docx package (base64) at the anchor (word:insert:documentFile).
+
+    Backs the whole-document round-trip that word:insert:ooxml cannot do. The Add-In applies
+    it via Body/Range.insertFileFromBase64 — body replacement is content-level, NOT a
+    pixel-perfect document rebuild.
+    """
+
+    event_name: ClassVar[str] = "word:insert:documentFile"
+
+    base64: str = Field(
+        ...,
+        min_length=1,
+        description="Whole .docx package as base64 (no data URL prefix)",
+    )
+    insert_location: WordInsertLocation = Field(
+        ...,
+        alias="insertLocation",
+        description="Where to insert relative to the anchor: Replace, Start, or End",
+    )
+    scope: WordOoxmlScope = Field(
+        default="body",
+        description='Insert anchor: "body" (whole document body) or "selection" (current selection)',
+    )
+
+
+class WordGetDocumentFileResult(SocketIOBaseModel):
+    """Result payload for word:get:documentFile (the whole .docx as base64)."""
+
+    base64: str = Field(..., description="Whole .docx package as base64 (no data URL prefix)")
+
+
+class WordGetDocumentFileResponse(SocketIOBaseModel):
+    """Response for word:get:documentFile operation."""
+
+    request_id: str = Field(..., alias="requestId", description="Request ID being responded to")
+    success: bool = Field(..., alias="success", description="Whether the operation succeeded")
+    data: WordGetDocumentFileResult | None = Field(default=None, alias="data", description="Exported .docx result")
+    error: Optional["ErrorResponse"] = Field(default=None, alias="error", description="Error details if failed")
+    timestamp: int = Field(..., alias="timestamp", description="Server timestamp in milliseconds")
+
+
+class WordInsertDocumentFileResult(SocketIOBaseModel):
+    """Result payload for word:insert:documentFile (minimal return — anchor only)."""
+
+    scope: WordOoxmlScope = Field(..., description="Insert anchor scope used")
+    insert_location: WordInsertLocation = Field(..., alias="insertLocation", description="Insert location used")
+
+
+class WordInsertDocumentFileResponse(SocketIOBaseModel):
+    """Response for word:insert:documentFile operation."""
+
+    request_id: str = Field(..., alias="requestId", description="Request ID being responded to")
+    success: bool = Field(..., alias="success", description="Whether the operation succeeded")
+    data: WordInsertDocumentFileResult | None = Field(default=None, alias="data", description="Insert result")
+    error: Optional["ErrorResponse"] = Field(default=None, alias="error", description="Error details if failed")
+    timestamp: int = Field(..., alias="timestamp", description="Server timestamp in milliseconds")
+
+
 # Resolve forward references
 GetCommentsOptions.model_rebuild()
 CommentReplyData.model_rebuild()
@@ -1951,3 +2035,9 @@ WordGetOoxmlResult.model_rebuild()
 WordGetOoxmlResponse.model_rebuild()
 WordInsertOoxmlResult.model_rebuild()
 WordInsertOoxmlResponse.model_rebuild()
+
+# Whole-document base64 .docx carrier responses (OASP /word Draft, v0.3.0, #46-D)
+WordGetDocumentFileResult.model_rebuild()
+WordGetDocumentFileResponse.model_rebuild()
+WordInsertDocumentFileResult.model_rebuild()
+WordInsertDocumentFileResponse.model_rebuild()

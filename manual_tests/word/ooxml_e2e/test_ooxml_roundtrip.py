@@ -3,20 +3,23 @@ Word OOXML Round-Trip E2E Tests (自动化版本)
 
 测试 word_get_ooxml / word_insert_ooxml 工具对的端到端 round-trip。
 
+⚠️ 路径收窄(#46-D):word_insert_ooxml 仅吃**片段**;整篇文档包会被 Office.js insertOoxml
+   以 GeneralException 拒绝。整篇 round-trip 已移到 document_file_e2e(base64 .docx 路)。
+   故本套只覆盖**片段/选区**语义。
+
 测试场景:
-1. 整篇 Body round-trip — get(scope=body)→落盘 Flat OPC→insert(Replace, body)→
-   校验文档已知文本保真(双重验证: 协议 + 文档内容)
-2. Body OOXML 导出 — get(scope=body) 落盘，校验 dest_path 为非空 Flat OPC 字符串、
-   data 不回 inline ooxml、scope 回生效值
+1. 选区片段 round-trip — get(scope=selection)→落盘片段 Flat OPC→insert(Replace, selection)→
+   协议成功(需先在 Word 手动选中一段文字;空选区会回退整篇,本场景将提示改用 document_file)
+2. Body OOXML 只读导出 — get(scope=body) 落盘,校验 Flat OPC、data 不回 inline ooxml、
+   scope 回生效值(整篇包仅可读,不经 word_insert_ooxml 回灌)
 
 设计要点:
 - 驱动 MCP 工具(WordGetOoxmlTool / WordInsertOoxmlTool)而非裸 OfficeAction，
   因为 file-handle(dest_path/source_path)读写逻辑在工具 execute 内。
-- Word OOXML 是 Flat OPC 字符串，落盘/读取均为文本，无 base64。
+- Word OOXML(片段)是 Flat OPC 字符串，落盘/读取均为文本，无 base64。
 
 ⚠️ 外部依赖(真机): 需 office-editor4ai (word-editor4ai) Add-In 已实现
    word:get:ooxml / word:insert:ooxml handler(cross-ask 已锁定契约，见 office4ai#46)。
-   Add-In 就绪前，get 阶段会超时或返回 3016 API_NOT_SUPPORTED。
 
 运行方式:
     uv run python manual_tests/word/ooxml_e2e/test_ooxml_roundtrip.py --test 1
@@ -77,15 +80,15 @@ def _known_text_in(reader: DocumentReader) -> str | None:
 
 TEST_CASES: list[TestCase] = [
     TestCase(
-        name="整篇 Body round-trip 保真",
+        name="选区片段 round-trip",
         fixture_name="simple.docx",
-        description="get(body)→落盘 Flat OPC→insert(Replace, body)→校验文档已知文本保真",
+        description="get(selection)→落盘片段 Flat OPC→insert(Replace, selection)(需先手动选中文字;空选区提示改用 document_file)",
         tags=["roundtrip"],
     ),
     TestCase(
-        name="Body OOXML 导出",
+        name="Body OOXML 只读导出",
         fixture_name="simple.docx",
-        description="get(body) 落盘，校验 dest_path 为非空 Flat OPC、data 不回 inline ooxml、scope 回生效值",
+        description="get(body) 落盘，校验 Flat OPC、data 不回 inline ooxml、scope 回生效值(整篇仅可读,不回灌)",
         tags=["export"],
     ),
 ]
@@ -96,46 +99,52 @@ TEST_CASES: list[TestCase] = [
 # ==============================================================================
 
 
-async def _run_body_roundtrip(workspace: OfficeWorkspace, fixture: DocumentFixture) -> bool:
-    """场景 1: 整篇 Body round-trip 保真。"""
+async def _run_selection_fragment_roundtrip(workspace: OfficeWorkspace, fixture: DocumentFixture) -> bool:
+    """场景 1: 选区片段 round-trip(需先在 Word 手动选中一段文字)。
+
+    收窄说明(#46-D):word_insert_ooxml 仅吃片段;整篇 body 包会被 Office.js insertOoxml 以
+    GeneralException 拒绝。整篇 round-trip 请走 document_file_e2e(base64 .docx 路)。
+    """
     get_tool = WordGetOoxmlTool(workspace)
     insert_tool = WordInsertOoxmlTool(workspace)
-    dest = fixture.working_path.parent / "exported_body_ooxml.xml"
+    dest = fixture.working_path.parent / "exported_selection_ooxml.xml"
 
-    # 1) 导出整篇 Body 的 OOXML 到磁盘
-    print("\n📝 步骤 1: word_get_ooxml(scope=body) → 落盘 Flat OPC...")
-    get_result = await get_tool.execute({"document_uri": fixture.document_uri, "scope": "body", "dest_path": str(dest)})
+    # 1) 导出当前选区的 OOXML 片段
+    print("\n📝 步骤 1: word_get_ooxml(scope=selection) → 落盘片段 Flat OPC...")
+    get_result = await get_tool.execute(
+        {"document_uri": fixture.document_uri, "scope": "selection", "dest_path": str(dest)}
+    )
     if not get_result.get("success"):
         print(f"   ❌ get 失败: {get_result.get('error')}")
         return False
-    if get_result["data"].get("scope") != "body":
-        print(f"   ❌ 生效 scope 非 body: {get_result['data'].get('scope')}")
-        return False
-    if not dest.is_file():
-        print(f"   ❌ dest_path 未落盘: {dest}")
+    effective = get_result["data"].get("scope")
+    if effective != "selection":
+        # 空选区 → 回退整篇 body,整篇包不能经 word_insert_ooxml 回灌
+        print(f"   ⚠️ 生效 scope={effective}(无选区,已回退整篇)。")
+        print("      请在 Word 中手动选中一段文字后重试本场景;整篇 round-trip 请用 document_file_e2e。")
         return False
     ooxml = dest.read_text(encoding="utf-8")
     if not _looks_like_flat_opc(ooxml):
         print(f"   ❌ 落盘内容不像 Flat OPC，前 120 字符: {ooxml[:120]}")
         return False
-    print(f"   ✅ 导出成功，Flat OPC 字符串 {len(ooxml)} 字符 → {dest.name}")
+    print(f"   ✅ 导出选区片段 Flat OPC {len(ooxml)} 字符 → {dest.name}")
 
-    # 2) 把同一份 OOXML 原地 Replace 回整篇 Body(round-trip)
-    print("\n📝 步骤 2: word_insert_ooxml(source_path, insertLocation=Replace, scope=body)...")
+    # 2) 把片段原地 Replace 回选区(片段 round-trip)
+    print("\n📝 步骤 2: word_insert_ooxml(source_path, insertLocation=Replace, scope=selection)...")
     insert_result = await insert_tool.execute(
         {
             "document_uri": fixture.document_uri,
             "source_path": str(dest),
             "insertLocation": "Replace",
-            "scope": "body",
+            "scope": "selection",
         }
     )
     if not insert_result.get("success"):
         print(f"   ❌ insert 失败: {insert_result.get('error')}")
         return False
-    print("   ✅ insert 协议返回成功")
+    print("   ✅ insert 协议返回成功(片段原地回灌)")
 
-    # 3) 双重验证: 读回文档，已知文本应仍在(round-trip 未丢内容)
+    # 3) 双重验证: 读回文档,已知文本应仍在(片段 round-trip 未丢内容)
     print("\n📊 步骤 3: 文档内容保真校验(DocumentReader)...")
     reader = DocumentReader(fixture.working_path)
     reader.reload()  # 强制 Word 落盘后重读
@@ -183,7 +192,7 @@ async def _run_body_export(workspace: OfficeWorkspace, fixture: DocumentFixture)
 
 
 # 每个测试用例对应的执行函数
-_RUNNERS = [_run_body_roundtrip, _run_body_export]
+_RUNNERS = [_run_selection_fragment_roundtrip, _run_body_export]
 
 
 async def run_single_test(runner: E2ETestRunner, test_case: TestCase, test_number: int) -> bool:
@@ -267,7 +276,7 @@ def main() -> None:
         "--test",
         choices=[str(i) for i in range(1, len(TEST_CASES) + 1)] + ["all"],
         default="1",
-        help="要运行的测试: 1=Body round-trip, 2=Body 导出, all=全部",
+        help="要运行的测试: 1=选区片段 round-trip, 2=Body 只读导出, all=全部",
     )
     parser.add_argument("--no-auto-open", action="store_true", help="不自动打开文档")
     parser.add_argument("--always-cleanup", action="store_true", help="无论成功失败都清理")

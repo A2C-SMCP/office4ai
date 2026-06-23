@@ -15,8 +15,13 @@ from pydantic import ValidationError
 
 from office4ai.environment.workspace.dtos.common import request_registry
 from office4ai.environment.workspace.dtos.word import (
+    WordGetDocumentFileRequest,
+    WordGetDocumentFileResponse,
     WordGetOoxmlRequest,
     WordGetOoxmlResponse,
+    WordInsertDocumentFileRequest,
+    WordInsertDocumentFileResponse,
+    WordInsertDocumentFileResult,
     WordInsertOoxmlRequest,
     WordInsertOoxmlResponse,
     WordInsertOoxmlResult,
@@ -182,4 +187,92 @@ class TestOoxmlResponses:
         result = WordInsertOoxmlResult.model_validate({"scope": "body", "insertLocation": "End"})
         payload = result.model_dump(by_alias=True)
         assert payload["insertLocation"] == "End"
+        assert "insert_location" not in payload
+
+
+class TestDocumentFileRequests:
+    def test_registry_has_document_file_events(self) -> None:
+        assert request_registry.contains("word:get:documentFile")
+        assert request_registry.contains("word:insert:documentFile")
+
+    def test_registry_resolves_to_dto_classes(self) -> None:
+        assert request_registry.get("word:get:documentFile") is WordGetDocumentFileRequest
+        assert request_registry.get("word:insert:documentFile") is WordInsertDocumentFileRequest
+
+    def test_get_request_has_no_extra_fields(self) -> None:
+        # whole-document export: only the BaseRequest envelope, no scope/selection
+        req = WordGetDocumentFileRequest.build(document_uri="file:///t.docx")
+        payload = req.to_payload()
+        assert payload["documentUri"] == "file:///t.docx"
+        assert "scope" not in payload
+
+    def test_insert_minimal_request(self) -> None:
+        req = WordInsertDocumentFileRequest.build(
+            document_uri="file:///t.docx", base64="UEsDBBQ=", insert_location="Replace"
+        )
+        payload = req.to_payload()
+        assert payload["base64"] == "UEsDBBQ="
+        assert payload["insertLocation"] == "Replace"
+        assert payload["scope"] == "body"  # whole-doc insert defaults to body
+        assert "insert_location" not in payload
+
+    def test_insert_base64_required(self) -> None:
+        with pytest.raises(ValidationError):
+            WordInsertDocumentFileRequest.build(document_uri="file:///t.docx", insert_location="End")
+
+    def test_insert_base64_non_empty(self) -> None:
+        with pytest.raises(ValidationError):
+            WordInsertDocumentFileRequest.build(document_uri="file:///t.docx", base64="", insert_location="End")
+
+    def test_insert_invalid_location_rejected(self) -> None:
+        with pytest.raises(ValidationError):
+            WordInsertDocumentFileRequest.build(
+                document_uri="file:///t.docx", base64="UEsDBBQ=", insert_location="Before"
+            )
+
+    def test_insert_accepts_snake_and_camel(self) -> None:
+        req = WordInsertDocumentFileRequest.model_validate(
+            {
+                "requestId": "r1",
+                "documentUri": "file:///t.docx",
+                "base64": "UEsDBBQ=",
+                "insert_location": "Start",
+                "scope": "selection",
+            }
+        )
+        assert req.insert_location == "Start"
+        assert req.scope == "selection"
+
+
+class TestDocumentFileResponses:
+    def test_get_response_deserializes_success(self) -> None:
+        resp = WordGetDocumentFileResponse.model_validate(
+            {
+                "requestId": "r1",
+                "success": True,
+                "data": {"base64": "UEsDBBQ="},
+                "timestamp": 123,
+            }
+        )
+        assert resp.success is True
+        assert resp.data is not None
+        assert resp.data.base64 == "UEsDBBQ="
+
+    def test_insert_response_deserializes_camel_case(self) -> None:
+        resp = WordInsertDocumentFileResponse.model_validate(
+            {
+                "requestId": "r1",
+                "success": True,
+                "data": {"scope": "body", "insertLocation": "Replace"},
+                "timestamp": 123,
+            }
+        )
+        assert resp.data is not None
+        assert resp.data.scope == "body"
+        assert resp.data.insert_location == "Replace"
+
+    def test_insert_result_round_trips_camel_case(self) -> None:
+        result = WordInsertDocumentFileResult.model_validate({"scope": "selection", "insertLocation": "Start"})
+        payload = result.model_dump(by_alias=True)
+        assert payload["insertLocation"] == "Start"
         assert "insert_location" not in payload

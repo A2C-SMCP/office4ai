@@ -62,15 +62,18 @@ class WordInsertOoxmlTool(BaseTool):
     @property
     def description(self) -> str:
         return (
-            "Insert an OOXML fragment (Flat OPC / WordprocessingML) into a Word document at the current "
+            "Insert an OOXML *fragment* (Flat OPC / WordprocessingML) into a Word document at the current "
             "selection or whole body, as REAL native content (runs, styles, tables, content controls). "
-            "Pass `source_path` — a filesystem path to a Flat OPC XML *string* file (typically produced by "
-            "word_get_ooxml, or authored offline); the Server reads its text and sends it. Do NOT pass a "
-            "binary .docx or base64 — only a Flat OPC XML string is accepted. `insert_location` is "
-            "Replace/Start/End relative to the anchor (`scope` = selection or body). Malformed OOXML is "
-            "rejected cleanly by Word without corrupting the document. For small per-element edits prefer "
-            "word_insert_text / word_replace_text. Requires the document open in Word via the Add-In "
-            "(WordApi 1.1)."
+            "IMPORTANT: `ooxml` must be a FRAGMENT (selection-level content), NOT a whole-document package "
+            "— Office.js insertOoxml rejects whole-document OOXML (e.g. the `scope=body` output of "
+            "word_get_ooxml) with GeneralException. To insert/round-trip a WHOLE document, use "
+            "word_insert_document_file instead. Pass `source_path` — a filesystem path to a Flat OPC XML "
+            "*string* file (typically a fragment from word_get_ooxml `scope=selection`, or authored "
+            "offline); the Server reads its text and sends it. Do NOT pass a binary .docx or base64 — only "
+            "a Flat OPC XML string is accepted. `insert_location` is Replace/Start/End relative to the "
+            "anchor (`scope` = selection or body). Malformed OOXML is rejected cleanly by Word without "
+            "corrupting the document. For small per-element edits prefer word_insert_text / "
+            "word_replace_text. Requires the document open in Word via the Add-In (WordApi 1.1)."
         )
 
     @property
