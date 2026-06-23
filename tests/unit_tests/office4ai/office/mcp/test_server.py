@@ -38,11 +38,12 @@ class TestOfficeMCPServer:
             config = MCPServerConfig()
             server = OfficeMCPServer(config)
 
-            # 25 Word (21 + 4 OASP v0.2.0 table tools) + 24 PPT (21 + 3 OASP v0.2.0 chart tools)
+            # 27 Word (21 + 4 OASP v0.2.0 table tools + 2 OASP v0.3.0 OOXML round-trip #46)
+            # + 24 PPT (21 + 3 OASP v0.2.0 chart tools)
             # + 37 Excel (OASP 0.3.0 Draft: #18 read slice 3 + #19 Range CRUD/公式 7
             #   + #20 Format/条件格式/合并 6 + #21 Worksheet 管理 5 + #22 Table 操作 6
-            #   + #23 Chart 操作 4 + #24 PivotTable 操作 3 + #25 Find&Filter 操作 3) = 86
-            assert len(server.tools) == 86
+            #   + #23 Chart 操作 4 + #24 PivotTable 操作 3 + #25 Find&Filter 操作 3) = 88
+            assert len(server.tools) == 88
 
             expected_tools = [
                 # Word Get tools
@@ -70,6 +71,9 @@ class TestOfficeMCPServer:
                 "word_update_table_format",
                 # Word Export tool
                 "word_export_content",
+                # Word OOXML fragment round-trip tools (OASP /word Draft, v0.3.0, #46)
+                "word_get_ooxml",
+                "word_insert_ooxml",
                 # Word Comment tools
                 "word_get_comments",
                 "word_insert_comment",

@@ -1790,6 +1790,106 @@ class WordUpdateTableFormatResponse(SocketIOBaseModel):
     timestamp: int = Field(..., alias="timestamp", description="Server timestamp in milliseconds")
 
 
+# ============================================================================
+# OOXML Carrier DTOs (OASP /word Draft, v0.3.0)
+# ============================================================================
+# Low-level OOXML-fragment round-trip transport primitives for Word. Unlike the
+# PPT whole-slide carrier (a base64 .pptx package), Word OOXML is a plain Flat OPC /
+# WordprocessingML *string* — produced by Range.getOoxml() and consumed by
+# Range.insertOoxml(). These are transport primitives, NOT for routine AI use.
+#
+# Contract locked with office-editor4ai (cross-ask, office4ai#46):
+#   - carrier: Flat OPC XML string (UTF-8), NOT base64 / NOT a binary .docx
+#   - get response echoes the *effective* scope (selection→body fallback is visible)
+#   - insertLocation maps to the PascalCase Word.InsertLocation enum on the Add-In
+# Spec: events-word.md §word:get:ooxml / §word:insert:ooxml.
+
+# camelCase on the wire (consistent with other word events); the Add-In maps scope
+# to the selection/body Range and insertLocation to Word.InsertLocation internally.
+WordOoxmlScope = Literal["selection", "body"]
+WordInsertLocation = Literal["Replace", "Start", "End"]
+
+
+class WordGetOoxmlRequest(BaseRequest):
+    """Export the OOXML of the current selection or whole body (word:get:ooxml).
+
+    Returns a Flat OPC / WordprocessingML string reflecting the document's live
+    state (including unsaved local edits). When scope=selection but nothing is
+    selected, the Add-In falls back to the whole body and the response echoes the
+    effective scope ("body").
+    """
+
+    event_name: ClassVar[str] = "word:get:ooxml"
+
+    scope: WordOoxmlScope = Field(
+        default="selection",
+        description='Export scope: "selection" (current selection; falls back to body when empty) '
+        'or "body" (whole document)',
+    )
+
+
+class WordInsertOoxmlRequest(BaseRequest):
+    """Insert a Flat OPC / WordprocessingML OOXML fragment (word:insert:ooxml).
+
+    The fragment is a plain XML *string* (NOT base64, NOT a binary .docx). Malformed
+    markup is rejected cleanly inside Word.run without corrupting the document.
+    """
+
+    event_name: ClassVar[str] = "word:insert:ooxml"
+
+    ooxml: str = Field(
+        ...,
+        min_length=1,
+        description="OOXML fragment as a Flat OPC / WordprocessingML string (UTF-8; no base64, no binary .docx)",
+    )
+    insert_location: WordInsertLocation = Field(
+        ...,
+        alias="insertLocation",
+        description="Where to insert relative to the anchor: Replace, Start, or End",
+    )
+    scope: WordOoxmlScope = Field(
+        default="selection",
+        description='Insert anchor: "selection" (current selection) or "body" (whole document body)',
+    )
+
+
+class WordGetOoxmlResult(SocketIOBaseModel):
+    """Result payload for word:get:ooxml (the exported OOXML string + effective scope)."""
+
+    scope: WordOoxmlScope = Field(
+        ...,
+        description='Effective export scope actually used ("body" when a selection request fell back)',
+    )
+    ooxml: str = Field(..., description="Exported OOXML as a Flat OPC / WordprocessingML string")
+
+
+class WordGetOoxmlResponse(SocketIOBaseModel):
+    """Response for word:get:ooxml operation."""
+
+    request_id: str = Field(..., alias="requestId", description="Request ID being responded to")
+    success: bool = Field(..., alias="success", description="Whether the operation succeeded")
+    data: WordGetOoxmlResult | None = Field(default=None, alias="data", description="Exported OOXML result")
+    error: Optional["ErrorResponse"] = Field(default=None, alias="error", description="Error details if failed")
+    timestamp: int = Field(..., alias="timestamp", description="Server timestamp in milliseconds")
+
+
+class WordInsertOoxmlResult(SocketIOBaseModel):
+    """Result payload for word:insert:ooxml (minimal return — anchor only, no post-write snapshot)."""
+
+    scope: WordOoxmlScope = Field(..., description="Insert anchor scope used")
+    insert_location: WordInsertLocation = Field(..., alias="insertLocation", description="Insert location used")
+
+
+class WordInsertOoxmlResponse(SocketIOBaseModel):
+    """Response for word:insert:ooxml operation."""
+
+    request_id: str = Field(..., alias="requestId", description="Request ID being responded to")
+    success: bool = Field(..., alias="success", description="Whether the operation succeeded")
+    data: WordInsertOoxmlResult | None = Field(default=None, alias="data", description="Insert result")
+    error: Optional["ErrorResponse"] = Field(default=None, alias="error", description="Error details if failed")
+    timestamp: int = Field(..., alias="timestamp", description="Server timestamp in milliseconds")
+
+
 # Resolve forward references
 GetCommentsOptions.model_rebuild()
 CommentReplyData.model_rebuild()
@@ -1845,3 +1945,9 @@ TableStyleOptions.model_rebuild()
 TableBorderOptions.model_rebuild()
 UpdateTableFormatResult.model_rebuild()
 WordUpdateTableFormatResponse.model_rebuild()
+
+# OOXML carrier responses (OASP /word Draft, v0.3.0)
+WordGetOoxmlResult.model_rebuild()
+WordGetOoxmlResponse.model_rebuild()
+WordInsertOoxmlResult.model_rebuild()
+WordInsertOoxmlResponse.model_rebuild()

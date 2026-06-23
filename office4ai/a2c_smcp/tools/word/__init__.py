@@ -6,6 +6,7 @@ from office4ai.a2c_smcp.tools.word.export_content import WordExportContentTool
 from office4ai.a2c_smcp.tools.word.get_comments import WordGetCommentsTool
 from office4ai.a2c_smcp.tools.word.get_document_stats import WordGetDocumentStatsTool
 from office4ai.a2c_smcp.tools.word.get_document_structure import WordGetDocumentStructureTool
+from office4ai.a2c_smcp.tools.word.get_ooxml import WordGetOoxmlTool
 from office4ai.a2c_smcp.tools.word.get_selected_content import WordGetSelectedContentTool
 from office4ai.a2c_smcp.tools.word.get_selection import WordGetSelectionTool
 from office4ai.a2c_smcp.tools.word.get_styles import WordGetStylesTool
@@ -13,6 +14,7 @@ from office4ai.a2c_smcp.tools.word.get_visible_content import WordGetVisibleCont
 from office4ai.a2c_smcp.tools.word.insert_comment import WordInsertCommentTool
 from office4ai.a2c_smcp.tools.word.insert_equation import WordInsertEquationTool
 from office4ai.a2c_smcp.tools.word.insert_image import WordInsertImageTool
+from office4ai.a2c_smcp.tools.word.insert_ooxml import WordInsertOoxmlTool
 from office4ai.a2c_smcp.tools.word.insert_table import WordInsertTableTool
 from office4ai.a2c_smcp.tools.word.insert_text import WordInsertTextTool
 from office4ai.a2c_smcp.tools.word.insert_toc import WordInsertTOCTool
@@ -52,6 +54,9 @@ __all__ = [
     "WordUpdateTableFormatTool",
     # Export tool
     "WordExportContentTool",
+    # OOXML fragment round-trip tools (OASP /word Draft, v0.3.0)
+    "WordGetOoxmlTool",
+    "WordInsertOoxmlTool",
     # Comment tools
     "WordGetCommentsTool",
     "WordInsertCommentTool",

@@ -48,6 +48,7 @@ class OfficeMCPServer(BaseMCPServer):
             WordGetCommentsTool,
             WordGetDocumentStatsTool,
             WordGetDocumentStructureTool,
+            WordGetOoxmlTool,
             WordGetSelectedContentTool,
             WordGetSelectionTool,
             WordGetStylesTool,
@@ -55,6 +56,7 @@ class OfficeMCPServer(BaseMCPServer):
             WordInsertCommentTool,
             WordInsertEquationTool,
             WordInsertImageTool,
+            WordInsertOoxmlTool,
             WordInsertTableTool,
             WordInsertTextTool,
             WordInsertTOCTool,
@@ -95,6 +97,9 @@ class OfficeMCPServer(BaseMCPServer):
             WordUpdateTableFormatTool(self.workspace),
             # Export tool
             WordExportContentTool(self.workspace),
+            # OOXML fragment round-trip tools (OASP /word Draft, v0.3.0)
+            WordGetOoxmlTool(self.workspace),
+            WordInsertOoxmlTool(self.workspace),
             # Comment tools
             WordGetCommentsTool(self.workspace),
             WordInsertCommentTool(self.workspace),
