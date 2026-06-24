@@ -38,8 +38,11 @@ class TestOfficeMCPServer:
             config = MCPServerConfig()
             server = OfficeMCPServer(config)
 
-            # 25 Word (21 + 4 OASP v0.2.0 table tools) + 24 PPT (21 + 3 OASP v0.2.0 chart tools) = 49
-            assert len(server.tools) == 49
+            # 25 Word (21 + 4 OASP v0.2.0 table tools) + 24 PPT (21 + 3 OASP v0.2.0 chart tools)
+            # + 37 Excel (OASP 0.3.0 Draft: #18 read slice 3 + #19 Range CRUD/公式 7
+            #   + #20 Format/条件格式/合并 6 + #21 Worksheet 管理 5 + #22 Table 操作 6
+            #   + #23 Chart 操作 4 + #24 PivotTable 操作 3 + #25 Find&Filter 操作 3) = 86
+            assert len(server.tools) == 86
 
             expected_tools = [
                 # Word Get tools
@@ -103,6 +106,51 @@ class TestOfficeMCPServer:
                 "ppt_delete_slide",
                 "ppt_move_slide",
                 "ppt_goto_slide",
+                # Excel state-awareness read tools (OASP /excel Draft 0.3.0, #18 Foundation)
+                "excel_get_workbook_info",
+                "excel_get_worksheet_info",
+                "excel_get_selected_range",
+                # Excel Range CRUD + 公式 tools (OASP /excel Draft 0.3.0, #19)
+                "excel_get_range",
+                "excel_set_range",
+                "excel_clear_range",
+                "excel_copy_range",
+                "excel_delete_range",
+                "excel_insert_range",
+                "excel_set_formula",
+                # Excel Format / 条件格式 / 合并单元格 tools (OASP /excel Draft 0.3.0, #20)
+                "excel_get_range_format",
+                "excel_set_range_format",
+                "excel_add_conditional_format",
+                "excel_clear_conditional_format",
+                "excel_merge_cells",
+                "excel_unmerge_cells",
+                # Excel Worksheet 管理 tools (OASP /excel Draft 0.3.0, #21)
+                "excel_get_worksheets",
+                "excel_add_worksheet",
+                "excel_delete_worksheet",
+                "excel_rename_worksheet",
+                "excel_activate_worksheet",
+                # Excel Table 操作 tools (OASP /excel Draft 0.3.0, #22)
+                "excel_insert_table",
+                "excel_get_table",
+                "excel_get_tables",
+                "excel_add_table_row",
+                "excel_delete_table_row",
+                "excel_sort_table",
+                # Excel Chart 操作 tools (OASP /excel Draft 0.3.0, #23)
+                "excel_insert_chart",
+                "excel_get_charts",
+                "excel_update_chart",
+                "excel_delete_chart",
+                # Excel PivotTable 操作 tools (OASP /excel Draft 0.3.0, #24)
+                "excel_insert_pivot_table",
+                "excel_get_pivot_tables",
+                "excel_delete_pivot_table",
+                # Excel Find & Filter 操作 tools (OASP /excel Draft 0.3.0, #25)
+                "excel_find_values",
+                "excel_set_auto_filter",
+                "excel_clear_auto_filter",
             ]
             for tool_name in expected_tools:
                 assert tool_name in server.tools, f"Tool {tool_name} not registered"

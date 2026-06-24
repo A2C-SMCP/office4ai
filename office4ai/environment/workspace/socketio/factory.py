@@ -45,7 +45,6 @@ def build_sio_server(config: SocketIOConfig = default_config) -> socketio.AsyncS
 
     sio.register_namespace(WordNamespace())
     sio.register_namespace(PptNamespace())
-    # Excel: 当前仅握手，Client→Server 事件 handler 待后续补充
     sio.register_namespace(ExcelNamespace())
 
     logger.info(f"Socket.IO server built with namespaces: {', '.join(config.namespaces)}")

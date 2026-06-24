@@ -4,11 +4,14 @@ Test ExcelNamespace functionality
 测试 ExcelNamespace 的握手能力。
 
 Architecture Note:
-    ExcelNamespace 当前仅实装握手（继承 BaseNamespace.on_connect / on_disconnect），
-    不包含任何 Client → Server 事件处理器——对应事件 handler 将在后续迭代中逐步补充。
+    ExcelNamespace 仅实装握手（继承 BaseNamespace.on_connect / on_disconnect）。
 
-    Server → Client 的命令（excel:get:*, excel:set:*, excel:insert:* 等）通过 MCP
-    BaseTool + OfficeWorkspace.emit_to_document() 直接发送，不经过 namespace handler。
+    **无 Client → Server 事件上报 handler**：OASP 0.3.0 events-excel.md 定义的 37 个 Excel
+    事件全部是 Server → AddIn（请求-响应），不存在 excel:event:* 事件报告类（与 /word 的
+    word:event:*、/ppt 的 ppt:event:* 不同）。故本命名空间不实现任何事件上报 handler。
+
+    Server → Client 的命令（excel:get:* 等）通过 MCP BaseTool +
+    OfficeWorkspace.emit_to_document() 直接发送，不经过 namespace handler。
 """
 
 from typing import Any
@@ -57,11 +60,12 @@ class TestExcelNamespace:
         assert hasattr(excel_namespace, "on_connect")
         assert hasattr(excel_namespace, "on_disconnect")
 
-    def test_namespace_has_no_event_handlers_yet(self, excel_namespace: ExcelNamespace) -> None:
-        """Excel 事件处理器尚未实装——该断言在后续补充 event handler 时需同步更新"""
-        # Client → Server 事件 handler 尚未实装
+    def test_namespace_has_no_excel_event_or_command_handlers(self, excel_namespace: ExcelNamespace) -> None:
+        """OASP 0.3.0 未定义 excel:event:* 上报事件，故无事件 handler；命令走 RPC 故无命令 handler。"""
+        # 事件上报 handler 不应存在（协议未定义 excel:event:*）
         assert not hasattr(excel_namespace, "on_excel_event_selectionChanged")
         assert not hasattr(excel_namespace, "on_excel_event_worksheetActivated")
+        assert not hasattr(excel_namespace, "on_excel_event_workbookModified")
 
         # 命令处理器本就不应存在（走 MCP BaseTool + sio.call() RPC 路径）
         assert not hasattr(excel_namespace, "on_excel_get_selectedRange")

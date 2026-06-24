@@ -574,6 +574,9 @@ tests/unit_tests/
 | 19 | 错误处理 | 统一 error string | 结构化错误码 |
 | 20 | Workspace 粒度 | 一个 OfficeWorkspace 管全部 | 每平台独立 |
 | 21 | Tool 文件位置 | a2c_smcp/tools/word/ | office/mcp/tools/ |
+| 22 | Excel 写操作返回 | 最小返回 + write-then-read (Plan A) | Server 侧补读回填 (Plan B) |
+
+> 决策 22 详见 [`docs/discussions/excel-minimal-return-decision.md`](discussions/excel-minimal-return-decision.md)（milestone #3 / issue #26）。约定登记于基类 `BaseTool.format_result()` docstring（写工具继承的单一源）。
 
 ---
 

@@ -121,8 +121,16 @@ class BaseTool(ABC):
         默认返回格式化 hook. 子类可 override.
         Default result formatting hook. Subclass can override.
 
-        默认行为: 返回 JSON 结构.
-        获取类工具可 override 返回纯文本/Markdown.
+        默认行为: 返回 JSON 结构 ``{success, data}`` (失败 ``{success, error}``).
+        获取类工具可 override 返回纯文本/Markdown 摘要 (``{success, content, data}``).
+
+        写操作「最小返回」约定 (office4ai #26 决策, Plan A):
+            写操作工具沿用本默认实现，透传 Add-In/协议定义的**最小返回**——只回操作锚点
+            (如 ``set:range`` → ``{address}``)，**不**回写入后的数据快照。这与可组合性不
+            冲突：可组合性由「独立读工具 + Agent 编排」承载 (dev_plan「最小但可组合的动作
+            单元」)，而非由胖返回值承载。Agent 若需写后状态，应再调一次对应读工具
+            (write-then-read)。决策与读工具映射表见
+            ``docs/discussions/excel-minimal-return-decision.md``。
         """
         if not obs.success:
             return {"success": False, "error": obs.error or "Unknown error"}

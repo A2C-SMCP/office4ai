@@ -55,11 +55,14 @@ class TestMCPProtocol:
                 # 获取工具列表 | Get tools list
                 tools_result = await session.list_tools()
                 # 25 Word (21 + 4 OASP v0.2.0 table tools) + 24 PPT (21 + 3 OASP v0.2.0 chart tools)
-                assert len(tools_result.tools) == 49
+                # + 37 Excel (OASP 0.3.0 Draft: #18 read slice 3 + #19 Range CRUD/公式 7
+                #   + #20 Format/条件格式/合并 6 + #21 Worksheet 管理 5 + #22 Table 操作 6
+                #   + #23 Chart 操作 4 + #24 PivotTable 操作 3 + #25 Find&Filter 操作 3) = 86
+                assert len(tools_result.tools) == 86
 
                 # 验证工具名称前缀 | Verify tool name prefix
                 tool_names = {t.name for t in tools_result.tools}
-                assert all(name.startswith(("word_", "ppt_")) for name in tool_names)
+                assert all(name.startswith(("word_", "ppt_", "excel_")) for name in tool_names)
 
     async def test_list_resources(self):
         """测试 list_resources 返回已注册资源 | Test list_resources returns registered resources"""

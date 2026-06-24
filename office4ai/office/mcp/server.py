@@ -173,7 +173,98 @@ class OfficeMCPServer(BaseMCPServer):
 
         logger.info(f"已注册 {len(ppt_tools)} 个 PPT 工具 | Registered {len(ppt_tools)} PPT tools")
 
-        # Excel 工具 (未来) | Excel tools (future)
+        from office4ai.a2c_smcp.tools.excel import (
+            ExcelActivateWorksheetTool,
+            ExcelAddConditionalFormatTool,
+            ExcelAddTableRowTool,
+            ExcelAddWorksheetTool,
+            ExcelClearAutoFilterTool,
+            ExcelClearConditionalFormatTool,
+            ExcelClearRangeTool,
+            ExcelCopyRangeTool,
+            ExcelDeleteChartTool,
+            ExcelDeletePivotTableTool,
+            ExcelDeleteRangeTool,
+            ExcelDeleteTableRowTool,
+            ExcelDeleteWorksheetTool,
+            ExcelFindValuesTool,
+            ExcelGetChartsTool,
+            ExcelGetPivotTablesTool,
+            ExcelGetRangeFormatTool,
+            ExcelGetRangeTool,
+            ExcelGetSelectedRangeTool,
+            ExcelGetTablesTool,
+            ExcelGetTableTool,
+            ExcelGetWorkbookInfoTool,
+            ExcelGetWorksheetInfoTool,
+            ExcelGetWorksheetsTool,
+            ExcelInsertChartTool,
+            ExcelInsertPivotTableTool,
+            ExcelInsertRangeTool,
+            ExcelInsertTableTool,
+            ExcelMergeCellsTool,
+            ExcelRenameWorksheetTool,
+            ExcelSetAutoFilterTool,
+            ExcelSetFormulaTool,
+            ExcelSetRangeFormatTool,
+            ExcelSetRangeTool,
+            ExcelSortTableTool,
+            ExcelUnmergeCellsTool,
+            ExcelUpdateChartTool,
+        )
+
+        excel_tools = [
+            # State-awareness read tools (OASP /excel Draft 0.3.0, issue #18 Foundation)
+            ExcelGetWorkbookInfoTool(self.workspace),
+            ExcelGetWorksheetInfoTool(self.workspace),
+            ExcelGetSelectedRangeTool(self.workspace),
+            # Range CRUD + 公式 (OASP /excel Draft 0.3.0, issue #19)
+            ExcelGetRangeTool(self.workspace),
+            ExcelSetRangeTool(self.workspace),
+            ExcelClearRangeTool(self.workspace),
+            ExcelCopyRangeTool(self.workspace),
+            ExcelDeleteRangeTool(self.workspace),
+            ExcelInsertRangeTool(self.workspace),
+            ExcelSetFormulaTool(self.workspace),
+            # Format / 条件格式 / 合并单元格 (OASP /excel Draft 0.3.0, issue #20)
+            ExcelGetRangeFormatTool(self.workspace),
+            ExcelSetRangeFormatTool(self.workspace),
+            ExcelAddConditionalFormatTool(self.workspace),
+            ExcelClearConditionalFormatTool(self.workspace),
+            ExcelMergeCellsTool(self.workspace),
+            ExcelUnmergeCellsTool(self.workspace),
+            # Worksheet 管理 (OASP /excel Draft 0.3.0, issue #21)
+            ExcelGetWorksheetsTool(self.workspace),
+            ExcelAddWorksheetTool(self.workspace),
+            ExcelDeleteWorksheetTool(self.workspace),
+            ExcelRenameWorksheetTool(self.workspace),
+            ExcelActivateWorksheetTool(self.workspace),
+            # Table 操作 (OASP /excel Draft 0.3.0, issue #22)
+            ExcelInsertTableTool(self.workspace),
+            ExcelGetTableTool(self.workspace),
+            ExcelGetTablesTool(self.workspace),
+            ExcelAddTableRowTool(self.workspace),
+            ExcelDeleteTableRowTool(self.workspace),
+            ExcelSortTableTool(self.workspace),
+            # Chart 操作 (OASP /excel Draft 0.3.0, issue #23)
+            ExcelInsertChartTool(self.workspace),
+            ExcelGetChartsTool(self.workspace),
+            ExcelUpdateChartTool(self.workspace),
+            ExcelDeleteChartTool(self.workspace),
+            # PivotTable 操作 (OASP /excel Draft 0.3.0, issue #24)
+            ExcelInsertPivotTableTool(self.workspace),
+            ExcelGetPivotTablesTool(self.workspace),
+            ExcelDeletePivotTableTool(self.workspace),
+            # Find & Filter 操作 (OASP /excel Draft 0.3.0, issue #25)
+            ExcelFindValuesTool(self.workspace),
+            ExcelSetAutoFilterTool(self.workspace),
+            ExcelClearAutoFilterTool(self.workspace),
+        ]
+
+        for tool in excel_tools:
+            self.tools[tool.name] = tool
+
+        logger.info(f"已注册 {len(excel_tools)} 个 Excel 工具 | Registered {len(excel_tools)} Excel tools")
 
     def _register_resources(self) -> None:
         """注册资源 | Register resources"""
