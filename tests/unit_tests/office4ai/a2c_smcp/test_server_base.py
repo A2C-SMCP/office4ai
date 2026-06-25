@@ -209,9 +209,7 @@ class TestCallToolContentDispatch:
         tool = PptGetSlideScreenshotTool(ws)
         server.tools[tool.name] = tool
 
-        call_result = await self._call(
-            server, tool.name, {"document_uri": "file:///t.pptx", "slideIndex": 0}
-        )
+        call_result = await self._call(server, tool.name, {"document_uri": "file:///t.pptx", "slideIndex": 0})
 
         assert call_result.isError is False
         assert len(call_result.content) == 1
@@ -228,9 +226,7 @@ class TestCallToolContentDispatch:
         tool = PptGetSlideInfoTool(ws)
         server.tools[tool.name] = tool
 
-        call_result = await self._call(
-            server, tool.name, {"document_uri": "file:///t.pptx", "slideIndex": 0}
-        )
+        call_result = await self._call(server, tool.name, {"document_uri": "file:///t.pptx", "slideIndex": 0})
 
         assert call_result.isError is False
         assert len(call_result.content) == 1
