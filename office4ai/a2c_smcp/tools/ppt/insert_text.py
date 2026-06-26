@@ -29,7 +29,9 @@ class PptInsertTextTool(BaseTool):
     def description(self) -> str:
         return (
             "Insert a text box on a PowerPoint slide. "
-            "Supports specifying position, size, font settings, and colors. "
+            "Supports position, size, font settings, font color, and optional fill/border. "
+            "By default the text box has NO fill and NO border (clean look); set fillColor / "
+            "borderColor (hex) to add them, or pass 'none' / borderWidth=0 to keep them off. "
             "Default insertion is on the current slide."
         )
 
