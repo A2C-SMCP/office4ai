@@ -131,7 +131,8 @@ class BaseMCPServer(ABC):
                 affected = self._category_to_resource_uris(tool.category)
                 if affected:
                     await self.subscription_manager.notify_many(affected)
-                return [{"type": "text", "text": str(result)}]
+                # office4ai #42: 委托工具决定 MCP 内容类型 (截图等发 image, 避免 base64 内联 text 撑爆上下文)
+                return tool.to_mcp_content(result)
             except Exception as e:
                 logger.exception(f"工具执行失败 | Tool execution failed: {e}")
                 return [{"type": "text", "text": f"工具执行失败 | Tool execution failed: {e}"}]
