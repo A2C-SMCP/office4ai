@@ -7,9 +7,12 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
+from typing import Any
 from urllib.parse import parse_qs, urlparse
 
 from loguru import logger
+from mcp.server.lowlevel.helper_types import ReadResourceContents
+from mcp.types import Resource
 
 
 def parse_window_uri_params(
@@ -86,9 +89,45 @@ class BaseResource(ABC):
     def mime_type(self) -> str:  # pragma: no cover
         raise NotImplementedError
 
+    @property
+    def meta(self) -> dict[str, Any] | None:
+        """Optional MCP ``Resource._meta`` payload.
+
+        Default ``None`` (window resources). ``skill://`` roots override to carry
+        ``{"source": "resources", ...}`` so the A2C Computer treats them as SKILL
+        roots to materialize (skill.md §3 / §11).
+        """
+        return None
+
+    def list_entries(self) -> list[Resource]:
+        """MCP ``resources/list`` entries this resource contributes.
+
+        Default: a single ``Resource``. Multi-file resources (e.g. ``SkillResource``
+        in ``resources`` source mode) override to expand into a root + sub-resources.
+        """
+        payload: dict[str, Any] = {
+            "uri": self.uri,
+            "name": self.name,
+            "description": self.description,
+            "mimeType": self.mime_type,
+        }
+        meta = self.meta
+        if meta is not None:
+            payload["_meta"] = meta
+        return [Resource.model_validate(payload)]
+
     def update_from_uri(self, uri: str) -> None:
         return
 
     @abstractmethod
     async def read(self) -> str:  # pragma: no cover
         raise NotImplementedError
+
+    async def read_content(self, uri: str) -> list[ReadResourceContents]:
+        """MCP ``resources/read`` content for ``uri``.
+
+        Default wraps :meth:`read` as a single text block with this resource's mime.
+        Multi-file resources override to serve per-relative-path text/binary content.
+        """
+        text = await self.read()
+        return [ReadResourceContents(content=text, mime_type=self.mime_type)]

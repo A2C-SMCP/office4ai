@@ -7,10 +7,13 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
+from collections.abc import Iterable
 from typing import Any
+from urllib.parse import urlparse
 
 from loguru import logger
 from mcp.server import NotificationOptions, Server
+from mcp.server.lowlevel.helper_types import ReadResourceContents
 from mcp.server.sse import SseServerTransport
 from mcp.server.stdio import stdio_server
 from mcp.server.streamable_http_manager import StreamableHTTPSessionManager
@@ -99,6 +102,27 @@ class BaseMCPServer(ABC):
         """Map a tool category to the resource URIs it affects."""
         return self._CATEGORY_URI_MAP.get(category, [])
 
+    def _resolve_resource(self, uri_str: str) -> BaseResource | None:
+        """Resolve a read URI to its owning resource.
+
+        Exact ``base_uri`` match handles window resources and skill:// roots. A
+        skill:// **sub-path** (``skill://<host>/<leaf>/<rel>``) has no exact key, so
+        fall back to a prefix match against registered skill roots — the owning
+        ``SkillResource`` then serves the specific relative path (skill.md §3
+        ``resources`` mode). The trailing ``/`` guards against sibling-prefix
+        collisions (``.../leaf`` must not capture ``.../leaf-extra/...``).
+        """
+        parsed = urlparse(uri_str)
+        base_uri = f"{parsed.scheme}://{parsed.netloc}{parsed.path}"
+        resource = self.resources.get(base_uri)
+        if resource is not None:
+            return resource
+        if parsed.scheme == "skill":
+            for candidate in self.resources.values():
+                if uri_str.startswith(candidate.base_uri + "/"):
+                    return candidate
+        return None
+
     async def _async_startup(self) -> None:  # noqa: B027
         """async 启动钩子, 子类可 override | Async startup hook, subclass can override"""
         pass
@@ -139,15 +163,13 @@ class BaseMCPServer(ABC):
 
         @self.server.list_resources()  # type: ignore[no-untyped-call]
         async def list_resources() -> list[Resource]:
-            return [
-                Resource(
-                    uri=AnyUrl(resource.uri),
-                    name=resource.name,
-                    description=resource.description,
-                    mimeType=resource.mime_type,
-                )
-                for resource in self.resources.values()
-            ]
+            # Each resource contributes 1+ entries: window resources yield a single
+            # Resource; a skill:// root in `resources` mode expands into a root
+            # (carrying _meta.source) plus one sub-resource per packaged file.
+            entries: list[Resource] = []
+            for resource in self.resources.values():
+                entries.extend(resource.list_entries())
+            return entries
 
         @self.server.subscribe_resource()  # type: ignore[no-untyped-call]
         async def subscribe_resource(uri: AnyUrl) -> None:
@@ -168,22 +190,20 @@ class BaseMCPServer(ABC):
             logger.debug(f"Client unsubscribed from resource: {uri}")
 
         @self.server.read_resource()  # type: ignore[no-untyped-call]
-        async def read_resource(uri: Any) -> str:
-            from urllib.parse import urlparse
-
+        async def read_resource(uri: Any) -> Iterable[ReadResourceContents]:
             # Convert AnyUrl to string if needed
             uri_str = str(uri)
 
-            parsed = urlparse(uri_str)
-            base_uri = f"{parsed.scheme}://{parsed.netloc}{parsed.path}"
-            resource = self.resources.get(base_uri)
+            resource = self._resolve_resource(uri_str)
             if not resource:
-                raise ValueError(f"未找到资源 | Resource not found: {base_uri}")
+                raise ValueError(f"未找到资源 | Resource not found: {uri_str}")
 
+            # Window resources parse query params (priority/fullscreen) from the exact
+            # URI; skill:// sub-paths have no params (update_from_uri is a no-op there).
             if uri_str != resource.uri:
                 resource.update_from_uri(uri_str)
 
-            return await resource.read()
+            return await resource.read_content(uri_str)
 
     async def run(self) -> None:
         await self._async_startup()

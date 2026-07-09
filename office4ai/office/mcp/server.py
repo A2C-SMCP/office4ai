@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 import asyncio
+import os
 import shutil
 import sys
 from pathlib import Path
@@ -30,14 +31,30 @@ class OfficeMCPServer(BaseMCPServer):
     Socket.IO Server 的生命周期与 MCP Server 一致。
     """
 
-    def __init__(self, config: MCPServerConfig, cert_dir: Path | None = None) -> None:
+    # authoring SKILL 包分发根环境变量（部署/测试可覆盖默认包内 office/skills/）。
+    # Env override for the authoring SKILL package root (deploy/test override the packaged office/skills/).
+    SKILLS_ROOT_ENV = "OFFICE4AI_SKILLS_ROOT"
+
+    def __init__(self, config: MCPServerConfig, cert_dir: Path | None = None, skills_root: Path | None = None) -> None:
         # 同步：创建 workspace 实例 (未启动)
         self.workspace = OfficeWorkspace(
             host=config.host,
             port=config.socketio_port,
             cert_dir=cert_dir,
         )
+        # SKILL 包分发根须在 super().__init__() → _register_resources() 之前就位。
+        self._skills_root = self._resolve_skills_root(skills_root)
         super().__init__(config=config, server_name="office4ai")
+
+    @classmethod
+    def _resolve_skills_root(cls, skills_root: Path | None) -> Path:
+        """解析 SKILL 包分发根：显式参数 > 环境变量 > 包内默认 ``office/skills/``。"""
+        if skills_root is not None:
+            return Path(skills_root)
+        env = os.environ.get(cls.SKILLS_ROOT_ENV)
+        if env:
+            return Path(env)
+        return Path(__file__).resolve().parent.parent / "skills"
 
     def _register_tools(self) -> None:
         """注册所有平台的工具 | Register all platform tools"""
@@ -282,6 +299,7 @@ class OfficeMCPServer(BaseMCPServer):
     def _register_resources(self) -> None:
         """注册资源 | Register resources"""
         from office4ai.a2c_smcp.resources.ppt_window import PptWindowResource
+        from office4ai.a2c_smcp.resources.skill import discover_skill_resources
         from office4ai.a2c_smcp.resources.window import WindowResource
         from office4ai.a2c_smcp.resources.word_window import WordWindowResource
 
@@ -292,6 +310,13 @@ class OfficeMCPServer(BaseMCPServer):
         self.resources[root.base_uri] = root
         self.resources[word.base_uri] = word
         self.resources[ppt.base_uri] = ppt
+
+        # authoring SKILL 能力包（milestone #4 · S3）：扫描 skills_root 下每个含 SKILL.md 的目录，
+        # 经 skill:// 的 resources source 模式暴露供 A2C Computer 物化。S3 地基阶段 office/skills/
+        # 为空目录 → 无 skill:// 条目；生产 SKILL 由 S4/S5/S6（create/edit/extract）落入该目录。
+        for skill in discover_skill_resources(self._skills_root):
+            self.resources[skill.base_uri] = skill
+            logger.info(f"注册 SKILL 资源 | Registered SKILL resource: {skill.base_uri}")
 
     # Namespace → resource URIs mapping
     _NAMESPACE_URI_MAP: dict[str, str] = {
