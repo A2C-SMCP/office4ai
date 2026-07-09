@@ -40,6 +40,7 @@ dependencies = [
     # 平台标准路径 | Platform-standard paths
     "platformdirs>=4.0.0",
     "docxtpl>=0.16.0",
+    # OOXML 手术 | OOXML surgery — authoring helper 走「zip + lxml」直改部件
     "lxml>=4.9.0",
 ]
 license = { text = "MIT" }
@@ -129,6 +130,12 @@ strict_equality = true
 show_error_codes = true
 pretty = true
 mypy_path = ["."]
+
+# lxml 无 py.typed，authoring helper 走「zip + lxml」OOXML 手术必须依赖它
+# lxml ships no py.typed; the authoring helpers' zip+lxml OOXML surgery depends on it
+[[tool.mypy.overrides]]
+module = ["lxml", "lxml.*"]
+ignore_missing_imports = true
 
 [tool.coverage.run]
 source = ["office4ai"]
