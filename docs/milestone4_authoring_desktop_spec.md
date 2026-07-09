@@ -27,7 +27,7 @@
 | 运行时封装（主决策） | helper 原语封装为**可 import 的库/脚本**，随 SKILL 的 `scripts/` 提供，**渐进式披露**，**不做 MCP 工具**（避免工具膨胀） |
 | 实例化策略 | `instantiate_from_template()` 运行时按平台自动选：dotx/xltx→soffice，potx→content-type swap |
 | W3 抽取 | LLM 脚本 + 锚点 helper（`locate_by_style/named_range/master` + `wrap_in_sdt`），同构于参考脚本 |
-| 返回契约 | `{ok, path, summary(pages/slides/sheets), logs, stderr}`；视觉呈现交给 per-file window |
+| 返回契约 | `{ok, path, summary, logs, stderr}`。脚本全自主（操作哪个文件/是否 save 都在脚本里）：`ok`=脚本是否运行成功；`path`=脚本运行目录(work_dir=FS 写白名单)；`summary`=运行时事后扫描 work_dir 得到的**产物清单**(新增/改动文件 name/size)，**不解析 office 文件内部**；`logs`=stdout；`stderr`=stderr。富视觉呈现(pages/slides/sheets)交给 W4b per-file window，运行时不做以免过度设计约束脚本 |
 | 依赖打包 | `docxtpl` 进核心 dependencies；LibreOffice 系统级、运行时必备（对齐 UNO Bridge） |
 | Chart Path A | 重分类为 `requires_connection=True`（W4a 二元模型）；删 Path A 代码 = 独立跟进项 F1 |
 | Excel window | word/ppt per-file 先落；excel 渲染 blocked-by milestone #3 |

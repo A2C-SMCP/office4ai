@@ -42,7 +42,8 @@ class TestOfficeMCPServer:
             # + 37 Excel (OASP 0.3.0 Draft: #18 read slice 3 + #19 Range CRUD/公式 7
             #   + #20 Format/条件格式/合并 6 + #21 Worksheet 管理 5 + #22 Table 操作 6
             #   + #23 Chart 操作 4 + #24 PivotTable 操作 3 + #25 Find&Filter 操作 3) = 86
-            assert len(server.tools) == 86
+            # + 1 authoring standalone (milestone #4 · S1: office_run_script) = 87
+            assert len(server.tools) == 87
 
             expected_tools = [
                 # Word Get tools
@@ -151,6 +152,8 @@ class TestOfficeMCPServer:
                 "excel_find_values",
                 "excel_set_auto_filter",
                 "excel_clear_auto_filter",
+                # authoring standalone tool (milestone #4 · S1)
+                "office_run_script",
             ]
             for tool_name in expected_tools:
                 assert tool_name in server.tools, f"Tool {tool_name} not registered"

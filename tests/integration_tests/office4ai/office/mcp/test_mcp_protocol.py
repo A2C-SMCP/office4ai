@@ -58,11 +58,15 @@ class TestMCPProtocol:
                 # + 37 Excel (OASP 0.3.0 Draft: #18 read slice 3 + #19 Range CRUD/公式 7
                 #   + #20 Format/条件格式/合并 6 + #21 Worksheet 管理 5 + #22 Table 操作 6
                 #   + #23 Chart 操作 4 + #24 PivotTable 操作 3 + #25 Find&Filter 操作 3) = 86
-                assert len(tools_result.tools) == 86
+                # + 1 authoring standalone (milestone #4 · S1: office_run_script) = 87
+                assert len(tools_result.tools) == 87
 
-                # 验证工具名称前缀 | Verify tool name prefix
+                # 验证工具名称前缀 | Verify tool name prefix（platform 工具带类型前缀；
+                # authoring standalone 工具 office_run_script 例外）
                 tool_names = {t.name for t in tools_result.tools}
-                assert all(name.startswith(("word_", "ppt_", "excel_")) for name in tool_names)
+                assert "office_run_script" in tool_names
+                platform_names = tool_names - {"office_run_script"}
+                assert all(name.startswith(("word_", "ppt_", "excel_")) for name in platform_names)
 
     async def test_list_resources(self):
         """测试 list_resources 返回已注册资源 | Test list_resources returns registered resources"""

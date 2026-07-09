@@ -522,6 +522,20 @@ wheels = [
 ]
 
 [[package]]
+name = "docxtpl"
+version = "0.20.2"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "jinja2" },
+    { name = "lxml" },
+    { name = "python-docx" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/b2/b4/4435f3fcb1357ec441079c4af1dda3ea926fad6dcead4aed2d93b369944e/docxtpl-0.20.2.tar.gz", hash = "sha256:eddf3350d70b4d123208e801d585bcb313d21044a377a14f75a66d0965841de1", size = 17890, upload-time = "2025-11-13T12:47:15.943Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/a4/ad/e07939d8e020e513d3860400413ba1e0e06102c469639b440d921337efef/docxtpl-0.20.2-py3-none-any.whl", hash = "sha256:626d5c570a46a62b2ca73b4d08f1c240fa031a5bc45371e1466a4fe184923d10", size = 17881, upload-time = "2025-11-13T12:47:13.704Z" },
+]
+
+[[package]]
 name = "emoji"
 version = "2.15.0"
 source = { registry = "https://pypi.org/simple" }
@@ -1137,10 +1151,12 @@ dependencies = [
     { name = "confz" },
     { name = "cryptography" },
     { name = "docker" },
+    { name = "docxtpl" },
     { name = "emoji" },
     { name = "gymnasium" },
     { name = "jinja2" },
     { name = "loguru" },
+    { name = "lxml" },
     { name = "mcp" },
     { name = "openpyxl" },
     { name = "paramiko" },
@@ -1185,10 +1201,12 @@ requires-dist = [
     { name = "confz", specifier = ">=2.1.0" },
     { name = "cryptography", specifier = ">=42.0" },
     { name = "docker", specifier = ">=7.0.0" },
+    { name = "docxtpl", specifier = ">=0.16.0" },
     { name = "emoji", specifier = ">=2.11.1" },
     { name = "gymnasium", specifier = ">=0.29.1" },
     { name = "jinja2", specifier = ">=3.1.6" },
     { name = "loguru", specifier = ">=0.7.2" },
+    { name = "lxml", specifier = ">=4.9.0" },
     { name = "mcp", specifier = ">=1.19.0" },
     { name = "openpyxl", specifier = ">=3.1.2" },
     { name = "paramiko", specifier = ">=3.4.0" },

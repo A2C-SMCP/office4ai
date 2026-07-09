@@ -39,6 +39,8 @@ dependencies = [
     "cryptography>=42.0",
     # 平台标准路径 | Platform-standard paths
     "platformdirs>=4.0.0",
+    "docxtpl>=0.16.0",
+    "lxml>=4.9.0",
 ]
 license = { text = "MIT" }
 keywords = ["ai", "office", "libreoffice", "document-management", "ai-agent", "docx", "xlsx", "pptx"]

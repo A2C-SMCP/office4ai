@@ -7,7 +7,7 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from typing import Any, Literal, TypeVar
+from typing import Any, Literal, TypeVar, cast
 
 from loguru import logger
 from pydantic import BaseModel
@@ -54,8 +54,12 @@ class BaseTool(ABC):
 
     @property
     @abstractmethod
-    def category(self) -> Literal["word", "ppt", "excel"]:  # pragma: no cover
-        """平台类别: 'word' | 'ppt' | 'excel' | Platform category"""
+    def category(self) -> Literal["word", "ppt", "excel", "authoring"]:  # pragma: no cover
+        """平台类别: 'word' | 'ppt' | 'excel' | 'authoring' | Platform category
+
+        'authoring' 标记不绑定单一 Office 平台的 standalone 工具（如 office_run_script），
+        其 category 不映射到任一 per-type window 资源（_category_to_resource_uris 返回 []）。
+        """
         raise NotImplementedError
 
     @property
@@ -81,6 +85,16 @@ class BaseTool(ABC):
         4. 调用 workspace.execute() | Call workspace.execute()
         5. 格式化返回 (hook) | Format result (hook)
         """
+        # 0. 守卫：默认 execute() 只服务平台工具（word/ppt/excel）。standalone 工具
+        #    （category='authoring' 等）必须 override execute()——否则在此清晰失败，
+        #    而非在下方构造 OfficeAction 时抛未捕获的 pydantic ValidationError。
+        if self.category not in ("word", "ppt", "excel"):
+            return {
+                "success": False,
+                "error": f"{self.name}: base execute() supports only word/ppt/excel tools; "
+                "standalone tools must override execute()",
+            }
+
         # 1. 验证输入
         try:
             validated = self.validate_input(arguments, self.input_model)
@@ -92,8 +106,11 @@ class BaseTool(ABC):
         document_uri = params.pop("document_uri")
 
         # 3. 构建 OfficeAction
+        #    本默认 execute 只被平台工具（word/ppt/excel）走到；standalone 工具
+        #    （如 office_run_script，category='authoring'）会完全 override execute，
+        #    不会到这里。故此处收敛为三值 Literal 安全。
         action = OfficeAction(
-            category=self.category,
+            category=cast(Literal["word", "ppt", "excel"], self.category),
             action_name=self.event_name,
             params={"document_uri": document_uri, **params},
         )

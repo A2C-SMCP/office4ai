@@ -266,6 +266,19 @@ class OfficeMCPServer(BaseMCPServer):
 
         logger.info(f"已注册 {len(excel_tools)} 个 Excel 工具 | Registered {len(excel_tools)} Excel tools")
 
+        # authoring standalone 工具（milestone #4 · S1）——无需 Add-In 连接，常驻
+        from office4ai.a2c_smcp.tools.authoring import OfficeRunScriptTool
+
+        authoring_tools = [
+            OfficeRunScriptTool(self.workspace),
+        ]
+        for tool in authoring_tools:
+            self.tools[tool.name] = tool
+
+        logger.info(
+            f"已注册 {len(authoring_tools)} 个 authoring 工具 | Registered {len(authoring_tools)} authoring tools",
+        )
+
     def _register_resources(self) -> None:
         """注册资源 | Register resources"""
         from office4ai.a2c_smcp.resources.ppt_window import PptWindowResource
@@ -292,6 +305,11 @@ class OfficeMCPServer(BaseMCPServer):
         """启动 OfficeWorkspace (Socket.IO Server) | Start OfficeWorkspace"""
         logger.info("启动 OfficeWorkspace | Starting OfficeWorkspace...")
         await self.workspace.start()
+
+        # authoring 运行时依赖探测（milestone #4 · S1）——soffice 缺失仅告警不阻断
+        from office4ai.office.authoring import log_soffice_status
+
+        log_soffice_status()
 
         connection_manager.register_connect_callback(self._on_doc_connect)
         connection_manager.register_disconnect_callback_ns(self._on_doc_disconnect)
