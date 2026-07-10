@@ -91,6 +91,7 @@ class TestMCPProtocol:
                 assert any("window://office4ai/ppt" in uri for uri in resource_uris)
                 assert any(uri.startswith("window://office4ai?") for uri in resource_uris)
                 assert "skill://com.a2c-smcp.office4ai/create-office-file" in resource_uris
+                assert "skill://com.a2c-smcp.office4ai/edit-office-file" in resource_uris
                 # 旧资源已删除
                 assert not any("office://workspace/documents" in uri for uri in resource_uris)
 
@@ -153,6 +154,7 @@ class TestMCPResourcesPhase1:
                 assert any("window://office4ai/ppt" in u for u in uris)
                 assert any(u.startswith("window://office4ai?") for u in uris)
                 assert "skill://com.a2c-smcp.office4ai/create-office-file" in uris
+                assert "skill://com.a2c-smcp.office4ai/edit-office-file" in uris
                 assert not any("office://workspace/documents" in u for u in uris)
 
     async def test_read_window_root_resource(self):

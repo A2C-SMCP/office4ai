@@ -164,12 +164,13 @@ class TestOfficeMCPServer:
             config = MCPServerConfig()
             server = OfficeMCPServer(config)
 
-            # 3 window 资源 + 1 生产 SKILL 资源（milestone #4 · S4: create-office-file）= 4
-            assert len(server.resources) == 4
+            # 3 window 资源 + 2 生产 SKILL（milestone #4 · S4 create-office-file / S5 edit-office-file）= 5
+            assert len(server.resources) == 5
             assert "window://office4ai" in server.resources
             assert "window://office4ai/word" in server.resources
             assert "window://office4ai/ppt" in server.resources
             assert "skill://com.a2c-smcp.office4ai/create-office-file" in server.resources
+            assert "skill://com.a2c-smcp.office4ai/edit-office-file" in server.resources
 
     @pytest.mark.parametrize("transport", ["stdio", "sse", "streamable-http"])
     def test_server_supports_all_transports(self, transport):
