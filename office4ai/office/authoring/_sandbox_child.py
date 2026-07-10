@@ -12,10 +12,11 @@
     1. 读取 config（此时尚未装 audit hook，父进程写的 config 文件可自由读）；
     2. 设置 RLIMIT（内存/CPU/文件大小，作为父进程 wall-clock 杀进程组之外的兜底）；
     3. chdir 进 work_dir；
-    4. 装 audit hook（FS 写越权 / 进程逃逸 / ctypes 拦截）——**装之后本进程所有操作都受管**；
-    5. monkeypatch socket egress 实现「默认禁网」；
-    6. 构造受限 builtins（用户帧 ``__import__`` allowlist）；
-    7. ``exec`` 用户脚本，异常打到 stderr 并以非零码退出。
+    4. 预热 import 受信重库（``openpyxl → numpy`` 等，其 import 期的 ``ctypes.dlopen`` 须在装 hook 前完成）；
+    5. 装 audit hook（FS 写越权 / 进程逃逸 / ctypes 拦截）——**装之后本进程所有操作都受管**；
+    6. monkeypatch socket egress 实现「默认禁网」；
+    7. 构造受限 builtins（用户帧 ``__import__`` allowlist）；
+    8. ``exec`` 用户脚本，异常打到 stderr 并以非零码退出。
 
 软沙箱定位：拦截「误操作 / 明显越权」（死循环、越权写、联网、逃逸），
 而非对抗性 RCE。留 OS 级加固接缝（Linux bubblewrap/nsjail）由后续演进。
@@ -205,6 +206,28 @@ def _set_rlimits(mem_bytes: int, cpu_seconds: int, fsize_bytes: int) -> None:
             continue
 
 
+def _warmup_trusted_libs(names: list[str]) -> None:
+    """在装 audit hook 前预热 import 受信重库（best-effort）。
+
+    这些库（如 ``openpyxl → numpy``）在 import 期会触发 ``ctypes.dlopen`` 等被沙箱拦截的
+    操作——若发生在 hook 之后会抛 :class:`SandboxViolation`。预热在受信阶段完成其模块
+    初始化（含 ``ctypes`` 模块自身首次 import 的 dlopen），之后用户脚本 ``import`` 命中
+    ``sys.modules`` 缓存不再触发。**安全不变**：用户脚本自身对 ctypes 的直接 import
+    （allowlist）与调用（audit ``ctypes.dlopen``）仍照常拦截。``names`` 由父进程按受信库
+    白名单下发（``allowed_imports`` 与原生库集合的交集），用户脚本无法影响。
+
+    仅在运行时用 ``importlib`` 动态 import 第三方库（本模块的静态依赖仍只有标准库）；
+    单库失败静默跳过，真错误留待用户脚本自身 import 时暴露。
+    """
+    import importlib
+
+    for name in names:
+        try:
+            importlib.import_module(name)
+        except Exception:  # noqa: BLE001 - best-effort 预热，失败留给用户脚本 import 时暴露
+            continue
+
+
 def main() -> int:
     with open(sys.argv[1], encoding="utf-8") as fh:
         cfg = json.load(fh)
@@ -223,6 +246,10 @@ def main() -> int:
     )
 
     os.chdir(work_dir)
+
+    # 预热受信重库（须在装 hook 前）：openpyxl→numpy 等 import 期会触发 ctypes.dlopen，
+    # 装 hook 后会被拦成 SandboxViolation；预热后用户脚本 import 命中缓存不再触发。
+    _warmup_trusted_libs(cfg.get("warmup_imports", []))
 
     # —— 自此以下装上守卫，用户脚本全程受管 ——
     _install_audit_hook(write_allow, allowed_execs)

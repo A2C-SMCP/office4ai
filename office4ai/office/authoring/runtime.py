@@ -105,6 +105,14 @@ DEFAULT_ALLOWED_IMPORTS: tuple[str, ...] = (
     "xml",
 )
 
+#: 需在装 audit hook 前**预热 import** 的受信原生/重库子集。这些库在 import 期会触发被沙箱
+#: 拦截的操作——典型是 ``openpyxl → numpy``，numpy import 期的传递 ``import ctypes`` 会触发
+#: ctypes 模块初始化的 ``ctypes.dlopen``（Linux 上加载 libpython/libc），被 audit hook 拦成
+#: ``SandboxViolation``。预热在受信阶段完成其模块初始化后，用户脚本再 import 命中 ``sys.modules``
+#: 缓存不再触发；用户脚本自身仍无法 ``import ctypes``（allowlist）或调用 ``ctypes.dlopen``
+#: （audit hook 仍生效）。名单是 ``allowed_imports`` 与本集合的交集，用户脚本无法影响。
+_NATIVE_WARMUP_LIBS: frozenset[str] = frozenset({"docx", "pptx", "openpyxl", "lxml", "docxtpl", "jinja2", "PIL"})
+
 _CHILD_PATH = Path(__file__).with_name("_sandbox_child.py")
 
 # soffice 探测候选（含 macOS app bundle 内路径）
@@ -268,9 +276,22 @@ _ENV_ALLOWLIST: tuple[str, ...] = (
 )
 
 
+#: 强制沙箱内的数值库（numpy/BLAS/OpenMP）单线程。预热 import numpy 会拉起 OpenBLAS
+#: 线程池，部分构建会 busy-spin 空转烧 CPU——多核下会让 ``RLIMIT_CPU``(SIGXCPU) 先于
+#: wall-clock 超时触发，且平白吃掉脚本的 CPU 预算。沙箱化的文档脚本无需并行 BLAS。
+_SINGLE_THREAD_ENV: dict[str, str] = {
+    "OMP_NUM_THREADS": "1",
+    "OPENBLAS_NUM_THREADS": "1",
+    "MKL_NUM_THREADS": "1",
+    "NUMEXPR_NUM_THREADS": "1",
+    "VECLIB_MAXIMUM_THREADS": "1",  # macOS Accelerate/vecLib
+}
+
+
 def _child_env() -> dict[str, str]:
     env = {k: os.environ[k] for k in _ENV_ALLOWLIST if k in os.environ}
     env["PYTHONDONTWRITEBYTECODE"] = "1"
+    env.update(_SINGLE_THREAD_ENV)
     return env
 
 
@@ -319,6 +340,8 @@ async def run_script(
         "work_dir": str(wd),
         "write_allow": [str(wd)],
         "allowed_imports": list(allowed_imports),
+        # 装 audit hook 前预热的受信重库（openpyxl→numpy 等 import 期会 ctypes.dlopen）。
+        "warmup_imports": [name for name in allowed_imports if name in _NATIVE_WARMUP_LIBS],
         "allowed_executables": [soffice] if soffice else [],
         "block_network": True,
         "cpu_limit_seconds": int(timeout) + 5,
