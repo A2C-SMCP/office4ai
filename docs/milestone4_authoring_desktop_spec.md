@@ -56,6 +56,29 @@
 - **W4b-2 · 单 fullscreen 归属（= #4 服务端解法）**：`update_last_activity` 钩子翻转 fullscreen + 清理上次 + 通知。← W4b-1
 - **W4b-3 · excel per-file 渲染**：← W4b-1 + milestone #3。
 
+### W4 交互契约（#69 体验门控定稿）
+
+> 三议题经维护者**体感拍板**（#69 评论台账）。W4a/W4b（#63-66）据此直接进入实现。**结论均落在路线甲 / AI 侧信号内 → 零协议改动**：议题③选「AI 最后操作」而非「用户手动碰」，故不触 Add-In 用户活动上报（= OASP 表面）；Step 0 判定「无协议约束」由此成立。现状锚点：Add-In 工具 86（word 25 + ppt 24 + excel 37）+ 常驻 1（`office_run_script`），`list_tools()` 现全量暴露、无过滤、无 `tools/list_changed`；`BaseTool` 尚无 `requires_connection`；window 资源仅 word/ppt 聚合，无 excel。
+
+**契约① 动态工具收敛（→ W4a / #63）**
+- 过滤规则：`requires_connection=True` 的工具按其 `category`（word/ppt/excel）对应 namespace 是否有连接（`get_clients_by_namespace`）过滤；`requires_connection=False` 常驻（当前仅 `office_run_script`）。无连接 → 仅常驻；仅 Word 连接 → Word 工具集 + 常驻（移除 PPT/Excel）。
+- **灵敏度 = 实时诚实**（#69）：连接一变即刻发 `tools/list_changed`，**不去抖**；Add-In 断线重连会诚实增删工具（可接受抖动）。
+- 部分连接语义：常驻脚本工具始终在——「没连 PPT 也能用 `office_run_script` 脚本造/改 PPT」。Add-In 工具 = 实时操作已打开文件；常驻 = 离线造/改（W4c SKILL 文案澄清此二分）。
+- 可见语义：标准 MCP，声明 `NotificationOptions(tools_changed=True)`；Computer 收通知 → `emit_update_tool_list` → 重新 `list_tools`。
+
+**契约② per-file window 粒度（→ W4b-1 / #64、W4b-3 / #66）**
+- **per-file 取代 per-type**（#69 确认 D5）：每个已连接文件 = 独立 `window://`；移除 `window://office4ai/word|ppt` 聚合窗口；**保留**根索引 `window://office4ai`（改为列出全部 per-file 子窗口）。
+- URI 命名（推荐默认 · 台账）：`window://office4ai/{word|ppt|excel}/{doc_id}`，`doc_id` = `document_uri` 稳定编码（同一文件跨刷新 URI 稳定）；根 `base_uri` 不变。
+- 动态注册：`PerFileWindowResource` 随连接建立/断开注册/注销，发 `resources/list_changed`（与工具收敛同源于连接变化事件）。
+- excel per-file（W4b-3）blocked-by milestone #3，先落 word/ppt。
+
+**契约③ fullscreen 归属与清理（→ W4b-2 / #65，关闭 #4）**
+- **任一时刻至多一个 fullscreen**（路线甲 D2，office4ai 服务端自保）。
+- **判定口径 = AI 最后操作的文件**（#69）：`update_last_activity` 钩子挂在 `call_tool`（Add-In 工具触及某已连接 `document_uri`）上——该文件的 per-file window 置 `fullscreen=true`。竞争**仅在已连接文件间**发生；`office_run_script` 产物若非已连接文件则无对应 window、不参与竞争。**不依赖 Add-In 用户活动上报 → 零协议改动。**
+- 清理时序（推荐默认 · 台账）：置新 fullscreen 前先清上一个（保「至多一个」不变量，先清后置 / 原子），翻转后发通知（对应 window `resource_updated` / `resources/list_changed`）刷新桌面。
+- **断连收场 = 顺延次新**（#69）：当前 fullscreen 文件断连/关闭，按 `last_activity` 顺序把 fullscreen 让给剩余已连接文件中最近活跃者；若无剩余已连接文件则无 fullscreen（根索引主视）。
+- #4 关闭：服务端保证只有一个 `fullscreen=true` 候选 → `organize.py` 的 min-idx 平局成 no-op（python-sdk 零改动）。
+
 ### 末端 + 跟进
 - **INT · 末端跨边界集成回归**：W1/W2/W3 端到端 + W4a 工具收敛（office4ai↔Computer）+ W4b 单 fullscreen 组装（#4 回归）+ skill:// staging。
 - **F1 · 删 chart Path A 代码**（独立跟进，← W4a）。
