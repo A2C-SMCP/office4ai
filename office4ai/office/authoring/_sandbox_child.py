@@ -212,19 +212,26 @@ def _warmup_trusted_libs(names: list[str]) -> None:
     这些库（如 ``openpyxl → numpy``）在 import 期会触发 ``ctypes.dlopen`` 等被沙箱拦截的
     操作——若发生在 hook 之后会抛 :class:`SandboxViolation`。预热在受信阶段完成其模块
     初始化（含 ``ctypes`` 模块自身首次 import 的 dlopen），之后用户脚本 ``import`` 命中
-    ``sys.modules`` 缓存不再触发。**安全不变**：用户脚本自身对 ctypes 的直接 import
-    （allowlist）与调用（audit ``ctypes.dlopen``）仍照常拦截。``names`` 由父进程按受信库
-    白名单下发（``allowed_imports`` 与原生库集合的交集），用户脚本无法影响。
+    ``sys.modules`` 缓存不再触发。``names`` 由父进程按受信库白名单下发（``allowed_imports``
+    与原生库集合的交集），用户脚本无法影响。
+
+    **安全语义**（软沙箱、非对抗性 RCE）：预热把 ctypes 等送进 ``sys.modules`` **不扩大
+    对抗面**——本沙箱的 import allowlist 与 audit hook 均是 defense-in-depth 而非硬边界
+    （真实隔离留给 OS 级加固接缝）。用户帧 ``import ctypes`` 仍被 allowlist 挡；用户对
+    ctypes 的**会发 audit 事件**的危险操作（``dlopen`` / ``dlsym`` / ``call_function`` 等）
+    仍被进程级 hook 拦，无论经何种途径取到 ctypes 模块对象。
 
     仅在运行时用 ``importlib`` 动态 import 第三方库（本模块的静态依赖仍只有标准库）；
-    单库失败静默跳过，真错误留待用户脚本自身 import 时暴露。
+    单库失败打一行 stderr 诊断并跳过——对预热的原生库，失败会让它在 hook 装好后 import
+    时触到 ctypes 拦截成误导性的 SandboxViolation，故此诊断有助排查。
     """
     import importlib
 
     for name in names:
         try:
             importlib.import_module(name)
-        except Exception:  # noqa: BLE001 - best-effort 预热，失败留给用户脚本 import 时暴露
+        except Exception as exc:  # noqa: BLE001 - best-effort 预热；失败打诊断后继续
+            print(f"[sandbox] warmup import {name!r} failed: {type(exc).__name__}: {exc}", file=sys.stderr)
             continue
 
 

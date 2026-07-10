@@ -232,3 +232,30 @@ def test_warmup_trusted_libs_is_best_effort() -> None:
     # 未知库静默跳过（不抛），已知库被导入进 sys.modules。
     _warmup_trusted_libs(["base64", "office4ai_no_such_lib_zzz"])
     assert "base64" in sys.modules
+
+
+async def test_user_script_cannot_use_ctypes_via_sys_modules_bypass(tmp_path: Path) -> None:
+    # 预热可能把 ctypes 经 numpy 送进子进程 sys.modules。即便用户脚本绕过 import allowlist
+    # 直接经 sys.modules 取到 ctypes，任何 dlopen/CDLL 仍触发进程级 audit hook 被拦——这是
+    # 本 PR 新增可达性的精确守护。跨平台成立：Linux（已预热）走 audit 拦截；macOS（未预热）
+    # sys.modules 无 ctypes → KeyError；两路都是「用户拿不到可用的 ctypes」。
+    script = "import sys\nsys.modules['ctypes'].CDLL(None)\n"
+    result = await run_script(script, work_dir=tmp_path)
+    assert result.ok is False
+    assert "ctypes" in result.stderr
+
+
+def test_child_env_pins_single_thread_blas() -> None:
+    # 预热 numpy 会拉起 OpenBLAS 线程池 busy-spin；子进程 env 必须封顶到单线程，
+    # 否则 RLIMIT_CPU(SIGXCPU) 会先于 wall-clock 超时触发。
+    from office4ai.office.authoring.runtime import _child_env
+
+    env = _child_env()
+    for var in (
+        "OMP_NUM_THREADS",
+        "OPENBLAS_NUM_THREADS",
+        "MKL_NUM_THREADS",
+        "NUMEXPR_NUM_THREADS",
+        "VECLIB_MAXIMUM_THREADS",
+    ):
+        assert env[var] == "1", var
