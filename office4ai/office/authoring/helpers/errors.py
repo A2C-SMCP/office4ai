@@ -32,3 +32,12 @@ class SdtCountMismatchError(AuthoringHelperError):
 
 class AnchorNotFoundError(AuthoringHelperError):
     """在文档中定位不到请求的锚点(样式 / 命名区域 / 版式) | Requested anchor not found."""
+
+
+class ExternalMediaError(AuthoringHelperError):
+    """形状引用了包关系(图片 / 超链接 / OLE 等外部媒体)，无法随形状搬运到新版式。
+
+    Shape references a package relationship (image / hyperlink / OLE) that cannot be carried
+    over when promoting it into a slide layout —— 深拷贝形状 XML 时其 ``r:embed``/``r:id`` 引用会在
+    新部件里悬空，导致 PowerPoint 打开时报「需要修复」。抽版式时命中即快速失败，避免静默产出损坏文件。
+    """
