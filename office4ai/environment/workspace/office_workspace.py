@@ -91,6 +91,11 @@ class OfficeWorkspace(BaseWorkspace):
         # wires this callback at startup; until then it stays None.
         self._resource_update_callback: Callable[[list[str]], None] | None = None
 
+        # W4b-2 (#65): the owning MCP server registers this to learn which file the
+        # AI just operated on, so it can flip that file's per-file window to fullscreen
+        # (single-fullscreen 归属，契约③). Wired at startup; None until then.
+        self._activity_callback: Callable[[str], None] | None = None
+
     # ── 活动追踪 API | Activity tracking API ──
 
     def update_last_activity(self, document_uri: str, tool_name: str, result_data: dict[str, Any]) -> None:
@@ -110,6 +115,14 @@ class OfficeWorkspace(BaseWorkspace):
 
         if tool_name in _STRUCTURE_TOOLS and isinstance(content_text, str):
             self._structure_cache[document_uri] = content_text
+
+        # W4b-2 (#65): notify the MCP server so it can flip this file's window fullscreen.
+        # Fires with the normalized URI (matches per-file window registration coordinates).
+        if self._activity_callback is not None:
+            try:
+                self._activity_callback(document_uri)
+            except Exception:
+                logger.exception("Activity callback raised")
 
     def get_last_activity(self) -> LastActivity | None:
         """Return the most recent activity, or None."""
@@ -140,6 +153,15 @@ class OfficeWorkspace(BaseWorkspace):
         (window resources for /ppt etc.) know to refetch.
         """
         self._resource_update_callback = callback
+
+    def set_activity_callback(self, callback: Callable[[str], None] | None) -> None:
+        """Wire a callback fired after each successful tool activity (W4b-2 / #65).
+
+        The owning MCP server uses this to make the just-operated file's per-file window
+        the sole fullscreen window (契约③ fullscreen 归属). The callback receives the
+        normalized ``document_uri``.
+        """
+        self._activity_callback = callback
 
     def notify_resource_updated(self, uris: list[str]) -> None:
         """Fire the resource-update callback if one is registered."""

@@ -1,9 +1,9 @@
-"""per-file window 资源（W4b-1 / #64）：每个已连接文件 = 一个独立 ``window://`` 资源。
+"""per-file window 资源（W4b-1 / #64、W4b-3 / #66）：每个已连接文件 = 一个独立 ``window://`` 资源。
 
 取代旧的 per-type 聚合窗口（``window://office4ai/word|ppt``）。base_uri 形如
-``window://office4ai/{word|ppt}/{doc_id}``，``doc_id`` 由 ``document_uri`` 稳定编码派生
-（同一文件跨刷新 URI 稳定；文件名保可读 + sha1 短摘要消歧）。excel 暂不投射
-（W4b-3 / #66，blocked-by milestone #3）。
+``window://office4ai/{word|ppt|excel}/{doc_id}``，``doc_id`` 由 ``document_uri`` 稳定编码派生
+（同一文件跨刷新 URI 稳定；文件名保可读 + sha1 短摘要消歧）。excel 于 W4b-3（#66）补齐——
+其读事件（``excel:get:*``）由 milestone #3 交付，per-file 窗口渲染工作簿摘要。
 
 契约锚点：``docs/milestone4_authoring_desktop_spec.md`` §「W4 交互契约（#69 体验门控定稿）」契约②。
 """
@@ -22,8 +22,8 @@ from office4ai.a2c_smcp.resources.base import BaseResource, parse_window_uri_par
 from office4ai.environment.workspace.office_workspace import OfficeWorkspace
 from office4ai.environment.workspace.socketio.services.connection_manager import normalize_document_uri
 
-# Socket.IO namespace → window 类型段。excel 缺席 = W4b-3 延后（连接时不投射窗口）。
-WINDOW_TYPE_BY_NAMESPACE: dict[str, str] = {"/word": "word", "/ppt": "ppt"}
+# Socket.IO namespace → window 类型段（W4b-3 / #66 起含 excel）。
+WINDOW_TYPE_BY_NAMESPACE: dict[str, str] = {"/word": "word", "/ppt": "ppt", "/excel": "excel"}
 
 # 根索引 URI（连接文件集变化时通知其订阅者重读）
 ROOT_WINDOW_URI = "window://office4ai"
@@ -52,7 +52,7 @@ def affected_window_uris(namespace: str, document_uri: str, *, include_root: boo
     """某文件被修改时受影响的 window URI：其 per-file 窗口（可选 + 根索引）。
 
     ``document_uri`` 会先归一化以匹配注册时的 per-file 窗口坐标系。namespace 无对应窗口
-    （如 excel，W4b-3 前）时不含 per-file 项。工具自通知与 call_tool 的 affected 计算共用本函数。
+    （未知 namespace）时不含 per-file 项。工具自通知与 call_tool 的 affected 计算共用本函数。
     """
     base = per_file_window_base_uri(namespace, normalize_document_uri(document_uri))
     uris: list[str] = []
@@ -106,6 +106,15 @@ class PerFileWindowResource(BaseResource):
         return self._base_uri
 
     @property
+    def fullscreen(self) -> bool:
+        """当前是否 fullscreen（W4b-2 / #65：由服务端按 AI 最后操作归属翻转）。"""
+        return self._fullscreen
+
+    @fullscreen.setter
+    def fullscreen(self, value: bool) -> None:
+        self._fullscreen = value
+
+    @property
     def filename(self) -> str:
         return self.document_uri.rsplit("/", 1)[-1] or self.document_uri
 
@@ -122,7 +131,9 @@ class PerFileWindowResource(BaseResource):
         return "text/plain"
 
     def update_from_uri(self, uri: str) -> None:
-        self._priority, self._fullscreen = parse_window_uri_params(
+        # fullscreen 由服务端单一权威（W4b-2 / #65）：只吸收 URI 的 priority，保留服务端设定的
+        # fullscreen——防陈旧 URI 读回写覆盖归属决策、瞬时破坏「至多一个 fullscreen」不变量。
+        self._priority, _ = parse_window_uri_params(
             uri, self._priority, self._fullscreen, log_prefix=f"{self._wtype} file window"
         )
 
@@ -288,6 +299,67 @@ class PptFileWindowResource(PerFileWindowResource):
         return "\n".join(lines)
 
 
+class ExcelFileWindowResource(PerFileWindowResource):
+    """单个 Excel 文件窗口（W4b-3 / #66）：渲染工作簿元数据 + 工作表列表 + 当前选区。
+
+    数据源为 milestone #3 交付的 excel 读事件：``excel:get:workbookInfo``（工作表清单 +
+    活动工作表 + 文件名）与 ``excel:get:selectedRange``（当前选区地址与尺寸）。
+    """
+
+    async def read(self) -> str:
+        lines: list[str] = [f"# Excel 文档: {self.filename}", "", f"- URI: {self.document_uri}", ""]
+
+        workbook, selection = await asyncio.gather(
+            self._fetch_with_timeout("excel:get:workbookInfo", {"document_uri": self.document_uri}),
+            self._fetch_with_timeout("excel:get:selectedRange", {"document_uri": self.document_uri}),
+        )
+
+        lines.append("## 元数据")
+        if workbook is not None:
+            sheets = workbook.get("sheets", [])
+            active = workbook.get("activeSheet", "N/A")
+            lines.append(f"- 工作表数: {len(sheets)}")
+            lines.append(f"- 活动工作表: {active}")
+        else:
+            lines.append("[元数据不可用: 请求超时]")
+
+        lines.append("")
+        lines.append("## 工作表")
+        if workbook is not None:
+            sheets = workbook.get("sheets", [])
+            rendered = False
+            for sheet in sheets:
+                if not isinstance(sheet, dict):
+                    continue
+                name = sheet.get("name", "?")
+                marks: list[str] = []
+                # wire 契约（OASP excel:get:workbookInfo → SheetInfo）：camelCase isActive/isHidden。
+                if sheet.get("isActive"):
+                    marks.append("当前")
+                if sheet.get("isHidden"):
+                    marks.append("隐藏")
+                suffix = f" ({', '.join(marks)})" if marks else ""
+                lines.append(f"- {name}{suffix}")
+                rendered = True
+            if not rendered:
+                lines.append("(无工作表)")
+        else:
+            lines.append("[工作表列表不可用: 请求超时]")
+
+        lines.append("")
+        lines.append("## 当前选区")
+        if selection is not None:
+            address = selection.get("address", "?")
+            row_count = selection.get("rowCount", "?")
+            column_count = selection.get("columnCount", "?")
+            lines.append(f"- 地址: {address}")
+            lines.append(f"- 尺寸: {row_count}×{column_count}")
+        else:
+            lines.append("[选区信息不可用: 请求超时]")
+
+        return "\n".join(lines)
+
+
 def create_per_file_window(
     workspace: OfficeWorkspace,
     document_uri: str,
@@ -296,10 +368,12 @@ def create_per_file_window(
     priority: int = 50,
     fullscreen: bool = False,
 ) -> PerFileWindowResource | None:
-    """按 namespace 造对应 per-file window；excel/未知 namespace 返回 ``None``（W4b-3 延后）。"""
+    """按 namespace 造对应 per-file window；未知 namespace 返回 ``None``。"""
     wtype = WINDOW_TYPE_BY_NAMESPACE.get(namespace)
     if wtype == "word":
         return WordFileWindowResource(workspace, document_uri, namespace, priority, fullscreen)
     if wtype == "ppt":
         return PptFileWindowResource(workspace, document_uri, namespace, priority, fullscreen)
+    if wtype == "excel":
+        return ExcelFileWindowResource(workspace, document_uri, namespace, priority, fullscreen)
     return None

@@ -51,10 +51,10 @@
 - **S6 · W3 `extract-template` SKILL** + 抽模板锚点 helper
 
 ### W4 AddIn 感知桌面
-- **W4a · 动态工具收敛**：BaseTool 建模 `requires_connection`（二元）+ chart 工具重分类 + list_tools 按 `get_clients_by_namespace` 过滤 + 连接变化发 `tools/list_changed` + 声明 `NotificationOptions(tools_changed=True)`。
-- **W4b-1 · per-file window（word/ppt）+ 根索引**：`PerFileWindowResource` + 动态注册 + `resources/list_changed` + per-type→per-file（移除聚合，保根索引）。
-- **W4b-2 · 单 fullscreen 归属（= #4 服务端解法）**：`update_last_activity` 钩子翻转 fullscreen + 清理上次 + 通知。← W4b-1
-- **W4b-3 · excel per-file 渲染**：← W4b-1 + milestone #3。
+- **W4a · 动态工具收敛** ✅（#63）：BaseTool 建模 `requires_connection`（二元）+ chart 工具重分类 + list_tools 按 `get_clients_by_namespace` 过滤 + 连接变化发 `tools/list_changed` + 声明 `NotificationOptions(tools_changed=True)`。
+- **W4b-1 · per-file window（word/ppt）+ 根索引** ✅（#64）：`PerFileWindowResource` + 动态注册 + `resources/list_changed` + per-type→per-file（移除聚合，保根索引）。
+- **W4b-2 · 单 fullscreen 归属（= #4 服务端解法）** ✅（#65）：workspace 活动回调（`update_last_activity` → server `_on_doc_activity`）翻转 fullscreen + 清上次（先清后置/原子）+ 断连顺延次新 + 通知。← W4b-1
+- **W4b-3 · excel per-file 渲染** ✅（#66）：`ExcelFileWindowResource`（`excel:get:workbookInfo` + `excel:get:selectedRange` 渲染）+ `/excel` 补进 `WINDOW_TYPE_BY_NAMESPACE`（根索引/affected/create 自动派生）。excel 读事件已由 milestone #3（#18/#21）交付并 CLOSED。← W4b-1
 
 ### W4 交互契约（#69 体验门控定稿）
 
@@ -70,7 +70,7 @@
 - **per-file 取代 per-type**（#69 确认 D5）：每个已连接文件 = 独立 `window://`；移除 `window://office4ai/word|ppt` 聚合窗口；**保留**根索引 `window://office4ai`（改为列出全部 per-file 子窗口）。
 - URI 命名（推荐默认 · 台账）：`window://office4ai/{word|ppt|excel}/{doc_id}`，`doc_id` = `document_uri` 稳定编码（同一文件跨刷新 URI 稳定）；根 `base_uri` 不变。
 - 动态注册：`PerFileWindowResource` 随连接建立/断开注册/注销，发 `resources/list_changed`（与工具收敛同源于连接变化事件）。
-- excel per-file（W4b-3）blocked-by milestone #3，先落 word/ppt。
+- excel per-file（W4b-3）✅ 已落地：其读事件（`excel:get:*`）由 milestone #3（#18 Foundation / #21 Worksheet 等，均 CLOSED）交付，#66 复用同一 per-file 模型补齐 excel 渲染。
 
 **契约③ fullscreen 归属与清理（→ W4b-2 / #65，关闭 #4）**
 - **任一时刻至多一个 fullscreen**（路线甲 D2，office4ai 服务端自保）。

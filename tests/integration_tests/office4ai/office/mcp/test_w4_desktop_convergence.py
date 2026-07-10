@@ -103,6 +103,76 @@ class TestW4DesktopConvergenceE2E:
             connection_manager._on_document_connect[:] = saved_connect
             connection_manager._on_document_disconnect_ns[:] = saved_disc
 
+    async def test_fullscreen_ownership_and_excel_window_e2e(self):
+        """W4b-2（#65）+ W4b-3（#66）端到端：AI 最后操作文件独占 fullscreen（#4 组装回归），
+        断连顺延次新；excel per-file 窗口出现在资源列表。
+
+        经内存 client↔server + workspace.update_last_activity（生产由 BaseTool.execute 触发）
+        驱动 fullscreen 归属，从 list_resources 的 URI 查询串观测 fullscreen 状态。
+        """
+        for c in list(connection_manager.get_all_clients()):
+            connection_manager.unregister_client(c.socket_id)
+        saved_connect = list(connection_manager._on_document_connect)
+        saved_disc = list(connection_manager._on_document_disconnect_ns)
+
+        with patch.dict(os.environ, {}, clear=True):
+            office = OfficeMCPServer(MCPServerConfig())
+        connection_manager.register_connect_callback(office._on_doc_connect)
+        connection_manager.register_disconnect_callback_ns(office._on_doc_disconnect)
+        # 活动回调（生产在 _async_startup 接线）—— fullscreen 归属的触发源
+        office.workspace.set_activity_callback(office._on_doc_activity)
+
+        per_file_prefixes = (
+            "window://office4ai/word/",
+            "window://office4ai/ppt/",
+            "window://office4ai/excel/",
+        )
+
+        def fullscreen_windows(resources) -> set[str]:
+            """列出 fullscreen=true 的 per-file 窗口 URI（根 window 恒 false，不计入）。"""
+            return {
+                str(r.uri)
+                for r in resources
+                if str(r.uri).startswith(per_file_prefixes) and "fullscreen=true" in str(r.uri)
+            }
+
+        word_doc, ppt_doc, xlsx_doc = "file:///tmp/report.docx", "file:///tmp/deck.pptx", "file:///tmp/data.xlsx"
+
+        try:
+            async with create_connected_server_and_client_session(office.server) as client:
+                connection_manager.register_client("s1", "c1", word_doc, "/word")
+                connection_manager.register_client("s2", "c2", ppt_doc, "/ppt")
+                connection_manager.register_client("s3", "c3", xlsx_doc, "/excel")
+
+                # excel per-file 窗口出现（W4b-3 / #66）
+                uris0 = {str(r.uri) for r in (await client.list_resources()).resources}
+                assert any(u.startswith("window://office4ai/excel/") for u in uris0)
+                # 未操作任何文件 → 无 fullscreen（#4：至多一个候选，此刻为零）
+                assert fullscreen_windows((await client.list_resources()).resources) == set()
+
+                # AI 操作 word 文件 → 仅 word 窗口 fullscreen
+                office.workspace.update_last_activity(word_doc, "word_insert_text", {})
+                fs1 = fullscreen_windows((await client.list_resources()).resources)
+                assert len(fs1) == 1 and any("/word/" in u for u in fs1)
+
+                # AI 改操作 ppt 文件 → fullscreen 转移到 ppt，word 清零（#4 单 fullscreen 不变量）
+                office.workspace.update_last_activity(ppt_doc, "ppt_insert_text", {})
+                fs2 = fullscreen_windows((await client.list_resources()).resources)
+                assert len(fs2) == 1 and any("/ppt/" in u for u in fs2)
+
+                # fullscreen 持有者（ppt）断连 → 顺延次新活跃者（word）。断连回调同步完成状态翻转。
+                connection_manager.unregister_client("s2")
+                resources3 = (await client.list_resources()).resources
+                uris3 = {str(r.uri) for r in resources3}
+                assert not any(u.startswith("window://office4ai/ppt/") for u in uris3)  # ppt 窗口已注销
+                fs3 = fullscreen_windows(resources3)
+                assert len(fs3) == 1 and any("/word/" in u for u in fs3)
+        finally:
+            for c in list(connection_manager.get_all_clients()):
+                connection_manager.unregister_client(c.socket_id)
+            connection_manager._on_document_connect[:] = saved_connect
+            connection_manager._on_document_disconnect_ns[:] = saved_disc
+
     async def test_server_declares_list_changed_capability(self):
         """服务器初始化能力声明 tools.listChanged + resources.listChanged（+ subscribe）。"""
         with patch.dict(os.environ, {}, clear=True):

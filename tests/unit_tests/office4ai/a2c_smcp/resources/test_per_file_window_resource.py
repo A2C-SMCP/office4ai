@@ -13,6 +13,7 @@ import pytest
 
 from office4ai.a2c_smcp.resources.per_file_window import (
     ROOT_WINDOW_URI,
+    ExcelFileWindowResource,
     PptFileWindowResource,
     WordFileWindowResource,
     affected_window_uris,
@@ -42,7 +43,8 @@ class TestHelpers:
     def test_base_uri_word_ppt_excel(self) -> None:
         assert per_file_window_base_uri("/word", "file:///a/x.docx").startswith("window://office4ai/word/")
         assert per_file_window_base_uri("/ppt", "file:///a/y.pptx").startswith("window://office4ai/ppt/")
-        assert per_file_window_base_uri("/excel", "file:///a/z.xlsx") is None  # W4b-3 延后
+        assert per_file_window_base_uri("/excel", "file:///a/z.xlsx").startswith("window://office4ai/excel/")  # W4b-3
+        assert per_file_window_base_uri("/unknown", "file:///a/z.txt") is None
 
     def test_affected_window_uris(self) -> None:
         uri = "file:///a/y.pptx"
@@ -51,14 +53,18 @@ class TestHelpers:
             per_file_window_base_uri("/ppt", uri),
             ROOT_WINDOW_URI,
         ]
-        # excel 无 per-file 窗口 → 仅根（include_root）或空
-        assert affected_window_uris("/excel", "file:///a/z.xlsx") == []
-        assert affected_window_uris("/excel", "file:///a/z.xlsx", include_root=True) == [ROOT_WINDOW_URI]
+        # excel 现有 per-file 窗口（W4b-3 / #66）
+        xlsx = "file:///a/z.xlsx"
+        assert affected_window_uris("/excel", xlsx) == [per_file_window_base_uri("/excel", xlsx)]
+        # 未知 namespace → 仅根（include_root）或空
+        assert affected_window_uris("/unknown", "file:///a/z.txt") == []
+        assert affected_window_uris("/unknown", "file:///a/z.txt", include_root=True) == [ROOT_WINDOW_URI]
 
     def test_create_per_file_window_dispatch(self, workspace: OfficeWorkspace) -> None:
         assert isinstance(create_per_file_window(workspace, "file:///a/x.docx", "/word"), WordFileWindowResource)
         assert isinstance(create_per_file_window(workspace, "file:///a/y.pptx", "/ppt"), PptFileWindowResource)
-        assert create_per_file_window(workspace, "file:///a/z.xlsx", "/excel") is None
+        assert isinstance(create_per_file_window(workspace, "file:///a/z.xlsx", "/excel"), ExcelFileWindowResource)
+        assert create_per_file_window(workspace, "file:///a/z.txt", "/unknown") is None
 
 
 class TestWordFileWindow:
@@ -75,7 +81,7 @@ class TestWordFileWindow:
 
     def test_invalid_namespace_rejected(self, workspace: OfficeWorkspace) -> None:
         with pytest.raises(ValueError, match="不支持的 namespace"):
-            WordFileWindowResource(workspace, "file:///tmp/x.xlsx", "/excel")
+            WordFileWindowResource(workspace, "file:///tmp/x.txt", "/unknown")
 
     @pytest.mark.asyncio
     async def test_read_renders_stats_and_content(self, workspace: OfficeWorkspace) -> None:
@@ -190,3 +196,91 @@ class TestPptFileWindow:
         r.FETCH_TIMEOUT = 0.1
         content = await r.read()
         assert "元数据不可用" in content
+
+
+class TestExcelFileWindow:
+    """W4b-3（#66）：Excel 单文件窗口渲染（工作簿摘要 + 工作表 + 当前选区）。"""
+
+    def _resource(self, workspace: OfficeWorkspace) -> ExcelFileWindowResource:
+        return ExcelFileWindowResource(workspace, "file:///tmp/data.xlsx", "/excel")
+
+    def test_metadata(self, workspace: OfficeWorkspace) -> None:
+        r = self._resource(workspace)
+        assert r.base_uri == per_file_window_base_uri("/excel", "file:///tmp/data.xlsx")
+        assert r.base_uri.startswith("window://office4ai/excel/")
+        assert r.name == "EXCEL · data.xlsx"
+        assert r.document_uri == "file:///tmp/data.xlsx"
+
+    @pytest.mark.asyncio
+    async def test_read_renders_workbook_and_selection(self, workspace: OfficeWorkspace) -> None:
+        async def mock_emit(document_uri: str, event: str, data: dict) -> dict:
+            assert document_uri == "file:///tmp/data.xlsx"
+            if "workbookInfo" in event:
+                # wire 契约（OASP SheetInfo）：camelCase isActive/isHidden（与 contract 工厂同源）。
+                return {
+                    "success": True,
+                    "data": {
+                        "fileName": "data.xlsx",
+                        "activeSheet": "Sheet1",
+                        "sheets": [
+                            {"name": "Sheet1", "index": 0, "isActive": True, "isHidden": False},
+                            {"name": "Hidden", "index": 1, "isActive": False, "isHidden": True},
+                            {"name": "Plain", "index": 2, "isActive": False, "isHidden": False},
+                        ],
+                    },
+                }
+            return {"success": True, "data": {"address": "A1:C5", "rowCount": 5, "columnCount": 3}}
+
+        workspace.emit_to_document = AsyncMock(side_effect=mock_emit)
+        content = await self._resource(workspace).read()
+
+        assert "Excel 文档: data.xlsx" in content
+        assert "工作表数: 3" in content
+        assert "活动工作表: Sheet1" in content
+        assert "- Sheet1 (当前)" in content
+        assert "- Hidden (隐藏)" in content
+        assert "- Plain\n" in content  # 非活动/非隐藏 → 无后缀标记
+        assert "地址: A1:C5" in content
+        assert "尺寸: 5×3" in content
+
+    @pytest.mark.asyncio
+    async def test_read_no_worksheets(self, workspace: OfficeWorkspace) -> None:
+        async def mock_emit(document_uri: str, event: str, data: dict) -> dict:
+            if "workbookInfo" in event:
+                return {"success": True, "data": {"fileName": "empty.xlsx", "activeSheet": "?", "sheets": []}}
+            return {"success": True, "data": {"address": "A1", "rowCount": 1, "columnCount": 1}}
+
+        workspace.emit_to_document = AsyncMock(side_effect=mock_emit)
+        content = await self._resource(workspace).read()
+        assert "(无工作表)" in content
+
+    @pytest.mark.asyncio
+    async def test_read_workbook_timeout_degrades(self, workspace: OfficeWorkspace) -> None:
+        async def mock_emit(document_uri: str, event: str, data: dict) -> dict:
+            if "workbookInfo" in event:
+                await asyncio.sleep(10)  # cancelled by timeout
+            return {"success": True, "data": {"address": "B2", "rowCount": 1, "columnCount": 1}}
+
+        workspace.emit_to_document = AsyncMock(side_effect=mock_emit)
+        r = self._resource(workspace)
+        r.FETCH_TIMEOUT = 0.1
+        content = await r.read()
+
+        assert "元数据不可用" in content
+        assert "工作表列表不可用" in content
+        assert "地址: B2" in content  # selection 仍渲染（独立并发拉取）
+
+    @pytest.mark.asyncio
+    async def test_read_selection_timeout_degrades(self, workspace: OfficeWorkspace) -> None:
+        async def mock_emit(document_uri: str, event: str, data: dict) -> dict:
+            if "selectedRange" in event:
+                await asyncio.sleep(10)
+            return {"success": True, "data": {"fileName": "d.xlsx", "activeSheet": "S", "sheets": [{"name": "S"}]}}
+
+        workspace.emit_to_document = AsyncMock(side_effect=mock_emit)
+        r = self._resource(workspace)
+        r.FETCH_TIMEOUT = 0.1
+        content = await r.read()
+
+        assert "工作表数: 1" in content
+        assert "选区信息不可用" in content

@@ -82,7 +82,7 @@ class WindowResource(BaseResource):
     def _render(self) -> str:
         clients = connection_manager.get_all_clients()
 
-        # 每文件一个子窗口（按 per-file base_uri 去重）；excel 暂无 per-file 窗口 → 跳过（W4b-3）。
+        # 每文件一个子窗口（按 per-file base_uri 去重）；word/ppt/excel 均投射（W4b-1 + W4b-3）。
         windows: dict[str, tuple[str, str]] = {}  # base_uri -> (wtype, document_uri)
         for c in clients:
             base_uri = per_file_window_base_uri(c.namespace, c.document_uri)

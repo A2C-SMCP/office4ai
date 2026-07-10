@@ -8,6 +8,7 @@
 
 from office4ai.a2c_smcp.resources.base import BaseResource
 from office4ai.a2c_smcp.resources.per_file_window import (
+    ExcelFileWindowResource,
     PerFileWindowResource,
     PptFileWindowResource,
     WordFileWindowResource,
@@ -25,6 +26,7 @@ from office4ai.a2c_smcp.resources.window import WindowResource
 __all__ = [
     "DEFAULT_SKILL_HOST",
     "BaseResource",
+    "ExcelFileWindowResource",
     "PerFileWindowResource",
     "PptFileWindowResource",
     "SkillResource",

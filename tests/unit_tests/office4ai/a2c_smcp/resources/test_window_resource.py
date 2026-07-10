@@ -93,15 +93,15 @@ class TestWindowResourceRead:
         assert "PPT · slides.pptx" in content
 
     @pytest.mark.asyncio
-    async def test_excel_skipped_until_w4b3(self, resource: WindowResource) -> None:
-        """excel 连接暂无 per-file 窗口（W4b-3 延后）→ 根索引不列出。"""
+    async def test_excel_listed_w4b3(self, resource: WindowResource) -> None:
+        """excel 连接投射 per-file 窗口（W4b-3 / #66）→ 根索引列出。"""
         clients = [make_client("file:///tmp/book.xlsx", namespace="/excel")]
         with patch("office4ai.a2c_smcp.resources.window.connection_manager") as mock_cm:
             mock_cm.get_all_clients.return_value = clients
             content = await resource.read()
 
-        assert "book.xlsx" not in content
-        assert "暂无文档连接" in content
+        assert "EXCEL · book.xlsx" in content
+        assert "window://office4ai/excel/" in content
 
     @pytest.mark.asyncio
     async def test_dedup_by_uri(self, resource: WindowResource) -> None:

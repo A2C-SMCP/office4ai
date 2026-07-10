@@ -276,9 +276,13 @@ class TestW4bDynamicWindows:
         server._on_doc_disconnect(doc, "/ppt")
         assert per_file_window_base_uri("/ppt", doc) not in server.resources
 
-    def test_excel_connect_projects_no_window(self, server: OfficeMCPServer, clean_cm) -> None:
-        server._on_doc_connect("file:///a/book.xlsx", "/excel")
-        assert not any("/excel/" in uri for uri in server.resources)  # W4b-3 延后
+    def test_excel_connect_projects_window(self, server: OfficeMCPServer, clean_cm) -> None:
+        from office4ai.a2c_smcp.resources.per_file_window import ExcelFileWindowResource, per_file_window_base_uri
+
+        doc = "file:///a/book.xlsx"
+        buri = per_file_window_base_uri("/excel", doc)
+        server._on_doc_connect(doc, "/excel")  # W4b-3 / #66：excel 现投射 per-file 窗口
+        assert isinstance(server.resources.get(buri), ExcelFileWindowResource)
 
     def test_affected_resource_uris_targets_per_file_window(self, server: OfficeMCPServer, clean_cm) -> None:
         tools = {t.name: t for t in server.tools.values()}
@@ -287,3 +291,116 @@ class TestW4bDynamicWindows:
         # 无 document_uri → 空；authoring 工具 → 空
         assert server._affected_resource_uris(tools["word_insert_text"], {}) == []
         assert server._affected_resource_uris(tools["office_run_script"], {"document_uri": "file:///a/x.docx"}) == []
+
+
+class TestW4bFullscreenOwnership:
+    """W4b-2（#65）：单 fullscreen 归属 = AI 最后操作文件；断连顺延次新；关闭 #4。
+
+    直接驱动 server 的活动/连接回调（生产由 workspace.update_last_activity + connection_manager
+    触发）；断言 per-file 窗口 fullscreen 状态与「至多一个 fullscreen」不变量。同步上下文下通知
+    fire-and-forget 因无运行 loop 优雅 no-op，不影响状态翻转。
+    """
+
+    @staticmethod
+    def _win(server: OfficeMCPServer, namespace: str, doc: str):
+        from office4ai.a2c_smcp.resources.per_file_window import per_file_window_base_uri
+
+        return server.resources[per_file_window_base_uri(namespace, doc)]
+
+    @staticmethod
+    def _fullscreen_count(server: OfficeMCPServer) -> int:
+        from office4ai.a2c_smcp.resources.per_file_window import PerFileWindowResource
+
+        return sum(1 for r in server.resources.values() if isinstance(r, PerFileWindowResource) and r.fullscreen)
+
+    def test_activity_flips_fullscreen_and_clears_others(self, server: OfficeMCPServer, clean_cm) -> None:
+        a, b = "file:///a/a.docx", "file:///a/b.pptx"
+        server._on_doc_connect(a, "/word")
+        server._on_doc_connect(b, "/ppt")
+        assert self._fullscreen_count(server) == 0  # 连接不自动 fullscreen（须 AI 操作）
+
+        server._on_doc_activity(a)
+        assert self._win(server, "/word", a).fullscreen is True
+        assert self._win(server, "/ppt", b).fullscreen is False
+
+        # 操作 b → fullscreen 转移，a 清零（先清后置）
+        server._on_doc_activity(b)
+        assert self._win(server, "/word", a).fullscreen is False
+        assert self._win(server, "/ppt", b).fullscreen is True
+
+    def test_single_fullscreen_invariant_hash4_regression(self, server: OfficeMCPServer, clean_cm) -> None:
+        """#4 回归：反复切换活动文件，任一时刻至多一个 fullscreen。"""
+        docs = [("file:///a/a.docx", "/word"), ("file:///a/b.pptx", "/ppt"), ("file:///a/c.xlsx", "/excel")]
+        for d, ns in docs:
+            server._on_doc_connect(d, ns)
+        for d, _ in docs * 2:  # 反复切换
+            server._on_doc_activity(d)
+            assert self._fullscreen_count(server) <= 1
+        assert self._win(server, "/excel", "file:///a/c.xlsx").fullscreen is True  # 末次操作者独占
+
+    def test_activity_on_unwindowed_file_is_noop(self, server: OfficeMCPServer, clean_cm) -> None:
+        """无 window 的文件（office_run_script 产物 / 未连接）不参与竞争、不扰动现状。"""
+        a = "file:///a/a.docx"
+        server._on_doc_connect(a, "/word")
+        server._on_doc_activity(a)
+        assert self._win(server, "/word", a).fullscreen is True
+
+        server._on_doc_activity("file:///a/generated.docx")  # 无对应 window
+        assert self._win(server, "/word", a).fullscreen is True  # a 仍 fullscreen
+        assert self._fullscreen_count(server) == 1
+
+    def test_disconnect_fullscreen_holder_defers_to_next(self, server: OfficeMCPServer, clean_cm) -> None:
+        """断连收场：fullscreen 持有者断连 → 顺延剩余最近活跃者。"""
+        a, b = "file:///a/a.docx", "file:///a/b.pptx"
+        server._on_doc_connect(a, "/word")
+        server._on_doc_connect(b, "/ppt")
+        server._on_doc_activity(a)  # a 活跃（seq1）
+        server._on_doc_activity(b)  # b 活跃（seq2），fullscreen
+        assert self._win(server, "/ppt", b).fullscreen is True
+
+        server._on_doc_disconnect(b, "/ppt")  # fullscreen 持有者断连
+        assert self._win(server, "/word", a).fullscreen is True  # 顺延到 a
+        assert self._fullscreen_count(server) == 1
+
+    def test_disconnect_defers_to_second_newest_not_any(self, server: OfficeMCPServer, clean_cm) -> None:
+        """断连收场须让给「次新」而非任一剩余：a(seq1)/b(seq2)/c(seq3,fullscreen)，c 断 → b。"""
+        a, b, c = "file:///a/a.docx", "file:///a/b.pptx", "file:///a/c.xlsx"
+        server._on_doc_connect(a, "/word")
+        server._on_doc_connect(b, "/ppt")
+        server._on_doc_connect(c, "/excel")
+        server._on_doc_activity(a)  # seq1
+        server._on_doc_activity(b)  # seq2
+        server._on_doc_activity(c)  # seq3，fullscreen
+        assert self._win(server, "/excel", c).fullscreen is True
+
+        server._on_doc_disconnect(c, "/excel")  # 持有者断连
+        assert self._win(server, "/ppt", b).fullscreen is True  # 顺延到 b（次新）
+        assert self._win(server, "/word", a).fullscreen is False  # 不是 a
+        assert self._fullscreen_count(server) == 1
+
+    def test_disconnect_fullscreen_holder_no_successor(self, server: OfficeMCPServer, clean_cm) -> None:
+        """断连收场：无剩余活跃者 → 无 fullscreen（根索引主视）。"""
+        a = "file:///a/a.docx"
+        server._on_doc_connect(a, "/word")
+        server._on_doc_activity(a)
+        server._on_doc_disconnect(a, "/word")
+        assert self._fullscreen_count(server) == 0
+
+    def test_disconnect_non_fullscreen_leaves_owner(self, server: OfficeMCPServer, clean_cm) -> None:
+        """断连非 fullscreen 文件 → fullscreen 持有者不变。"""
+        a, b = "file:///a/a.docx", "file:///a/b.pptx"
+        server._on_doc_connect(a, "/word")
+        server._on_doc_connect(b, "/ppt")
+        server._on_doc_activity(a)  # a fullscreen
+        server._on_doc_disconnect(b, "/ppt")  # 断非 fullscreen 的 b
+        assert self._win(server, "/word", a).fullscreen is True
+        assert self._fullscreen_count(server) == 1
+
+    def test_reactivating_same_file_is_idempotent(self, server: OfficeMCPServer, clean_cm) -> None:
+        """重复操作同一 fullscreen 文件 → 幂等（仍单 fullscreen，无翻转）。"""
+        a = "file:///a/a.docx"
+        server._on_doc_connect(a, "/word")
+        server._on_doc_activity(a)
+        server._on_doc_activity(a)
+        assert self._win(server, "/word", a).fullscreen is True
+        assert self._fullscreen_count(server) == 1

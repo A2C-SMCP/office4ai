@@ -17,6 +17,7 @@ from loguru import logger
 
 from office4ai.a2c_smcp.config import MCPServerConfig
 from office4ai.a2c_smcp.resources.per_file_window import (
+    PerFileWindowResource,
     affected_window_uris,
     create_per_file_window,
     per_file_window_base_uri,
@@ -27,7 +28,10 @@ from office4ai.certs.paths import get_cert_dir
 from office4ai.certs.trust_store import get_trust_store
 from office4ai.certs.validator import CertStatus, get_cert_expiry_info, validate_certs
 from office4ai.environment.workspace.office_workspace import OfficeWorkspace
-from office4ai.environment.workspace.socketio.services.connection_manager import connection_manager
+from office4ai.environment.workspace.socketio.services.connection_manager import (
+    connection_manager,
+    normalize_document_uri,
+)
 
 
 class OfficeMCPServer(BaseMCPServer):
@@ -51,6 +55,10 @@ class OfficeMCPServer(BaseMCPServer):
         )
         # SKILL 包分发根须在 super().__init__() → _register_resources() 之前就位。
         self._skills_root = self._resolve_skills_root(skills_root)
+        # W4b-2 (#65): fullscreen 归属台账——记录每个文件被 AI 操作的先后序号（单调递增），
+        # 用于断连后「顺延次新活跃者」的裁决（契约③）。回调运行时更新，__init__ 先就位。
+        self._activity_order: dict[str, int] = {}
+        self._activity_seq: int = 0
         super().__init__(config=config, server_name="office4ai")
 
     @classmethod
@@ -341,10 +349,16 @@ class OfficeMCPServer(BaseMCPServer):
         # resource_updated notifications so subscribers learn the file changed.
         self.workspace.set_resource_update_callback(self.subscription_manager.notify_fire_and_forget)
 
+        # W4b-2 (#65): flip fullscreen 归属 to the file the AI just operated on.
+        self.workspace.set_activity_callback(self._on_doc_activity)
+
     async def _async_shutdown(self) -> None:
         """停止 OfficeWorkspace (Socket.IO Server) | Stop OfficeWorkspace"""
         logger.info("停止 OfficeWorkspace | Stopping OfficeWorkspace...")
         self.workspace.set_resource_update_callback(None)
+        self.workspace.set_activity_callback(None)
+        self._activity_order.clear()
+        self._activity_seq = 0
         self.subscription_manager.clear()
         await self.workspace.stop()
 
@@ -362,10 +376,11 @@ class OfficeMCPServer(BaseMCPServer):
         return bool(namespace and connection_manager.get_clients_by_namespace(namespace))
 
     def _affected_resource_uris(self, tool: BaseTool, arguments: dict[str, Any]) -> list[str]:
-        """成功工具调用 → 通知其操作文件的 per-file 窗口（W4b-1）。
+        """成功工具调用 → 通知其操作文件的 per-file 窗口（W4b-1 / W4b-3）。
 
-        用工具入参里的 document_uri（归一化后与注册时同坐标系）定位 per-file 窗口 base_uri；
-        excel/无 document_uri/未知 category → 无对应窗口（返回空，不通知）。
+        用工具入参里的 document_uri（归一化后与注册时同坐标系）定位 per-file 窗口 base_uri
+        （word/ppt/excel 均有窗口）；无 document_uri/未知 category（如 authoring）→ 无对应窗口
+        （返回空，不通知）。
         """
         doc_uri = arguments.get("document_uri")
         if not isinstance(doc_uri, str) or not doc_uri:
@@ -385,10 +400,19 @@ class OfficeMCPServer(BaseMCPServer):
         self._notify_desktop_changed()
 
     def _on_doc_disconnect(self, doc_uri: str, namespace: str) -> None:
-        """完全断连：注销该文件的 per-file 窗口，广播桌面变化。"""
+        """完全断连：注销该文件的 per-file 窗口，处理 fullscreen 顺延，广播桌面变化。"""
         base_uri = per_file_window_base_uri(namespace, doc_uri)
+        was_fullscreen = False
         if base_uri is not None:
-            self.resources.pop(base_uri, None)
+            removed = self.resources.pop(base_uri, None)
+            was_fullscreen = bool(isinstance(removed, PerFileWindowResource) and removed.fullscreen)
+        self._activity_order.pop(normalize_document_uri(doc_uri), None)
+
+        # 断连收场（契约③）：断连的是 fullscreen 持有者 → 让给剩余已连接文件中最近活跃者；
+        # 无最近活跃者则无 fullscreen（根索引主视）。
+        if was_fullscreen:
+            successor = self._most_recently_active_window()
+            self._set_fullscreen_owner(successor.document_uri if successor is not None else None)
         self._notify_desktop_changed()
 
     def _notify_desktop_changed(self) -> None:
@@ -396,6 +420,65 @@ class OfficeMCPServer(BaseMCPServer):
         self.subscription_manager.notify_list_changed_fire_and_forget(tools=True, resources=True)
         # 根索引内容变了（列出的 per-file 窗口集变化）→ 通知其订阅者重读。
         self.subscription_manager.notify_fire_and_forget([self._ROOT_URI])
+
+    # ── 单 fullscreen 归属（W4b-2 / #65，关闭 #4）──
+
+    def _on_doc_activity(self, document_uri: str) -> None:
+        """AI 最后操作某文件（契约③）：该文件 per-file 窗口置 fullscreen，其余清零。
+
+        竞争仅在已连接（有 window）文件间发生；无对应 window 的文件（office_run_script 产物、
+        未连接的盘上编辑）只记台账、不扰动现状 fullscreen。``document_uri`` 已由 workspace 归一化。
+        """
+        norm = normalize_document_uri(document_uri)
+        # 无对应 window → 不参与 fullscreen 竞争，也不记台账（免盘上编辑文件的条目泄漏，
+        # 且顺延仅在「有 window 时活跃过」的文件间裁决，不被连接前的陈旧 seq 污染）。
+        if self._window_for_document(norm) is None:
+            return
+        self._activity_seq += 1
+        self._activity_order[norm] = self._activity_seq
+        changed = self._set_fullscreen_owner(norm)
+        if changed:
+            # fullscreen 状态编码在 window URI 查询串 → 资源列表表示变化，Computer 重列以重组桌面；
+            # 并对翻转的 window 发 resource_updated。工具集未变，不发 tools/list_changed。
+            self.subscription_manager.notify_list_changed_fire_and_forget(resources=True)
+            self.subscription_manager.notify_fire_and_forget(changed)
+
+    def _per_file_windows(self) -> list[PerFileWindowResource]:
+        """当前注册的所有 per-file 窗口资源。"""
+        return [r for r in self.resources.values() if isinstance(r, PerFileWindowResource)]
+
+    def _window_for_document(self, norm_uri: str) -> PerFileWindowResource | None:
+        """按归一化 document_uri 找到对应 per-file 窗口（无则 None）。"""
+        for window in self._per_file_windows():
+            if normalize_document_uri(window.document_uri) == norm_uri:
+                return window
+        return None
+
+    def _set_fullscreen_owner(self, document_uri: str | None) -> list[str]:
+        """令 ``document_uri`` 对应窗口成为唯一 fullscreen，其余清零（先清后置 / 原子）。
+
+        ``document_uri=None`` → 全部清零（无 fullscreen）。返回 fullscreen 状态发生翻转的窗口
+        base_uri 列表。单趟遍历把每个窗口置为其最终值，遍历结束即满足「至多一个 fullscreen」不变量。
+        """
+        target = normalize_document_uri(document_uri) if document_uri else None
+        changed: list[str] = []
+        for window in self._per_file_windows():
+            should = target is not None and normalize_document_uri(window.document_uri) == target
+            if window.fullscreen != should:
+                window.fullscreen = should
+                changed.append(window.base_uri)
+        return changed
+
+    def _most_recently_active_window(self) -> PerFileWindowResource | None:
+        """剩余 per-file 窗口中按台账最近活跃者（都未活跃过则 None）。"""
+        best: PerFileWindowResource | None = None
+        best_seq = 0  # seq 从 1 起；未活跃过的文件不在台账（get→0），不入选
+        for window in self._per_file_windows():
+            seq = self._activity_order.get(normalize_document_uri(window.document_uri), 0)
+            if seq > best_seq:
+                best_seq = seq
+                best = window
+        return best
 
 
 # ---------------------------------------------------------------------------
