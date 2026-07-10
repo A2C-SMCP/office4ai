@@ -231,3 +231,6 @@ manual_tests/ppt/fixtures/*/
 logs/
 
 # End
+
+# macOS
+.DS_Store

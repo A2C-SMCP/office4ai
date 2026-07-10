@@ -82,13 +82,15 @@ class TestMCPProtocol:
 
                 # 获取资源列表 | Get resources list
                 resources_result = await session.list_resources()
-                assert len(resources_result.resources) == 3  # root + word + ppt
 
                 # 验证资源 URI | Verify resource URIs
+                # 注：SKILL 资源在协议层被展平为「根 + 各子文件」多条目，总数随 SKILL 内容/后续
+                # S5/S6 变化 → 用 presence 断言而非硬编码总数（server.resources 注册数由单测钉住）。
                 resource_uris = {str(r.uri) for r in resources_result.resources}
                 assert any("window://office4ai/word" in uri for uri in resource_uris)
                 assert any("window://office4ai/ppt" in uri for uri in resource_uris)
                 assert any(uri.startswith("window://office4ai?") for uri in resource_uris)
+                assert "skill://com.a2c-smcp.office4ai/create-office-file" in resource_uris
                 # 旧资源已删除
                 assert not any("office://workspace/documents" in uri for uri in resource_uris)
 
@@ -146,10 +148,11 @@ class TestMCPResourcesPhase1:
                 resources = await session.list_resources()
                 uris = [str(r.uri) for r in resources.resources]
 
-                assert len(resources.resources) == 3
+                # SKILL 资源协议层展平为多条目 → presence 断言（见 test_list_resources 注释）
                 assert any("window://office4ai/word" in u for u in uris)
                 assert any("window://office4ai/ppt" in u for u in uris)
                 assert any(u.startswith("window://office4ai?") for u in uris)
+                assert "skill://com.a2c-smcp.office4ai/create-office-file" in uris
                 assert not any("office://workspace/documents" in u for u in uris)
 
     async def test_read_window_root_resource(self):

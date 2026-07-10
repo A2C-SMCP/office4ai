@@ -130,6 +130,10 @@ strict_equality = true
 show_error_codes = true
 pretty = true
 mypy_path = ["."]
+# authoring SKILL 能力包（office/skills/<skill>/scripts|references）是分发给 LLM、在沙箱子进程里
+# 执行的**参考产物**，非本 server 导入的类型化代码；由集成测试真跑校验，不纳入 mypy。
+# The authoring SKILL packages are sandbox-executed reference artifacts, not server code — behavior-tested, not typed.
+exclude = ['office4ai/office/skills/']
 
 # lxml 无 py.typed，authoring helper 走「zip + lxml」OOXML 手术必须依赖它
 # lxml ships no py.typed; the authoring helpers' zip+lxml OOXML surgery depends on it
