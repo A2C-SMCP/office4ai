@@ -1,44 +1,34 @@
-"""Dual-path router for the OASP /ppt chart tools (#15, OASP 0.3.0).
+"""Client round-trip driver for the OASP /ppt chart tools (#15, OASP 0.3.0).
 
 The three chart tools (``ppt_insert_chart`` / ``ppt_get_chart`` /
-``ppt_update_chart``) pick one of two execution paths per call, by document
-connection status:
+``ppt_update_chart``) operate on a single execution path: the CONNECTED client
+round-trip. The Server drives the Add-In's *generic*, chart-agnostic OOXML
+carrier events (``ppt:get:slideOoxml`` / ``ppt:insert:slidesOoxml``, published
+normative in OASP 0.3.0) and performs *all* chart OOXML work in-memory via
+``chart_engine``'s base64 helpers. The Add-In only exports / inserts / replaces /
+repositions slides — it never touches chart semantics.
 
-- **Path A — on-disk (DISCONNECTED):** delegate to ``chart_engine``'s on-disk
-  helpers (the original 0.2.0 behaviour, unchanged).
-- **Path B — client round-trip (CONNECTED):** the Server drives the Add-In's
-  *generic*, chart-agnostic OOXML carrier events
-  (``ppt:get:slideOoxml`` / ``ppt:insert:slidesOoxml``, published normative in
-  OASP 0.3.0) and performs *all* chart OOXML work in-memory via ``chart_engine``'s
-  base64 helpers. The Add-In only exports / inserts / replaces / repositions
-  slides — it never touches chart semantics.
-
-Why route instead of the old up-front 3003 guard
-=================================================
-0.2.0 refused chart *writes* up-front when the document was open in PowerPoint
-(``DocumentStatus.CONNECTED``) because a Server on-disk write would be silently
-overwritten by PowerPoint's next ``save()``. Path B removes that hazard: when the
-document is open we mutate the *live* slide through the Add-In, so the open
-document is no longer a reason to refuse — it is the reason to route to path B.
+Connected-only (Path A removed in F1 #68)
+=========================================
+The former on-disk "Path A" (a Server-side python-pptx read/write of a closed
+``.pptx``) was removed once the authoring pipeline (``office_run_script`` +
+python-pptx) took over offline chart work. The tools now refuse a DISCONNECTED
+target with :data:`OFFLINE_MESSAGE`, steering the caller to that pipeline rather
+than writing the file directly. This keeps chart behaviour aligned with the W4a
+binary tool-convergence model (#63): a chart tool is only exposed while a /ppt
+Add-In connection exists, and only truly operates on the document that is open.
 
 Reactive degradation
 =====================
 office-editor4ai's Add-In handlers for the carrier events ship in a later
-milestone (#16). Until they do, a CONNECTED path-B attempt fails — the Add-In
+milestone (#16). Until they do, a CONNECTED round-trip attempt fails — the Add-In
 has no handler (Socket.IO ``.call()`` times out), acks ``3016 API_NOT_SUPPORTED``,
 or the platform lacks the required Office.js requirement set. We *react* to that
-failure rather than gate on a capability flag up-front:
-
-- **insert / update** → raise :class:`PathBUnavailable`; the tool surfaces the
-  explicit "close the document, then retry" guidance (:data:`DEGRADE_MESSAGE_WRITE`)
-  — the same advice the 0.2.0 up-front 3003 guard gave, but now *after* attempting
-  path B rather than instead of it (the flipped guard semantics).
-- **get** → the tool falls back to path A (a disk read has no overwrite hazard;
-  at worst it returns stale data, exactly the 0.2.0 read-while-connected behaviour).
-
-When the Add-In ships, the same path-B code starts succeeding with no Server
-change. A genuine business error from a *working* Add-In (e.g. 3010 chart not
-found) is surfaced as :class:`ChartEngineError`, never silently degraded.
+failure with :data:`DEGRADE_MESSAGE` (close the document and edit the chart
+offline via the authoring pipeline) rather than gating on a capability flag
+up-front. When the Add-In ships, the same round-trip code starts succeeding with
+no Server change. A genuine business error from a *working* Add-In (e.g. 3010
+chart not found) is surfaced as :class:`ChartEngineError`, never degraded.
 """
 
 from __future__ import annotations
@@ -72,16 +62,36 @@ _KEEP_SOURCE_FORMATTING = "keepSourceFormatting"
 #: Error codes that mean "path B is not usable on this client right now" (degrade).
 _DEGRADE_CODES = frozenset({ErrorCode.API_NOT_SUPPORTED})  # "3016"
 
-#: Surfaced when a chart write is routed to path B but path B is unavailable
+#: Refused when a chart tool targets a DISCONNECTED document: there is no live
+#: round-trip to drive and the Server no longer edits closed files on disk (Path A
+#: removed in F1 #68). The "3003" prefix keeps the familiar code; the guidance
+#: steers offline chart work to the authoring pipeline.
+OFFLINE_MESSAGE = (
+    "3003: Target document is not open in PowerPoint via the Add-In, so live chart "
+    "operations are unavailable. For chart work on a closed .pptx, use the authoring "
+    "pipeline instead — call office_run_script with a python-pptx script (see the "
+    "create-office-file / edit-office-file SKILL)."
+)
+
+#: Surfaced when the document is open but the client round-trip is not usable yet
 #: (Add-In handler pending / unsupported requirement set / timeout). Keeps the
-#: "3003" prefix so the LLM still sees the familiar "close the document" code.
-DEGRADE_MESSAGE_WRITE = (
-    "3003: Document is open in PowerPoint via the Add-In, but the client round-trip "
+#: "3003" prefix; steers offline chart work to the authoring pipeline (there is no
+#: longer an on-disk fallback — Path A was removed in F1 #68).
+DEGRADE_MESSAGE = (
+    "3003: The document is open in PowerPoint via the Add-In, but the client round-trip "
     "path (OASP ppt:get:slideOoxml / ppt:insert:slidesOoxml) is not available yet "
     "(Add-In handler pending or required Office.js requirement set unsupported). "
-    "Ask the user to close the document in PowerPoint, then retry — the Server will "
-    "apply the change on disk. This restriction lifts automatically once the Add-In "
-    "ships the OOXML carrier events."
+    "To work on the chart offline, ask the user to close the document, then use the "
+    "authoring pipeline (office_run_script + python-pptx). This restriction lifts "
+    "automatically once the Add-In ships the OOXML carrier events."
+)
+
+#: Surfaced when a chart operation on an OPEN document lacks the slideIndex needed
+#: to export that live slide (both get and update require it for the round-trip).
+LIVE_NEEDS_SLIDE_INDEX = (
+    "3003: slideIndex (0-based) is required to operate on a chart while the document is "
+    "open in PowerPoint — the live round-trip must export that specific slide. Supply the "
+    "slide's index and retry."
 )
 
 
@@ -160,16 +170,15 @@ async def insert_chart_path_b(
     """CONNECTED insert: export the live target slide, add the chart in-memory,
     then re-insert it in place (replace the old slide, restore its position).
 
-    Mirrors path A semantics (the chart lands on the existing target slide, keeping
-    that slide's other content), but operates on the live unsaved document.
+    The chart lands on the existing target slide (default slide 0), keeping that
+    slide's other content, and operates on the live unsaved document.
 
     Deliberately does NOT use ``chart_engine.generate_chart_slide_base64`` (the
-    "standalone new page" mode): path A (``_insert_chart_blocking``) has no
-    new-page semantics either — it rejects an out-of-range ``slideIndex`` — so this
-    mirror keeps insert consistent across both paths. The generate-a-new-page mode
-    is reserved for a future explicit "append slide" capability (it needs an input
-    signal to request it, and on an open document a deck-length query to detect the
-    append case), wired alongside the #16 E2E work, not inferred here.
+    "standalone new page" mode): insert always targets an existing slide here. The
+    generate-a-new-page mode is reserved for a future explicit "append slide"
+    capability (it needs an input signal to request it, and on an open document a
+    deck-length query to detect the append case), wired alongside the #16 E2E work,
+    not inferred here.
     """
     slide_index = options.slide_index if options is not None and options.slide_index is not None else 0
 

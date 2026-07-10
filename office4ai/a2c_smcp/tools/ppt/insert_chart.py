@@ -1,4 +1,4 @@
-"""ppt_insert_chart MCP Tool (OASP /ppt Draft, v0.2.0 — Server OOXML)."""
+"""ppt_insert_chart MCP Tool (OASP /ppt Draft — Server OOXML, connected-only)."""
 
 from __future__ import annotations
 
@@ -14,13 +14,13 @@ from office4ai.environment.workspace.dtos.ppt import (
     ChartInsertOptions,
     ScatterChartData,
 )
-from office4ai.environment.workspace.services import chart_engine, chart_router
+from office4ai.environment.workspace.services import chart_router
 from office4ai.environment.workspace.services.chart_engine import ChartEngineError
 from office4ai.environment.workspace.services.document_lock import document_lock_manager
 
 
 class PptInsertChartInput(BaseModel):
-    """MCP 输入模型：在指定 .pptx 中插入图表（Server 端 OOXML 离线处理）。"""
+    """MCP 输入模型：在打开的文档中插入图表（Server 端 OOXML，连接态客户端往返）。"""
 
     document_uri: str = Field(..., description="Target document URI (e.g. file:///path/to/deck.pptx)")
     chart: CategoricalChartData | ScatterChartData = Field(
@@ -33,7 +33,7 @@ class PptInsertChartInput(BaseModel):
     )
     options: ChartInsertOptions | None = Field(
         default=None,
-        description="Geometry & target slide (optional). Defaults: slideIndex=current, 480x320pt centered.",
+        description="Geometry & target slide (optional). Defaults: slideIndex=0, 480x320pt centered.",
     )
 
 
@@ -48,13 +48,14 @@ class PptInsertChartTool(BaseTool):
     def description(self) -> str:
         return (
             "Insert a chart (column/bar/line/pie/scatter/...) into a PowerPoint slide "
-            "(OASP /ppt Draft, dual-path — all chart OOXML is built Server-side). "
-            "When the document is CLOSED, the Server edits the .pptx on disk; when it is OPEN in "
-            "PowerPoint via the Add-In, the Server applies the chart to the live slide through a "
-            "client round-trip. While the Add-In round-trip handler is not yet available it may "
-            "return 3003 (close the document, then retry); this lifts automatically once it ships. "
-            "Expect >1s latency. After an on-disk write the document must be reopened to render the new "
-            "chart (an MCP resource_updated notification is fired to /ppt subscribers). "
+            "(OASP /ppt Draft — all chart OOXML is built Server-side). Requires the target "
+            "document OPEN in PowerPoint via the Add-In: the Server applies the chart to the live "
+            "slide through a client round-trip. For a CLOSED .pptx this returns 3003 — build the "
+            "chart offline with the authoring pipeline (office_run_script + python-pptx) instead. "
+            "While the Add-In round-trip handler is not yet available a CONNECTED call may also "
+            "return 3003 (close the document and use office_run_script); this lifts automatically "
+            "once it ships. Expect >1s latency. The live round-trip updates the open document in "
+            "place (an MCP resource_updated notification is fired to /ppt subscribers). "
             "ChartType discriminates the schema: categorical types (ColumnClustered/ColumnStacked/"
             "BarClustered/Line/LineMarkers/Pie/Doughnut/Area/Radar) require categories + "
             "series[].values; Scatter requires series[].points = [{x, y}]. "
@@ -78,36 +79,31 @@ class PptInsertChartTool(BaseTool):
         return PptInsertChartInput
 
     async def execute(self, arguments: dict[str, Any]) -> dict[str, Any]:
-        """Dual-path route (#15): CONNECTED → client round-trip; DISCONNECTED → on-disk OOXML."""
+        """Connected-only (#68): CONNECTED → live client round-trip; DISCONNECTED → refuse."""
         try:
             validated = self.validate_input(arguments, PptInsertChartInput)
         except ValueError as e:
             return {"success": False, "error": str(e)}
 
         document_uri = validated.document_uri
-        connected = self.workspace.get_document_status(document_uri) == DocumentStatus.CONNECTED
+        # Offline chart work is served by the authoring pipeline, not this tool (Path A removed, #68).
+        if self.workspace.get_document_status(document_uri) != DocumentStatus.CONNECTED:
+            return {"success": False, "error": chart_router.OFFLINE_MESSAGE}
         async with document_lock_manager.acquire(document_uri):
             try:
-                if connected:
-                    result_data = await chart_router.insert_chart_path_b(
-                        self.workspace, document_uri, validated.chart, validated.options
-                    )
-                else:
-                    result_data = await chart_engine.insert_chart(
-                        document_uri=document_uri,
-                        chart_data=validated.chart,
-                        options=validated.options,
-                    )
+                result_data = await chart_router.insert_chart_path_b(
+                    self.workspace, document_uri, validated.chart, validated.options
+                )
             except chart_router.PathBUnavailable:
-                # Reactive degradation: path B not available yet → flipped 3003 guidance.
-                return {"success": False, "error": chart_router.DEGRADE_MESSAGE_WRITE}
+                # Reactive degradation: live round-trip not available yet → offline-authoring guidance.
+                return {"success": False, "error": chart_router.DEGRADE_MESSAGE}
             except ChartEngineError as e:
                 return {"success": False, "error": str(e)}
-            except Exception as e:  # noqa: BLE001 - surface unexpected I/O errors as 3004
+            except Exception as e:  # noqa: BLE001 - surface unexpected errors as 3004
                 return {"success": False, "error": f"3004: {e}"}
 
-        # On-disk writes change the file (reopen to render); live round-trips already updated it.
-        result_data["requiresReload"] = not connected
+        # The live round-trip already updated the open document → no reopen needed.
+        result_data["requiresReload"] = False
         self.workspace.update_last_activity(
             document_uri=document_uri,
             tool_name=self.name,

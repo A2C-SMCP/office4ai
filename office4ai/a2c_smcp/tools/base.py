@@ -82,9 +82,9 @@ class BaseTool(ABC):
 
         默认按 ``category`` 派生：``word``/``ppt``/``excel`` 平台工具依赖对应 Add-In 连接
         （``True``）；``authoring`` 等 standalone 工具（如 ``office_run_script``）常驻
-        （``False``），无连接也暴露。chart 工具（``category='ppt'``）经此默认即 ``True``——
-        即便有 Path A 离线能力，也按 W4a 二元模型随连接收敛；Path A 代码删除见 F1(#68)。
-        子类如需背离 category 语义可 override 本属性。
+        （``False``），无连接也暴露。chart 工具（``category='ppt'``）经此默认即 ``True``，
+        按 W4a 二元模型随连接收敛；其离线路径（旧 Path A）已在 F1(#68) 删除，脱机改图
+        改由 authoring 流水线（``office_run_script``）承接。子类如需背离 category 语义可 override 本属性。
         """
         return self.category != "authoring"
 

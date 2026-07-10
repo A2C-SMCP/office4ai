@@ -6,37 +6,33 @@ office-js#5463). The OASP protocol therefore routes ppt:insert:chart /
 ppt:get:chart / ppt:update:chart through this Server-side engine, which builds
 and mutates the .pptx OOXML directly via ``python-pptx``.
 
-Two execution modes share one OOXML core
-========================================
-- **Path A — on-disk (closed document):** load/modify/save a ``.pptx`` file on
-  disk. This is the original 0.2.0 behaviour and is preserved unchanged (the
-  CONNECTED-document 3003 guard still lives in the tools, not here).
-- **Path B — in-memory base64 (open document, OASP 0.3.0):** the Server never
-  touches disk; it exchanges single-slide ``.pptx`` packages as base64 over the
-  wire with the Add-In (which exports the live slide via
-  ``Slide.exportAsBase64`` and re-inserts via ``insertSlidesFromBase64``). The
-  engine offers two in-memory shapes:
+Single execution path: in-memory base64 (open document, OASP 0.3.0)
+===================================================================
+The Server never touches disk; it exchanges single-slide ``.pptx`` packages as
+base64 over the wire with the Add-In (which exports the live slide via
+``Slide.exportAsBase64`` and re-inserts via ``insertSlidesFromBase64``). The
+engine offers two in-memory shapes:
 
-  * *generate standalone single page* — build a fresh 1-slide deck containing the
-    chart and return it as base64 (used by "insert → new page"; needs no input
-    package);
-  * *modify a single page* — load a base64 single-slide package, locate/add/edit
-    the chart, return the package back as base64 (used by get / update /
-    insert-into-existing-page).
+* *generate standalone single page* — build a fresh 1-slide deck containing the
+  chart and return it as base64 (used by "insert → new page"; needs no input
+  package);
+* *modify a single page* — load a base64 single-slide package, locate/add/edit
+  the chart, return the package back as base64 (used by get / update /
+  insert-into-existing-page).
 
-  All chart OOXML logic stays here in python-pptx; the Add-In only carries
-  generic, chart-agnostic primitives. Routing between Path A and Path B is the
-  responsibility of the chart tools (#15), not this module.
+All chart OOXML logic stays here in python-pptx; the Add-In only carries generic,
+chart-agnostic primitives. The chart tools (#15) drive this path only when the
+target document is CONNECTED; a closed document is refused with guidance to the
+authoring pipeline (``office_run_script`` + python-pptx). The former on-disk
+"Path A" was removed in F1 (#68) — offline chart authoring is served by the
+scripting runtime, not by this engine writing ``.pptx`` files directly.
 
-Operational constraints (Path A only; mirrored from the OASP events-ppt admonition):
+Operational constraints:
 
-- The Add-In must ``save()`` the document before calling — unsaved client edits
-  will be overwritten when this engine rewrites the .pptx on disk.
 - Concurrent chart calls on the same document must be serialized (see
   ``document_lock.DocumentLockManager``); two simultaneous writes corrupt the
   OOXML package.
-- Latency is dominated by disk I/O and python-pptx parsing — typically >1s on
-  multi-MB decks.
+- Latency is dominated by python-pptx parsing of the exported slide package.
 
 Element identity
 ================
@@ -61,10 +57,8 @@ import base64
 import binascii
 import io
 import math
-import urllib.parse
 import uuid
 from dataclasses import dataclass
-from pathlib import Path
 from typing import Any
 
 from pptx import Presentation
@@ -137,30 +131,6 @@ def _xl_chart_type(chart_type: str) -> XL_CHART_TYPE:
             code=ErrorCode.INVALID_PARAM,
             message=f"Unsupported chartType: {chart_type!r}",
         ) from exc
-
-
-# ---------------------------------------------------------------------------
-# URI ↔ filesystem path
-# ---------------------------------------------------------------------------
-
-
-def _uri_to_path(document_uri: str) -> Path:
-    """Convert a ``file://`` URI to a local Path. Raises 3001 if invalid."""
-    parsed = urllib.parse.urlparse(document_uri)
-    if parsed.scheme != "file":
-        raise ChartEngineError(
-            code=ErrorCode.DOCUMENT_NOT_FOUND,
-            message=f"Only file:// URIs are supported, got: {document_uri!r}",
-        )
-    # urllib gives us an unquoted path with a leading slash even on macOS/Linux.
-    raw = urllib.parse.unquote(parsed.path)
-    path = Path(raw)
-    if not path.exists():
-        raise ChartEngineError(
-            code=ErrorCode.DOCUMENT_NOT_FOUND,
-            message=f"Document not found: {path}",
-        )
-    return path
 
 
 # ---------------------------------------------------------------------------
@@ -454,7 +424,7 @@ def _is_categorical(chart_type: str) -> bool:
 
 
 # ---------------------------------------------------------------------------
-# OOXML core — operate on an already-loaded ``Presentation`` (Path A + Path B share these)
+# OOXML core — operate on an already-loaded ``Presentation`` (shared by every entry point)
 # ---------------------------------------------------------------------------
 
 
@@ -765,7 +735,7 @@ def _modify_chart_in_prs(
 
 
 # ---------------------------------------------------------------------------
-# base64 single-slide package helpers (Path B)
+# base64 single-slide package helpers (client round-trip)
 # ---------------------------------------------------------------------------
 
 
@@ -804,61 +774,7 @@ def _first_slide(prs: Any) -> Any:
 
 
 # ---------------------------------------------------------------------------
-# Path A — on-disk blocking implementations
-# ---------------------------------------------------------------------------
-
-
-def _insert_chart_blocking(
-    document_path: Path,
-    chart_data: CategoricalChartData | ScatterChartData,
-    options: ChartInsertOptions | None,
-) -> dict[str, Any]:
-    prs = Presentation(str(document_path))
-
-    slide_index_target = options.slide_index if options and options.slide_index is not None else None
-    if slide_index_target is None:
-        slide_index_target = 0
-    if slide_index_target < 0 or slide_index_target >= len(prs.slides):
-        raise ChartEngineError(
-            code=ErrorCode.INVALID_PARAM,
-            message=(f"slideIndex {slide_index_target} out of range [0, {len(prs.slides) - 1}]"),
-        )
-    slide = prs.slides[slide_index_target]
-
-    chart_shape, element_id = _add_chart_to_slide(prs, slide, chart_data, options)
-    prs.save(str(document_path))
-    return _insert_result(element_id, slide_index_target, chart_data, chart_shape)
-
-
-def _get_chart_blocking(document_path: Path, element_id: str, hint_index: int | None) -> dict[str, Any]:
-    prs = Presentation(str(document_path))
-    _slide, shape, slide_idx = _find_chart(prs, element_id, hint_index)
-    return {
-        "elementId": element_id,
-        "slideIndex": slide_idx,
-        "chart": _extract_chart_data(shape.chart),
-        **_geometry_dict(shape),
-    }
-
-
-def _update_chart_blocking(
-    document_path: Path,
-    element_id: str,
-    update: CategoricalChartUpdate | ScatterChartUpdate,
-) -> dict[str, Any]:
-    prs = Presentation(str(document_path))
-    slide, shape, _slide_idx = _find_chart(prs, element_id, None)
-    returned_id, updated_fields = _modify_chart_in_prs(slide, shape, element_id, update)
-    prs.save(str(document_path))
-    return {
-        "elementId": returned_id,
-        "chartType": update.chart_type,
-        "updatedFields": updated_fields,
-    }
-
-
-# ---------------------------------------------------------------------------
-# Path B — in-memory base64 blocking implementations
+# In-memory base64 blocking implementations (open document, OASP 0.3.0)
 # ---------------------------------------------------------------------------
 
 
@@ -919,42 +835,7 @@ def _update_chart_in_slide_b64_blocking(
 
 
 # ---------------------------------------------------------------------------
-# Async wrappers — Path A (on-disk; offload blocking I/O to a worker thread)
-# ---------------------------------------------------------------------------
-
-
-async def insert_chart(
-    document_uri: str,
-    chart_data: CategoricalChartData | ScatterChartData,
-    options: ChartInsertOptions | None,
-) -> dict[str, Any]:
-    """Insert a new chart into the .pptx at ``document_uri``.
-
-    Raises ``ChartEngineError`` (carrying an OASP code) on validation / IO failure.
-    """
-    path = _uri_to_path(document_uri)
-    _validate_chart_data(chart_data)
-    return await asyncio.to_thread(_insert_chart_blocking, path, chart_data, options)
-
-
-async def get_chart(document_uri: str, element_id: str, slide_index: int | None = None) -> dict[str, Any]:
-    """Read an existing chart's data into the OASP ``ChartData`` wire shape."""
-    path = _uri_to_path(document_uri)
-    return await asyncio.to_thread(_get_chart_blocking, path, element_id, slide_index)
-
-
-async def update_chart(
-    document_uri: str,
-    element_id: str,
-    update: CategoricalChartUpdate | ScatterChartUpdate,
-) -> dict[str, Any]:
-    """Apply a partial update to an existing chart."""
-    path = _uri_to_path(document_uri)
-    return await asyncio.to_thread(_update_chart_blocking, path, element_id, update)
-
-
-# ---------------------------------------------------------------------------
-# Async wrappers — Path B (in-memory base64; no disk access)
+# Async wrappers — in-memory base64 (no disk access)
 # ---------------------------------------------------------------------------
 
 

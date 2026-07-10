@@ -2,8 +2,8 @@
 Document-level async lock manager.
 
 Used by the OOXML chart engine to serialize concurrent writes against the same
-.pptx file. The OASP /ppt chart events open and rewrite OOXML directly on disk;
-two concurrent writes would corrupt the package.
+document. The OASP /ppt chart events drive a base64 slide round-trip (export →
+mutate in-memory → re-insert); two concurrent writes would corrupt the package.
 
 Usage::
 

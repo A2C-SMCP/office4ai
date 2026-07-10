@@ -12,7 +12,6 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from office4ai.a2c_smcp.resources.per_file_window import affected_window_uris
 from office4ai.a2c_smcp.tools.ppt import (
     PptAddSlideTool,
     PptDeleteElementTool,
@@ -1023,8 +1022,12 @@ def _extract_types_from_schema(schema: dict) -> set[str]:
 # exercised end-to-end.
 
 
-class TestChartToolExecute:
-    """End-to-end execute() tests for the 3 chart tools (real .pptx fixture)."""
+class TestChartToolConnectedOnly:
+    """execute() tests for the 3 chart tools after Path A removal (#68).
+
+    A DISCONNECTED target is refused with authoring-pipeline guidance; the live
+    (CONNECTED) round-trip is exercised in TestChartToolDualPathRouting below.
+    """
 
     @pytest.fixture
     def deck_uri(self, tmp_path):
@@ -1038,20 +1041,22 @@ class TestChartToolExecute:
         return path.as_uri()
 
     @pytest.fixture
-    def workspace_with_notify(self):
-        # Default: no Add-In holding the file → chart writes are allowed.
-        # Tests that exercise the CONNECTED-reject path override this per-test.
+    def disconnected_ws(self):
+        # No Add-In holding the file → chart tools refuse and steer to authoring (#68).
         from office4ai.environment.workspace.base import DocumentStatus
 
         ws = MagicMock()
         ws.notify_resource_updated = MagicMock()
         ws.update_last_activity = MagicMock()
+        ws.emit_to_document = AsyncMock()
         ws.get_document_status = MagicMock(return_value=DocumentStatus.DISCONNECTED)
         return ws
 
     @pytest.mark.asyncio
-    async def test_insert_chart_returns_element_id_and_fires_notify(self, workspace_with_notify, deck_uri):
-        tool = PptInsertChartTool(workspace_with_notify)
+    async def test_insert_offline_refused(self, disconnected_ws, deck_uri):
+        from office4ai.environment.workspace.services import chart_router
+
+        tool = PptInsertChartTool(disconnected_ws)
         result = await tool.execute(
             {
                 "document_uri": deck_uri,
@@ -1059,55 +1064,53 @@ class TestChartToolExecute:
                     "chartType": "ColumnClustered",
                     "categories": ["A", "B"],
                     "series": [{"name": "x", "values": [1, 2]}],
-                    "title": "T",
                 },
                 "options": {"slideIndex": 0},
             }
         )
-        assert result["success"] is True
-        assert result["data"]["elementId"].startswith("oasp-chart-")
-        assert result["data"]["requiresReload"] is True
-        # Server-OOXML mutations must trigger MCP resource_updated notifications
-        # (W4b-1: the file's per-file window; not the root index — the connected-file set is unchanged).
-        workspace_with_notify.notify_resource_updated.assert_called_once_with(affected_window_uris("/ppt", deck_uri))
-        workspace_with_notify.update_last_activity.assert_called_once()
+        assert result["success"] is False
+        # Closed document → refuse and steer to the authoring pipeline (Path A removed, #68).
+        assert result["error"] == chart_router.OFFLINE_MESSAGE
+        assert "office_run_script" in result["error"]
+        disconnected_ws.emit_to_document.assert_not_awaited()
+        disconnected_ws.notify_resource_updated.assert_not_called()
+        disconnected_ws.update_last_activity.assert_not_called()
 
     @pytest.mark.asyncio
-    async def test_insert_scatter_chart(self, workspace_with_notify, deck_uri):
-        tool = PptInsertChartTool(workspace_with_notify)
+    async def test_update_offline_refused(self, disconnected_ws, deck_uri):
+        from office4ai.environment.workspace.services import chart_router
+
+        tool = PptUpdateChartTool(disconnected_ws)
         result = await tool.execute(
             {
                 "document_uri": deck_uri,
-                "chart": {
-                    "chartType": "Scatter",
-                    "series": [{"name": "ads", "points": [{"x": 1, "y": 2}, {"x": 3, "y": 4}]}],
-                },
-            }
-        )
-        assert result["success"] is True
-        assert result["data"]["chartType"] == "Scatter"
-
-    @pytest.mark.asyncio
-    async def test_insert_dimension_mismatch_returns_3015(self, workspace_with_notify, deck_uri):
-        tool = PptInsertChartTool(workspace_with_notify)
-        result = await tool.execute(
-            {
-                "document_uri": deck_uri,
-                "chart": {
-                    "chartType": "Pie",
-                    "categories": ["A", "B", "C"],
-                    "series": [{"name": "x", "values": [1, 2]}],  # 2 != 3
-                },
+                "elementId": "oasp-chart-abc",
+                "slideIndex": 0,
+                "chart": {"chartType": "Line", "title": "x"},
             }
         )
         assert result["success"] is False
-        assert "3015" in result["error"]
-        # Failed insert should NOT fire reload notification.
-        workspace_with_notify.notify_resource_updated.assert_not_called()
+        assert result["error"] == chart_router.OFFLINE_MESSAGE
+        disconnected_ws.emit_to_document.assert_not_awaited()
+        disconnected_ws.notify_resource_updated.assert_not_called()
+        disconnected_ws.update_last_activity.assert_not_called()
 
     @pytest.mark.asyncio
-    async def test_insert_invalid_chart_type_rejected_at_validation(self, workspace_with_notify, deck_uri):
-        tool = PptInsertChartTool(workspace_with_notify)
+    async def test_get_offline_refused(self, disconnected_ws, deck_uri):
+        from office4ai.environment.workspace.services import chart_router
+
+        tool = PptGetChartTool(disconnected_ws)
+        result = await tool.execute({"document_uri": deck_uri, "elementId": "oasp-chart-abc", "slideIndex": 0})
+        assert result["success"] is False
+        assert result["error"] == chart_router.OFFLINE_MESSAGE
+        disconnected_ws.emit_to_document.assert_not_awaited()
+        disconnected_ws.update_last_activity.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_insert_invalid_chart_type_rejected_at_validation(self, disconnected_ws, deck_uri):
+        # Discriminator validation happens before the connection check, so a bogus
+        # chartType is rejected up-front regardless of connection status.
+        tool = PptInsertChartTool(disconnected_ws)
         result = await tool.execute(
             {
                 "document_uri": deck_uri,
@@ -1117,191 +1120,16 @@ class TestChartToolExecute:
         assert result["success"] is False
         assert "error" in result
 
-    @pytest.mark.asyncio
-    async def test_get_chart_returns_data_without_notify(self, workspace_with_notify, deck_uri):
-        # Insert first to obtain an elementId.
-        i_tool = PptInsertChartTool(workspace_with_notify)
-        ins = await i_tool.execute(
-            {
-                "document_uri": deck_uri,
-                "chart": {
-                    "chartType": "Line",
-                    "categories": ["A", "B"],
-                    "series": [{"name": "x", "values": [1, 2]}],
-                    "title": "Trend",
-                },
-            }
-        )
-        eid = ins["data"]["elementId"]
-        workspace_with_notify.notify_resource_updated.reset_mock()
-
-        g_tool = PptGetChartTool(workspace_with_notify)
-        result = await g_tool.execute({"document_uri": deck_uri, "elementId": eid})
-        assert result["success"] is True
-        assert result["data"]["chart"]["chartType"] == "Line"
-        assert result["data"]["chart"]["title"] == "Trend"
-        # Read-only — must not fire reload notification.
-        workspace_with_notify.notify_resource_updated.assert_not_called()
-
-    @pytest.mark.asyncio
-    async def test_get_chart_int_element_id_coerced(self, workspace_with_notify, deck_uri):
-        # Insert and grab the numeric portion.
-        i_tool = PptInsertChartTool(workspace_with_notify)
-        ins = await i_tool.execute(
-            {
-                "document_uri": deck_uri,
-                "chart": {
-                    "chartType": "Pie",
-                    "categories": ["A"],
-                    "series": [{"name": "x", "values": [1]}],
-                },
-            }
-        )
-        eid = ins["data"]["elementId"]  # "chart-N"
-        # Tool input model coerces int elementId — but here we test str works (default path).
-        g_tool = PptGetChartTool(workspace_with_notify)
-        result = await g_tool.execute({"document_uri": deck_uri, "elementId": eid})
-        assert result["success"] is True
-
-    @pytest.mark.asyncio
-    async def test_get_chart_unknown_element_returns_3010(self, workspace_with_notify, deck_uri):
-        g_tool = PptGetChartTool(workspace_with_notify)
-        result = await g_tool.execute({"document_uri": deck_uri, "elementId": "chart-99999"})
-        assert result["success"] is False
-        assert "3010" in result["error"]
-
-    @pytest.mark.asyncio
-    async def test_update_chart_title_only(self, workspace_with_notify, deck_uri):
-        i_tool = PptInsertChartTool(workspace_with_notify)
-        ins = await i_tool.execute(
-            {
-                "document_uri": deck_uri,
-                "chart": {
-                    "chartType": "BarClustered",
-                    "categories": ["A", "B"],
-                    "series": [{"name": "x", "values": [1, 2]}],
-                    "title": "Old",
-                },
-            }
-        )
-        eid = ins["data"]["elementId"]
-        workspace_with_notify.notify_resource_updated.reset_mock()
-
-        u_tool = PptUpdateChartTool(workspace_with_notify)
-        result = await u_tool.execute(
-            {
-                "document_uri": deck_uri,
-                "elementId": eid,
-                "chart": {"chartType": "BarClustered", "title": "New"},
-            }
-        )
-        assert result["success"] is True
-        assert "title" in result["data"]["updatedFields"]
-        assert result["data"]["requiresReload"] is True
-        workspace_with_notify.notify_resource_updated.assert_called_once()
-
-    @pytest.mark.asyncio
-    async def test_update_chart_dimension_mismatch_returns_3015(self, workspace_with_notify, deck_uri):
-        i_tool = PptInsertChartTool(workspace_with_notify)
-        ins = await i_tool.execute(
-            {
-                "document_uri": deck_uri,
-                "chart": {
-                    "chartType": "ColumnClustered",
-                    "categories": ["A", "B"],
-                    "series": [{"name": "x", "values": [1, 2]}],
-                },
-            }
-        )
-        eid = ins["data"]["elementId"]
-
-        u_tool = PptUpdateChartTool(workspace_with_notify)
-        result = await u_tool.execute(
-            {
-                "document_uri": deck_uri,
-                "elementId": eid,
-                "chart": {
-                    "chartType": "ColumnClustered",
-                    "categories": ["X", "Y", "Z"],
-                    "series": [{"name": "t", "values": [10, 20]}],  # 2 != 3
-                },
-            }
-        )
-        assert result["success"] is False
-        assert "3015" in result["error"]
-
-    @pytest.mark.asyncio
-    async def test_update_cross_variant_returns_new_element_id(self, workspace_with_notify, deck_uri):
-        i_tool = PptInsertChartTool(workspace_with_notify)
-        ins = await i_tool.execute(
-            {
-                "document_uri": deck_uri,
-                "chart": {
-                    "chartType": "ColumnClustered",
-                    "categories": ["A", "B"],
-                    "series": [{"name": "x", "values": [1, 2]}],
-                },
-            }
-        )
-        old_eid = ins["data"]["elementId"]
-
-        u_tool = PptUpdateChartTool(workspace_with_notify)
-        result = await u_tool.execute(
-            {
-                "document_uri": deck_uri,
-                "elementId": old_eid,
-                "chart": {
-                    "chartType": "Scatter",
-                    "series": [{"name": "p", "points": [{"x": 1, "y": 2}, {"x": 3, "y": 4}]}],
-                },
-            }
-        )
-        assert result["success"] is True
-        assert result["data"]["chartType"] == "Scatter"
-        assert "chartType" in result["data"]["updatedFields"]
-        # Recreate preserves the opaque id (written to cNvPr/@name); OASP returns the latest elementId.
-        new_eid = result["data"]["elementId"]
-        assert new_eid.startswith("oasp-chart-")
-        assert new_eid == old_eid
-
-    @pytest.mark.asyncio
-    async def test_update_unknown_element_returns_3010(self, workspace_with_notify, deck_uri):
-        u_tool = PptUpdateChartTool(workspace_with_notify)
-        result = await u_tool.execute(
-            {
-                "document_uri": deck_uri,
-                "elementId": "chart-99999",
-                "chart": {"chartType": "ColumnClustered", "title": "x"},
-            }
-        )
-        assert result["success"] is False
-        assert "3010" in result["error"]
-
-    @pytest.mark.asyncio
-    async def test_insert_missing_document_returns_3001(self, workspace_with_notify):
-        tool = PptInsertChartTool(workspace_with_notify)
-        result = await tool.execute(
-            {
-                "document_uri": "file:///does/not/exist.pptx",
-                "chart": {
-                    "chartType": "Line",
-                    "categories": ["A"],
-                    "series": [{"name": "x", "values": [1]}],
-                },
-            }
-        )
-        assert result["success"] is False
-        assert "3001" in result["error"]
-
 
 # ============================================================================
-# Dual-path routing (#15, OASP 0.3.0) — route by DocumentStatus
+# Connected-only routing (#15/#68, OASP 0.3.0) — CONNECTED drives the live round-trip
 # ============================================================================
-# CONNECTED → path B (client round-trip: ppt:get:slideOoxml / ppt:insert:slidesOoxml,
-# all chart OOXML built Server-side). DISCONNECTED → path A (on-disk python-pptx).
-# Because the Add-In carrier-event handlers ship later (#16), a CONNECTED path-B
-# attempt currently fails (timeout / 3016) → reactive degradation: writes surface
-# the flipped 3003 guidance, reads fall back to the on-disk read.
+# CONNECTED → live client round-trip (ppt:get:slideOoxml / ppt:insert:slidesOoxml,
+# all chart OOXML built Server-side). DISCONNECTED → refused (OFFLINE_MESSAGE): the
+# former on-disk Path A was removed in #68; offline chart work goes to the authoring
+# pipeline. Because the Add-In carrier-event handlers ship later (#16), a CONNECTED
+# round-trip currently fails (timeout / 3016) → reactive degradation to DEGRADE_MESSAGE
+# (close the document and use office_run_script).
 
 
 def _disconnected_ws():
@@ -1365,22 +1193,9 @@ def _emit_returns_3016(document_uri, event, data):
     return {"success": False, "error": {"code": "3016", "message": "PowerPointApi 1.8 unavailable"}}
 
 
-async def _insert_on_disk(deck_uri, slide_index=0, chart_type="Line"):
-    """Insert a chart via the on-disk (DISCONNECTED) path; return its elementId."""
-    ins = await PptInsertChartTool(_disconnected_ws()).execute(
-        {
-            "document_uri": deck_uri,
-            "chart": {"chartType": chart_type, "categories": ["A", "B"], "series": [{"name": "x", "values": [1, 2]}]},
-            "options": {"slideIndex": slide_index},
-        }
-    )
-    assert ins["success"], ins
-    return ins["data"]["elementId"]
-
-
 class TestChartToolDualPathRouting:
-    """#15: CONNECTED → client round-trip (path B); DISCONNECTED → on-disk (path A);
-    path B failure → reactive degradation."""
+    """#15/#68: CONNECTED → live client round-trip; DISCONNECTED → refused (Path A removed);
+    live round-trip failure → reactive degradation to offline-authoring guidance."""
 
     @pytest.fixture
     def deck_uri(self, tmp_path):
@@ -1393,10 +1208,12 @@ class TestChartToolDualPathRouting:
         prs.save(str(path))
         return path.as_uri()
 
-    # -- DISCONNECTED → on-disk, no client round-trip ----------------------------
+    # -- DISCONNECTED → refused up-front (Path A removed, #68) --------------------
 
     @pytest.mark.asyncio
-    async def test_disconnected_insert_uses_disk_and_does_not_emit(self, deck_uri):
+    async def test_disconnected_insert_refused_and_does_not_emit(self, deck_uri):
+        from office4ai.environment.workspace.services import chart_router
+
         ws = _disconnected_ws()
         ws.emit_to_document = AsyncMock()
         result = await PptInsertChartTool(ws).execute(
@@ -1406,10 +1223,10 @@ class TestChartToolDualPathRouting:
                 "options": {"slideIndex": 0},
             }
         )
-        assert result["success"] is True
-        # On-disk write → the deck must be reopened to render.
-        assert result["data"]["requiresReload"] is True
+        assert result["success"] is False
+        assert result["error"] == chart_router.OFFLINE_MESSAGE
         ws.emit_to_document.assert_not_awaited()
+        ws.notify_resource_updated.assert_not_called()
 
     # -- CONNECTED → path B happy path (mocked carrier events) -------------------
 
@@ -1439,7 +1256,10 @@ class TestChartToolDualPathRouting:
         assert apply_payload["formatting"] == "keepSourceFormatting"
         assert apply_payload["replaceSlideId"] == "sid-export"
         assert apply_payload["finalSlideIndex"] == 0
-        ws.notify_resource_updated.assert_called_once()
+        from office4ai.a2c_smcp.resources.per_file_window import affected_window_uris
+
+        # Notify the RIGHT per-file window (the file just written), not merely "some" notify.
+        ws.notify_resource_updated.assert_called_once_with(affected_window_uris("/ppt", deck_uri))
 
     @pytest.mark.asyncio
     async def test_get_routes_to_path_b_when_connected_with_hint(self, deck_uri):
@@ -1500,7 +1320,44 @@ class TestChartToolDualPathRouting:
         assert events == ["ppt:get:slideOoxml", "ppt:insert:slidesOoxml"]
         ws.notify_resource_updated.assert_called_once()
 
-    # -- Reactive degradation: writes → 3003, reads → on-disk fallback -----------
+    # -- CONNECTED → engine business errors surfaced verbatim (not degraded) ------
+
+    @pytest.mark.asyncio
+    async def test_insert_dimension_mismatch_surfaced_as_3015(self, deck_uri):
+        # Bad dimensions are caught Server-side (after the export round-trip) and surfaced verbatim.
+        ws = _connected_ws(_make_path_b_emit(_blank_slide_b64()))
+        result = await PptInsertChartTool(ws).execute(
+            {
+                "document_uri": deck_uri,
+                "chart": {
+                    "chartType": "Pie",
+                    "categories": ["A", "B", "C"],
+                    "series": [{"name": "x", "values": [1, 2]}],
+                },
+                "options": {"slideIndex": 0},
+            }
+        )
+        assert result["success"] is False
+        assert "3015" in result["error"]
+        ws.notify_resource_updated.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_update_unknown_element_surfaced_as_3010(self, deck_uri):
+        # The exported slide carries no chart at this id → 3010 from the engine, surfaced verbatim.
+        ws = _connected_ws(_make_path_b_emit(_blank_slide_b64()))
+        result = await PptUpdateChartTool(ws).execute(
+            {
+                "document_uri": deck_uri,
+                "elementId": "oasp-chart-missing",
+                "slideIndex": 0,
+                "chart": {"chartType": "Line", "title": "x"},
+            }
+        )
+        assert result["success"] is False
+        assert "3010" in result["error"]
+        ws.notify_resource_updated.assert_not_called()
+
+    # -- Reactive degradation: live round-trip unavailable → 3003 offline guidance ----
 
     @pytest.mark.asyncio
     async def test_insert_degrades_when_path_b_times_out(self, deck_uri):
@@ -1552,8 +1409,10 @@ class TestChartToolDualPathRouting:
         assert "3003" not in result["error"]
 
     @pytest.mark.asyncio
-    async def test_update_degrades_when_connected_without_slide_hint(self, deck_uri):
-        ws = _connected_ws()  # emit must never be awaited — degrade is up-front
+    async def test_update_refused_when_connected_without_slide_hint(self, deck_uri):
+        from office4ai.environment.workspace.services import chart_router
+
+        ws = _connected_ws()  # emit must never be awaited — refuse is up-front
         result = await PptUpdateChartTool(ws).execute(
             {
                 "document_uri": deck_uri,
@@ -1562,7 +1421,9 @@ class TestChartToolDualPathRouting:
             }
         )
         assert result["success"] is False
-        assert "3003" in result["error"]
+        # Exact message: all three refuse strings share the "3003:" prefix, so a substring
+        # check cannot prove this is the *slideIndex-missing* case rather than offline/degrade.
+        assert result["error"] == chart_router.LIVE_NEEDS_SLIDE_INDEX
         ws.emit_to_document.assert_not_awaited()
         ws.notify_resource_updated.assert_not_called()
 
@@ -1582,21 +1443,25 @@ class TestChartToolDualPathRouting:
         ws.notify_resource_updated.assert_not_called()
 
     @pytest.mark.asyncio
-    async def test_get_degrades_to_disk_when_path_b_times_out(self, deck_uri):
-        eid = await _insert_on_disk(deck_uri, slide_index=0, chart_type="Line")
+    async def test_get_degrades_when_path_b_times_out(self, deck_uri):
+        # No on-disk fallback anymore (#68): a live read whose round-trip times out is refused.
         ws = _connected_ws(TimeoutError("no ack from Add-In"))
-        result = await PptGetChartTool(ws).execute({"document_uri": deck_uri, "elementId": eid, "slideIndex": 0})
-        # Read-only degradation falls back to the on-disk read — still succeeds.
-        assert result["success"] is True
-        assert result["data"]["chart"]["chartType"] == "Line"
+        result = await PptGetChartTool(ws).execute(
+            {"document_uri": deck_uri, "elementId": "oasp-chart-abc", "slideIndex": 0}
+        )
+        assert result["success"] is False
+        assert "3003" in result["error"]
 
     @pytest.mark.asyncio
-    async def test_get_uses_disk_when_connected_without_hint(self, deck_uri):
-        eid = await _insert_on_disk(deck_uri, slide_index=0, chart_type="Pie")
-        ws = _connected_ws()  # no slideIndex → on-disk read, no round-trip
-        result = await PptGetChartTool(ws).execute({"document_uri": deck_uri, "elementId": eid})
-        assert result["success"] is True
-        assert result["data"]["chart"]["chartType"] == "Pie"
+    async def test_get_refused_when_connected_without_hint(self, deck_uri):
+        # A live read needs slideIndex to export the slide; without it the tool refuses up-front (#68).
+        from office4ai.environment.workspace.services import chart_router
+
+        ws = _connected_ws()  # emit must never be awaited
+        result = await PptGetChartTool(ws).execute({"document_uri": deck_uri, "elementId": "oasp-chart-abc"})
+        assert result["success"] is False
+        assert result["error"] == chart_router.LIVE_NEEDS_SLIDE_INDEX
+        ws.emit_to_document.assert_not_awaited()
         ws.emit_to_document.assert_not_awaited()
 
     @pytest.mark.asyncio
@@ -1642,20 +1507,19 @@ class TestChartToolDualPathRouting:
         assert disk_path.read_bytes() == before
 
     @pytest.mark.asyncio
-    async def test_get_path_b_business_error_surfaced_not_disk_fallback(self, deck_uri):
+    async def test_get_path_b_business_error_surfaced(self, deck_uri):
         # A working Add-In returning a genuine business error (3010) on export must be
-        # SURFACED, not silently swallowed into a stale on-disk read. Seed the disk WITH a
-        # chart at this elementId so a (wrong) silent fallback would *succeed* — the test
-        # then proves the tool fails with 3010 instead.
-        eid = await _insert_on_disk(deck_uri, slide_index=0, chart_type="Line")
-
+        # SURFACED as a real failure, never degraded to the 3003 offline guidance.
         def _emit(document_uri, event, data):
             return {"success": False, "error": {"code": "3010", "message": "chart not found on live slide"}}
 
         ws = _connected_ws(_emit)
-        result = await PptGetChartTool(ws).execute({"document_uri": deck_uri, "elementId": eid, "slideIndex": 0})
+        result = await PptGetChartTool(ws).execute(
+            {"document_uri": deck_uri, "elementId": "oasp-chart-abc", "slideIndex": 0}
+        )
         assert result["success"] is False
-        assert "3010" in result["error"]  # surfaced, NOT a stale disk success
+        assert "3010" in result["error"]
+        assert "3003" not in result["error"]
 
     @pytest.mark.asyncio
     async def test_update_path_b_business_error_is_surfaced_not_degraded(self, deck_uri):
