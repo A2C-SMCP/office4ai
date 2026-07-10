@@ -1,11 +1,17 @@
-"""Unit tests for the OOXML chart engine (insert / get / update)."""
+"""Unit tests for the OOXML chart engine (in-memory base64 / Path B).
+
+The on-disk "Path A" surface (``insert_chart`` / ``get_chart`` / ``update_chart``
+taking a ``document_uri``) was removed in F1 (#68). These tests exercise the sole
+remaining engine surface: the in-memory base64 single-slide functions
+(``generate_chart_slide_base64`` / ``insert_chart_into_slide_base64`` /
+``get_chart_from_slide_base64`` / ``update_chart_in_slide_base64``).
+"""
 
 from __future__ import annotations
 
 import base64
 import io
 import math
-from pathlib import Path
 from typing import Any
 
 import pytest
@@ -25,127 +31,66 @@ from office4ai.environment.workspace.dtos.ppt import (
 from office4ai.environment.workspace.services import chart_engine
 from office4ai.environment.workspace.services.chart_engine import ChartEngineError
 
-
-@pytest.fixture
-def empty_pptx(tmp_path: Path) -> Path:
-    """A blank 2-slide deck."""
-    path = tmp_path / "deck.pptx"
-    prs = Presentation()
-    prs.slides.add_slide(prs.slide_layouts[5])
-    prs.slides.add_slide(prs.slide_layouts[5])
-    prs.save(str(path))
-    return path
+# NOTE: Two Path-A-only error paths were dropped when Path A was removed in #68:
+# 3001 DOCUMENT_NOT_FOUND (unknown document URI) and 4002 INVALID_PARAM (on-disk
+# multi-slide index out of range). Path A 已在 #68 删除，file-not-found /
+# on-disk 多页索引校验随之移除 — the base64 engine has no on-disk file to miss and
+# operates on a single slide, so neither check has a base64 equivalent.
 
 
 # ---------------------------------------------------------------------------
-# insert_chart
+# generate_chart_slide_base64 (new-page generation; was insert_chart Path A)
 # ---------------------------------------------------------------------------
 
 
 @pytest.mark.asyncio
-async def test_insert_categorical_chart_returns_element_id(empty_pptx: Path) -> None:
-    chart = CategoricalChartData(
-        chartType="ColumnClustered",
-        categories=["Jan", "Feb", "Mar"],
-        series=[CategoricalSeries(name="Rev", values=[100, 200, 150])],
-        title="Q1",
-    )
-    result = await chart_engine.insert_chart(empty_pptx.as_uri(), chart, ChartInsertOptions(slideIndex=0))
-    assert result["elementId"].startswith("oasp-chart-")
-    assert result["chartType"] == "ColumnClustered"
-    assert result["seriesCount"] == 1
-    assert result["slideIndex"] == 0
-
-
-@pytest.mark.asyncio
-async def test_insert_uses_explicit_geometry(empty_pptx: Path) -> None:
+async def test_insert_uses_explicit_geometry() -> None:
     chart = CategoricalChartData(
         chartType="Pie",
         categories=["A", "B"],
         series=[CategoricalSeries(name="s", values=[1, 2])],
     )
-    result = await chart_engine.insert_chart(
-        empty_pptx.as_uri(),
+    result = await chart_engine.generate_chart_slide_base64(
         chart,
-        ChartInsertOptions(slideIndex=1, left=72, top=36, width=400, height=300),
+        ChartInsertOptions(left=72, top=36, width=400, height=300),
     )
     assert math.isclose(result["left"], 72, abs_tol=0.5)
     assert math.isclose(result["top"], 36, abs_tol=0.5)
     assert math.isclose(result["width"], 400, abs_tol=0.5)
     assert math.isclose(result["height"], 300, abs_tol=0.5)
-    assert result["slideIndex"] == 1
+    assert result["slideIndex"] == 0  # base64 packages are single-page
 
 
 @pytest.mark.asyncio
-async def test_insert_scatter_chart(empty_pptx: Path) -> None:
-    chart = ScatterChartData(
-        chartType="Scatter",
-        series=[
-            ScatterSeries(
-                name="ads",
-                points=[ScatterPoint(x=1, y=2), ScatterPoint(x=3, y=4)],
-            )
-        ],
-    )
-    result = await chart_engine.insert_chart(empty_pptx.as_uri(), chart, ChartInsertOptions(slideIndex=0))
-    assert result["chartType"] == "Scatter"
-    assert result["seriesCount"] == 1
-
-
-@pytest.mark.asyncio
-async def test_insert_categorical_dimension_mismatch_raises_3015(empty_pptx: Path) -> None:
+async def test_insert_categorical_dimension_mismatch_raises_3015() -> None:
     chart = CategoricalChartData(
         chartType="Pie",
         categories=["A", "B", "C"],
         series=[CategoricalSeries(name="x", values=[1, 2])],  # 2 != 3
     )
     with pytest.raises(ChartEngineError) as exc:
-        await chart_engine.insert_chart(empty_pptx.as_uri(), chart, None)
+        await chart_engine.generate_chart_slide_base64(chart, None)
     assert exc.value.code == ErrorCode.INVALID_CHART_DATA
 
 
 @pytest.mark.asyncio
-async def test_insert_scatter_non_finite_raises_3015(empty_pptx: Path) -> None:
+async def test_insert_scatter_non_finite_raises_3015() -> None:
     chart = ScatterChartData(
         chartType="Scatter",
         series=[ScatterSeries(name="s", points=[ScatterPoint(x=float("inf"), y=1)])],
     )
     with pytest.raises(ChartEngineError) as exc:
-        await chart_engine.insert_chart(empty_pptx.as_uri(), chart, None)
+        await chart_engine.generate_chart_slide_base64(chart, None)
     assert exc.value.code == ErrorCode.INVALID_CHART_DATA
 
 
-@pytest.mark.asyncio
-async def test_insert_unknown_document_uri_raises_3001() -> None:
-    chart = CategoricalChartData(
-        chartType="Line",
-        categories=["A"],
-        series=[CategoricalSeries(name="s", values=[1])],
-    )
-    with pytest.raises(ChartEngineError) as exc:
-        await chart_engine.insert_chart("file:///nonexistent/missing.pptx", chart, None)
-    assert exc.value.code == ErrorCode.DOCUMENT_NOT_FOUND
-
-
-@pytest.mark.asyncio
-async def test_insert_slide_index_out_of_range_raises_4002(empty_pptx: Path) -> None:
-    chart = CategoricalChartData(
-        chartType="Line",
-        categories=["A"],
-        series=[CategoricalSeries(name="s", values=[1])],
-    )
-    with pytest.raises(ChartEngineError) as exc:
-        await chart_engine.insert_chart(empty_pptx.as_uri(), chart, ChartInsertOptions(slideIndex=99))
-    assert exc.value.code == ErrorCode.INVALID_PARAM
-
-
 # ---------------------------------------------------------------------------
-# get_chart
+# get_chart_from_slide_base64 (was get_chart Path A)
 # ---------------------------------------------------------------------------
 
 
 @pytest.mark.asyncio
-async def test_get_categorical_round_trip(empty_pptx: Path) -> None:
+async def test_get_categorical_round_trip() -> None:
     chart = CategoricalChartData(
         chartType="ColumnClustered",
         categories=["Q1", "Q2"],
@@ -156,10 +101,10 @@ async def test_get_categorical_round_trip(empty_pptx: Path) -> None:
         title="Year",
         showLegend=True,
     )
-    inserted = await chart_engine.insert_chart(empty_pptx.as_uri(), chart, ChartInsertOptions(slideIndex=0))
-    eid = inserted["elementId"]
+    gen = await chart_engine.generate_chart_slide_base64(chart)
+    eid = gen["elementId"]
 
-    got = await chart_engine.get_chart(empty_pptx.as_uri(), eid)
+    got = await chart_engine.get_chart_from_slide_base64(gen["slideBase64"], eid)
     assert got["elementId"] == eid
     assert got["chart"]["chartType"] == "ColumnClustered"
     assert got["chart"]["categories"] == ["Q1", "Q2"]
@@ -170,93 +115,32 @@ async def test_get_categorical_round_trip(empty_pptx: Path) -> None:
 
 
 @pytest.mark.asyncio
-async def test_get_scatter_round_trip(empty_pptx: Path) -> None:
-    chart = ScatterChartData(
-        chartType="Scatter",
-        series=[
-            ScatterSeries(
-                name="ads",
-                points=[ScatterPoint(x=1, y=10), ScatterPoint(x=2, y=20), ScatterPoint(x=3, y=40)],
-            )
-        ],
-        title="adv-vs-sales",
-    )
-    inserted = await chart_engine.insert_chart(empty_pptx.as_uri(), chart, ChartInsertOptions(slideIndex=0))
-    got = await chart_engine.get_chart(empty_pptx.as_uri(), inserted["elementId"])
-    assert got["chart"]["chartType"] == "Scatter"
-    assert got["chart"]["title"] == "adv-vs-sales"
-    pts = got["chart"]["series"][0]["points"]
-    assert pts == [{"x": 1.0, "y": 10.0}, {"x": 2.0, "y": 20.0}, {"x": 3.0, "y": 40.0}]
-
-
-@pytest.mark.asyncio
-async def test_get_unknown_element_raises_3010(empty_pptx: Path) -> None:
+async def test_get_unknown_element_raises_3010() -> None:
     with pytest.raises(ChartEngineError) as exc:
-        await chart_engine.get_chart(empty_pptx.as_uri(), "chart-99999")
+        await chart_engine.get_chart_from_slide_base64(_blank_slide_base64(), "chart-99999")
     assert exc.value.code == ErrorCode.ELEMENT_NOT_FOUND
 
 
 @pytest.mark.asyncio
-async def test_get_invalid_element_id_format_raises_3010(empty_pptx: Path) -> None:
+async def test_get_invalid_element_id_format_raises_3010() -> None:
     with pytest.raises(ChartEngineError) as exc:
-        await chart_engine.get_chart(empty_pptx.as_uri(), "shape-1")
+        await chart_engine.get_chart_from_slide_base64(_blank_slide_base64(), "shape-1")
     assert exc.value.code == ErrorCode.ELEMENT_NOT_FOUND
 
 
 # ---------------------------------------------------------------------------
-# update_chart
+# update_chart_in_slide_base64 (was update_chart Path A)
 # ---------------------------------------------------------------------------
 
 
 @pytest.mark.asyncio
-async def test_update_title_only(empty_pptx: Path) -> None:
-    chart = CategoricalChartData(
-        chartType="ColumnClustered",
-        categories=["A", "B"],
-        series=[CategoricalSeries(name="s", values=[1, 2])],
-        title="Original",
-    )
-    eid = (await chart_engine.insert_chart(empty_pptx.as_uri(), chart, ChartInsertOptions(slideIndex=0)))["elementId"]
-
-    upd = CategoricalChartUpdate(chartType="ColumnClustered", title="Revised")
-    result = await chart_engine.update_chart(empty_pptx.as_uri(), eid, upd)
-    assert "title" in result["updatedFields"]
-
-    got = await chart_engine.get_chart(empty_pptx.as_uri(), eid)
-    assert got["chart"]["title"] == "Revised"
-
-
-@pytest.mark.asyncio
-async def test_update_replace_categorical_series(empty_pptx: Path) -> None:
+async def test_update_categorical_dimension_mismatch_raises_3015() -> None:
     chart = CategoricalChartData(
         chartType="ColumnClustered",
         categories=["A", "B"],
         series=[CategoricalSeries(name="s", values=[1, 2])],
     )
-    eid = (await chart_engine.insert_chart(empty_pptx.as_uri(), chart, ChartInsertOptions(slideIndex=0)))["elementId"]
-
-    upd = CategoricalChartUpdate(
-        chartType="ColumnClustered",
-        categories=["X", "Y", "Z"],
-        series=[CategoricalSeries(name="t", values=[10, 20, 30])],
-    )
-    result = await chart_engine.update_chart(empty_pptx.as_uri(), eid, upd)
-    assert "series" in result["updatedFields"]
-    assert "categories" in result["updatedFields"]
-
-    got = await chart_engine.get_chart(empty_pptx.as_uri(), eid)
-    assert got["chart"]["categories"] == ["X", "Y", "Z"]
-    assert got["chart"]["series"][0]["values"] == [10.0, 20.0, 30.0]
-
-
-@pytest.mark.asyncio
-async def test_update_categorical_dimension_mismatch_raises_3015(empty_pptx: Path) -> None:
-    chart = CategoricalChartData(
-        chartType="ColumnClustered",
-        categories=["A", "B"],
-        series=[CategoricalSeries(name="s", values=[1, 2])],
-    )
-    eid = (await chart_engine.insert_chart(empty_pptx.as_uri(), chart, None))["elementId"]
+    gen = await chart_engine.generate_chart_slide_base64(chart)
 
     upd = CategoricalChartUpdate(
         chartType="ColumnClustered",
@@ -264,55 +148,30 @@ async def test_update_categorical_dimension_mismatch_raises_3015(empty_pptx: Pat
         series=[CategoricalSeries(name="t", values=[10, 20])],  # 2 != 3
     )
     with pytest.raises(ChartEngineError) as exc:
-        await chart_engine.update_chart(empty_pptx.as_uri(), eid, upd)
+        await chart_engine.update_chart_in_slide_base64(gen["slideBase64"], gen["elementId"], upd)
     assert exc.value.code == ErrorCode.INVALID_CHART_DATA
 
 
 @pytest.mark.asyncio
-async def test_cross_variant_categorical_to_scatter(empty_pptx: Path) -> None:
-    cat = CategoricalChartData(
-        chartType="ColumnClustered",
-        categories=["A", "B"],
-        series=[CategoricalSeries(name="s", values=[1, 2])],
-    )
-    eid = (await chart_engine.insert_chart(empty_pptx.as_uri(), cat, ChartInsertOptions(slideIndex=0)))["elementId"]
-
-    upd = ScatterChartUpdate(
-        chartType="Scatter",
-        series=[ScatterSeries(name="conv", points=[ScatterPoint(x=1, y=10), ScatterPoint(x=2, y=20)])],
-    )
-    result = await chart_engine.update_chart(empty_pptx.as_uri(), eid, upd)
-    assert result["chartType"] == "Scatter"
-    assert "chartType" in result["updatedFields"]
-    assert "series" in result["updatedFields"]
-    new_eid = result["elementId"]
-
-    got = await chart_engine.get_chart(empty_pptx.as_uri(), new_eid)
-    assert got["chart"]["chartType"] == "Scatter"
-
-
-@pytest.mark.asyncio
-async def test_cross_variant_scatter_to_categorical_requires_categories_and_series(
-    empty_pptx: Path,
-) -> None:
+async def test_cross_variant_scatter_to_categorical_requires_categories_and_series() -> None:
     sc = ScatterChartData(
         chartType="Scatter",
         series=[ScatterSeries(name="ads", points=[ScatterPoint(x=1, y=2)])],
     )
-    eid = (await chart_engine.insert_chart(empty_pptx.as_uri(), sc, ChartInsertOptions(slideIndex=0)))["elementId"]
+    gen = await chart_engine.generate_chart_slide_base64(sc)
 
     # Only chartType — no series, no categories — should fail with 3015.
     upd = CategoricalChartUpdate(chartType="ColumnClustered")
     with pytest.raises(ChartEngineError) as exc:
-        await chart_engine.update_chart(empty_pptx.as_uri(), eid, upd)
+        await chart_engine.update_chart_in_slide_base64(gen["slideBase64"], gen["elementId"], upd)
     assert exc.value.code == ErrorCode.INVALID_CHART_DATA
 
 
 @pytest.mark.asyncio
-async def test_update_unknown_element_raises_3010(empty_pptx: Path) -> None:
+async def test_update_unknown_element_raises_3010() -> None:
     upd = CategoricalChartUpdate(chartType="ColumnClustered", title="x")
     with pytest.raises(ChartEngineError) as exc:
-        await chart_engine.update_chart(empty_pptx.as_uri(), "chart-99999", upd)
+        await chart_engine.update_chart_in_slide_base64(_blank_slide_base64(), "chart-99999", upd)
     assert exc.value.code == ErrorCode.ELEMENT_NOT_FOUND
 
 
@@ -322,23 +181,24 @@ async def test_update_unknown_element_raises_3010(empty_pptx: Path) -> None:
 
 
 @pytest.mark.asyncio
-async def test_insert_element_id_is_opaque_and_written_to_shape_name(empty_pptx: Path) -> None:
-    """Inserted chart's elementId is opaque and persisted as the shape name (cNvPr/@name)."""
+async def test_insert_element_id_is_opaque_and_written_to_shape_name() -> None:
+    """Generated chart's elementId is opaque and persisted as the shape name (cNvPr/@name)."""
     chart = CategoricalChartData(
         chartType="Line",
         categories=["A", "B"],
         series=[CategoricalSeries(name="s", values=[1, 2])],
     )
-    eid = (await chart_engine.insert_chart(empty_pptx.as_uri(), chart, ChartInsertOptions(slideIndex=0)))["elementId"]
+    gen = await chart_engine.generate_chart_slide_base64(chart)
+    eid = gen["elementId"]
     assert eid.startswith("oasp-chart-")
-    # The opaque id must survive save()/reload as the shape's OOXML name.
-    prs = Presentation(str(empty_pptx))
+    # The opaque id must survive encode/decode as the shape's OOXML name.
+    prs = Presentation(io.BytesIO(base64.b64decode(gen["slideBase64"])))
     names = [shape.name for slide in prs.slides for shape in slide.shapes if getattr(shape, "has_chart", False)]
     assert eid in names
 
 
 @pytest.mark.asyncio
-async def test_get_relocates_by_opaque_name_not_native_id(empty_pptx: Path) -> None:
+async def test_get_relocates_by_opaque_name_not_native_id() -> None:
     """After a second chart shifts native ids, get still finds the first chart by its opaque name."""
     chart = CategoricalChartData(
         chartType="ColumnClustered",
@@ -346,23 +206,23 @@ async def test_get_relocates_by_opaque_name_not_native_id(empty_pptx: Path) -> N
         series=[CategoricalSeries(name="s", values=[1, 2])],
         title="first",
     )
-    first = (await chart_engine.insert_chart(empty_pptx.as_uri(), chart, ChartInsertOptions(slideIndex=0)))["elementId"]
-    # Insert a second chart on the same slide (native shape ids advance).
-    await chart_engine.insert_chart(empty_pptx.as_uri(), chart, ChartInsertOptions(slideIndex=0))
+    gen = await chart_engine.generate_chart_slide_base64(chart)
+    first = gen["elementId"]
+    # Insert a second chart onto the same slide (native shape ids advance).
+    second = await chart_engine.insert_chart_into_slide_base64(gen["slideBase64"], chart)
 
-    got = await chart_engine.get_chart(empty_pptx.as_uri(), first)
+    got = await chart_engine.get_chart_from_slide_base64(second["slideBase64"], first)
     assert got["elementId"] == first
     assert got["chart"]["title"] == "first"
 
 
 @pytest.mark.asyncio
-async def test_legacy_chart_element_id_still_resolves(tmp_path: Path) -> None:
+async def test_legacy_chart_element_id_still_resolves() -> None:
     """A 0.2.0 chart (default python-pptx name, no opaque id) resolves via legacy chart-<slide>-<shape>."""
     from pptx.chart.data import CategoryChartData
     from pptx.enum.chart import XL_CHART_TYPE
     from pptx.util import Pt
 
-    path = tmp_path / "legacy.pptx"
     prs = Presentation()
     slide = prs.slides.add_slide(prs.slide_layouts[5])
     cd = CategoryChartData()
@@ -370,21 +230,22 @@ async def test_legacy_chart_element_id_still_resolves(tmp_path: Path) -> None:
     cd.add_series("s", (1, 2))
     shape: Any = slide.shapes.add_chart(XL_CHART_TYPE.COLUMN_CLUSTERED, Pt(10), Pt(10), Pt(300), Pt(200), cd)  # type: ignore[arg-type]
     legacy_eid = f"chart-0-{int(shape.shape_id)}"  # not written to shape.name
-    prs.save(str(path))
+    buf = io.BytesIO()
+    prs.save(buf)
+    slide_b64 = base64.b64encode(buf.getvalue()).decode("ascii")
 
-    got = await chart_engine.get_chart(path.as_uri(), legacy_eid)
+    got = await chart_engine.get_chart_from_slide_base64(slide_b64, legacy_eid)
     assert got["chart"]["chartType"] == "ColumnClustered"
     assert got["chart"]["categories"] == ["A", "B"]
 
 
 @pytest.mark.asyncio
-async def test_legacy_chart_migrates_to_opaque_id_on_recreate(tmp_path: Path) -> None:
+async def test_legacy_chart_migrates_to_opaque_id_on_recreate() -> None:
     """A 0.2.0 (legacy-named) chart updated via a cross-variant recreate is migrated to a fresh opaque id."""
     from pptx.chart.data import CategoryChartData
     from pptx.enum.chart import XL_CHART_TYPE
     from pptx.util import Pt
 
-    path = tmp_path / "legacy.pptx"
     prs = Presentation()
     slide = prs.slides.add_slide(prs.slide_layouts[5])
     cd = CategoryChartData()
@@ -392,44 +253,25 @@ async def test_legacy_chart_migrates_to_opaque_id_on_recreate(tmp_path: Path) ->
     cd.add_series("s", (1, 2))
     shape: Any = slide.shapes.add_chart(XL_CHART_TYPE.COLUMN_CLUSTERED, Pt(10), Pt(10), Pt(300), Pt(200), cd)  # type: ignore[arg-type]
     legacy_eid = f"chart-0-{int(shape.shape_id)}"  # default python-pptx name, NOT an opaque id
-    prs.save(str(path))
+    buf = io.BytesIO()
+    prs.save(buf)
+    slide_b64 = base64.b64encode(buf.getvalue()).decode("ascii")
 
     upd = ScatterChartUpdate(
         chartType="Scatter",
         series=[ScatterSeries(name="p", points=[ScatterPoint(x=1, y=2), ScatterPoint(x=3, y=4)])],
     )
-    result = await chart_engine.update_chart(path.as_uri(), legacy_eid, upd)
+    result = await chart_engine.update_chart_in_slide_base64(slide_b64, legacy_eid, upd)
     new_eid = result["elementId"]
     assert new_eid.startswith("oasp-chart-")  # migrated off the legacy form
     assert new_eid != legacy_eid
 
     # The recreated chart now carries the opaque id in its OOXML name and is located by it.
-    got = await chart_engine.get_chart(path.as_uri(), new_eid)
+    got = await chart_engine.get_chart_from_slide_base64(result["slideBase64"], new_eid)
     assert got["chart"]["chartType"] == "Scatter"
-    prs_reloaded = Presentation(str(path))
+    prs_reloaded = Presentation(io.BytesIO(base64.b64decode(result["slideBase64"])))
     names = [s.name for sl in prs_reloaded.slides for s in sl.shapes if getattr(s, "has_chart", False)]
     assert new_eid in names
-
-
-@pytest.mark.asyncio
-async def test_update_preserves_opaque_element_id_across_recreate(empty_pptx: Path) -> None:
-    """Cross-variant update recreates the shape but keeps the same opaque elementId."""
-    cat = CategoricalChartData(
-        chartType="ColumnClustered",
-        categories=["A", "B"],
-        series=[CategoricalSeries(name="s", values=[1, 2])],
-    )
-    eid = (await chart_engine.insert_chart(empty_pptx.as_uri(), cat, ChartInsertOptions(slideIndex=0)))["elementId"]
-
-    upd = ScatterChartUpdate(
-        chartType="Scatter",
-        series=[ScatterSeries(name="p", points=[ScatterPoint(x=1, y=2), ScatterPoint(x=3, y=4)])],
-    )
-    result = await chart_engine.update_chart(empty_pptx.as_uri(), eid, upd)
-    assert result["elementId"] == eid  # stable across delete-and-recreate
-
-    got = await chart_engine.get_chart(empty_pptx.as_uri(), eid)
-    assert got["chart"]["chartType"] == "Scatter"
 
 
 # ---------------------------------------------------------------------------
@@ -619,7 +461,7 @@ async def test_insert_into_base64_with_no_slides_raises_4002() -> None:
 
 
 @pytest.mark.asyncio
-async def test_update_title_explicit_none_deletes_title(empty_pptx: Path) -> None:
+async def test_update_title_explicit_none_deletes_title() -> None:
     """Explicit ``title=None`` (present in model_fields_set) removes the chart title."""
     chart = CategoricalChartData(
         chartType="ColumnClustered",
@@ -627,19 +469,20 @@ async def test_update_title_explicit_none_deletes_title(empty_pptx: Path) -> Non
         series=[CategoricalSeries(name="s", values=[1, 2])],
         title="Original",
     )
-    eid = (await chart_engine.insert_chart(empty_pptx.as_uri(), chart, ChartInsertOptions(slideIndex=0)))["elementId"]
+    gen = await chart_engine.generate_chart_slide_base64(chart)
+    eid = gen["elementId"]
 
     # model_validate guarantees "title" lands in model_fields_set even though the value is None.
     upd = CategoricalChartUpdate.model_validate({"chartType": "ColumnClustered", "title": None})
-    result = await chart_engine.update_chart(empty_pptx.as_uri(), eid, upd)
+    result = await chart_engine.update_chart_in_slide_base64(gen["slideBase64"], eid, upd)
     assert "title" in result["updatedFields"]
 
-    got = await chart_engine.get_chart(empty_pptx.as_uri(), eid)
+    got = await chart_engine.get_chart_from_slide_base64(result["slideBase64"], eid)
     assert got["chart"]["title"] is None
 
 
 @pytest.mark.asyncio
-async def test_update_data_only_preserves_existing_title(empty_pptx: Path) -> None:
+async def test_update_data_only_preserves_existing_title() -> None:
     """A series-only update (title absent from model_fields_set) must NOT wipe the title."""
     chart = CategoricalChartData(
         chartType="ColumnClustered",
@@ -647,20 +490,21 @@ async def test_update_data_only_preserves_existing_title(empty_pptx: Path) -> No
         series=[CategoricalSeries(name="s", values=[1, 2])],
         title="Keep Me",
     )
-    eid = (await chart_engine.insert_chart(empty_pptx.as_uri(), chart, ChartInsertOptions(slideIndex=0)))["elementId"]
+    gen = await chart_engine.generate_chart_slide_base64(chart)
+    eid = gen["elementId"]
 
     upd = CategoricalChartUpdate(chartType="ColumnClustered", series=[CategoricalSeries(name="s", values=[9, 8])])
-    result = await chart_engine.update_chart(empty_pptx.as_uri(), eid, upd)
+    result = await chart_engine.update_chart_in_slide_base64(gen["slideBase64"], eid, upd)
     assert "title" not in result["updatedFields"]
 
-    got = await chart_engine.get_chart(empty_pptx.as_uri(), eid)
+    got = await chart_engine.get_chart_from_slide_base64(result["slideBase64"], eid)
     assert got["chart"]["title"] == "Keep Me"
     assert got["chart"]["series"][0]["values"] == [9.0, 8.0]
 
 
 @pytest.mark.asyncio
-async def test_display_options_round_trip(empty_pptx: Path) -> None:
-    """showLegend / showDataLabels written on insert are read back faithfully."""
+async def test_display_options_round_trip() -> None:
+    """showLegend / showDataLabels written on generate are read back faithfully."""
     chart = CategoricalChartData(
         chartType="ColumnClustered",
         categories=["A", "B"],
@@ -668,15 +512,15 @@ async def test_display_options_round_trip(empty_pptx: Path) -> None:
         showLegend=True,
         showDataLabels=True,
     )
-    eid = (await chart_engine.insert_chart(empty_pptx.as_uri(), chart, ChartInsertOptions(slideIndex=0)))["elementId"]
+    gen = await chart_engine.generate_chart_slide_base64(chart)
 
-    got = await chart_engine.get_chart(empty_pptx.as_uri(), eid)
+    got = await chart_engine.get_chart_from_slide_base64(gen["slideBase64"], gen["elementId"])
     assert got["chart"]["showLegend"] is True
     assert got["chart"]["showDataLabels"] is True
 
 
 @pytest.mark.asyncio
-async def test_display_options_legend_off_round_trip(empty_pptx: Path) -> None:
+async def test_display_options_legend_off_round_trip() -> None:
     """showLegend=False is honoured (not just the True case)."""
     chart = CategoricalChartData(
         chartType="Pie",
@@ -684,7 +528,7 @@ async def test_display_options_legend_off_round_trip(empty_pptx: Path) -> None:
         series=[CategoricalSeries(name="s", values=[1, 2])],
         showLegend=False,
     )
-    eid = (await chart_engine.insert_chart(empty_pptx.as_uri(), chart, ChartInsertOptions(slideIndex=0)))["elementId"]
+    gen = await chart_engine.generate_chart_slide_base64(chart)
 
-    got = await chart_engine.get_chart(empty_pptx.as_uri(), eid)
+    got = await chart_engine.get_chart_from_slide_base64(gen["slideBase64"], gen["elementId"])
     assert got["chart"]["showLegend"] is False
