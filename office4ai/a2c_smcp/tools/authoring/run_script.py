@@ -47,10 +47,11 @@ class OfficeRunScriptInput(BaseModel):
 
 
 class OfficeRunScriptTool(BaseTool):
-    """在软沙箱中运行 LLM 提交的脚本以创建/编辑 Office 文件（无需 Add-In 连接）。"""
+    """在软沙箱中运行 LLM 提交的脚本以创建/编辑 Office 文件（无需 Add-In 连接）。
 
-    #: standalone 工具常驻，不依赖任一 Add-In 连接。W4a 的动态工具收敛据此不过滤本工具。
-    requires_connection: bool = False
+    standalone 工具常驻：``category='authoring'`` → ``BaseTool.requires_connection`` 默认 ``False``，
+    W4a 的动态工具收敛据此不过滤本工具（无 Add-In 连接也暴露）。
+    """
 
     @property
     def name(self) -> str:

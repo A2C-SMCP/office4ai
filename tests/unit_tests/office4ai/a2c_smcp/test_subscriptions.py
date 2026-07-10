@@ -10,9 +10,11 @@ from office4ai.a2c_smcp.subscriptions import SubscriptionManager
 
 
 def _make_session() -> MagicMock:
-    """Create a mock ServerSession with send_resource_updated."""
+    """Create a mock ServerSession with resource_updated + list_changed senders."""
     session = MagicMock()
     session.send_resource_updated = AsyncMock()
+    session.send_tool_list_changed = AsyncMock()
+    session.send_resource_list_changed = AsyncMock()
     return session
 
 
@@ -111,3 +113,76 @@ class TestSubscriptionManager:
         self.mgr.unsubscribe(uri, s1)
         assert uri in self.mgr._subscriptions
         assert s2 in self.mgr._subscriptions[uri]
+
+
+class TestListChangedBroadcast:
+    """W4a/W4b-1（#63/#64）：list_changed 全局广播 + 会话跟踪。"""
+
+    def setup_method(self) -> None:
+        self.mgr = SubscriptionManager()
+
+    def test_track_session_and_subscribe_populate_sessions(self) -> None:
+        s1 = _make_session()
+        s2 = _make_session()
+        self.mgr.track_session(s1)
+        self.mgr.subscribe("window://office4ai", s2)  # subscribe 也跟踪
+        assert self.mgr._sessions == {s1, s2}
+
+    @pytest.mark.asyncio
+    async def test_notify_tool_list_changed_broadcasts_to_all(self) -> None:
+        s1, s2 = _make_session(), _make_session()
+        self.mgr.track_session(s1)
+        self.mgr.track_session(s2)
+        await self.mgr.notify_tool_list_changed()
+        s1.send_tool_list_changed.assert_awaited_once()
+        s2.send_tool_list_changed.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_notify_resource_list_changed_broadcasts_to_all(self) -> None:
+        s = _make_session()
+        self.mgr.track_session(s)
+        await self.mgr.notify_resource_list_changed()
+        s.send_resource_list_changed.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_broadcast_removes_dead_session(self) -> None:
+        alive, dead = _make_session(), _make_session()
+        dead.send_tool_list_changed.side_effect = Exception("closed")
+        self.mgr.subscribe("window://office4ai", alive)
+        self.mgr.subscribe("window://office4ai", dead)
+        self.mgr.track_session(alive)
+        self.mgr.track_session(dead)
+
+        await self.mgr.notify_tool_list_changed()
+
+        # 死会话被移出会话集与订阅桶
+        assert dead not in self.mgr._sessions
+        assert alive in self.mgr._sessions
+        assert dead not in self.mgr._subscriptions.get("window://office4ai", set())
+
+    @pytest.mark.asyncio
+    async def test_fire_and_forget_schedules_both(self) -> None:
+        s = _make_session()
+        self.mgr.track_session(s)
+        self.mgr.notify_list_changed_fire_and_forget(tools=True, resources=True)
+        # 让调度的 task 执行
+        import asyncio
+
+        await asyncio.sleep(0)
+        await asyncio.sleep(0)
+        s.send_tool_list_changed.assert_awaited_once()
+        s.send_resource_list_changed.assert_awaited_once()
+
+    def test_fire_and_forget_no_loop_is_noop(self) -> None:
+        # 无运行事件循环时安全 no-op（不抛）
+        s = _make_session()
+        self.mgr.track_session(s)
+        self.mgr.notify_list_changed_fire_and_forget(tools=True)
+
+    def test_clear_drops_sessions(self) -> None:
+        s = _make_session()
+        self.mgr.subscribe("window://office4ai", s)
+        self.mgr.track_session(s)
+        self.mgr.clear()
+        assert self.mgr._sessions == set()
+        assert self.mgr._subscriptions == {}

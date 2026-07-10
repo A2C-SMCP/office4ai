@@ -164,13 +164,15 @@ class TestOfficeMCPServer:
             config = MCPServerConfig()
             server = OfficeMCPServer(config)
 
-            # 3 window 资源 + 2 生产 SKILL（milestone #4 · S4 create-office-file / S5 edit-office-file）= 5
-            assert len(server.resources) == 5
+            # W4b-1（#64）：per-type 聚合窗口（word/ppt）移除，per-file 窗口随连接动态注册。
+            # 静态注册 = 根索引 1 + 3 生产 SKILL（S4 create / S5 edit / S6 extract）= 4。
+            assert len(server.resources) == 4
             assert "window://office4ai" in server.resources
-            assert "window://office4ai/word" in server.resources
-            assert "window://office4ai/ppt" in server.resources
+            assert "window://office4ai/word" not in server.resources
+            assert "window://office4ai/ppt" not in server.resources
             assert "skill://com.a2c-smcp.office4ai/create-office-file" in server.resources
             assert "skill://com.a2c-smcp.office4ai/edit-office-file" in server.resources
+            assert "skill://com.a2c-smcp.office4ai/extract-template" in server.resources
 
     @pytest.mark.parametrize("transport", ["stdio", "sse", "streamable-http"])
     def test_server_supports_all_transports(self, transport):
@@ -203,3 +205,85 @@ class TestOfficeMCPServer:
             # 停止 workspace
             await server._async_shutdown()
             assert not server.workspace.is_running
+
+
+@pytest.fixture
+def server() -> OfficeMCPServer:
+    with patch.dict(os.environ, {}, clear=True):
+        return OfficeMCPServer(MCPServerConfig())
+
+
+@pytest.fixture
+def clean_cm():
+    """提供干净的全局 connection_manager（前后清空，避免跨测试污染）。"""
+    from office4ai.environment.workspace.socketio.services.connection_manager import connection_manager
+
+    def _clear() -> None:
+        for c in list(connection_manager.get_all_clients()):
+            connection_manager.unregister_client(c.socket_id)
+
+    _clear()
+    yield connection_manager
+    _clear()
+
+
+class TestW4aToolConvergence:
+    """W4a（#63）：按 Add-In 连接动态收敛工具集。"""
+
+    def test_no_connection_only_standalone(self, server: OfficeMCPServer, clean_cm) -> None:
+        assert {t.name for t in server._visible_tools()} == {"office_run_script"}
+
+    def test_word_connection_exposes_word_plus_standalone(self, server: OfficeMCPServer, clean_cm) -> None:
+        clean_cm.register_client("s1", "c1", "file:///a/x.docx", "/word")
+        names = {t.name for t in server._visible_tools()}
+        assert "office_run_script" in names
+        assert any(n.startswith("word_") for n in names)
+        assert not any(n.startswith("ppt_") for n in names)
+        assert not any(n.startswith("excel_") for n in names)
+
+    def test_chart_tool_requires_connection(self, server: OfficeMCPServer, clean_cm) -> None:
+        # chart 工具（category='ppt'）无 /ppt 连接时被过滤（重分类 requires_connection=True）
+        assert not any(t.name == "ppt_insert_chart" for t in server._visible_tools())
+        clean_cm.register_client("s2", "c2", "file:///a/y.pptx", "/ppt")
+        assert any(t.name == "ppt_insert_chart" for t in server._visible_tools())
+
+    def test_is_tool_available_matrix(self, server: OfficeMCPServer, clean_cm) -> None:
+        tools = {t.name: t for t in server.tools.values()}
+        assert server._is_tool_available(tools["office_run_script"]) is True  # 常驻
+        assert server._is_tool_available(tools["word_insert_text"]) is False  # 无连接
+        clean_cm.register_client("s3", "c3", "file:///a/x.docx", "/word")
+        assert server._is_tool_available(tools["word_insert_text"]) is True
+
+
+class TestW4bDynamicWindows:
+    """W4b-1（#64）：per-file 窗口随连接动态注册/注销。"""
+
+    def test_connect_registers_per_file_window(self, server: OfficeMCPServer, clean_cm) -> None:
+        from office4ai.a2c_smcp.resources.per_file_window import WordFileWindowResource, per_file_window_base_uri
+
+        doc = "file:///a/report.docx"
+        buri = per_file_window_base_uri("/word", doc)
+        assert buri not in server.resources
+        server._on_doc_connect(doc, "/word")
+        assert isinstance(server.resources.get(buri), WordFileWindowResource)
+
+    def test_disconnect_removes_per_file_window(self, server: OfficeMCPServer, clean_cm) -> None:
+        from office4ai.a2c_smcp.resources.per_file_window import per_file_window_base_uri
+
+        doc = "file:///a/deck.pptx"
+        server._on_doc_connect(doc, "/ppt")
+        assert per_file_window_base_uri("/ppt", doc) in server.resources
+        server._on_doc_disconnect(doc, "/ppt")
+        assert per_file_window_base_uri("/ppt", doc) not in server.resources
+
+    def test_excel_connect_projects_no_window(self, server: OfficeMCPServer, clean_cm) -> None:
+        server._on_doc_connect("file:///a/book.xlsx", "/excel")
+        assert not any("/excel/" in uri for uri in server.resources)  # W4b-3 延后
+
+    def test_affected_resource_uris_targets_per_file_window(self, server: OfficeMCPServer, clean_cm) -> None:
+        tools = {t.name: t for t in server.tools.values()}
+        uris = server._affected_resource_uris(tools["word_insert_text"], {"document_uri": "file:///a/x.docx"})
+        assert len(uris) == 1 and uris[0].startswith("window://office4ai/word/x.docx-")
+        # 无 document_uri → 空；authoring 工具 → 空
+        assert server._affected_resource_uris(tools["word_insert_text"], {}) == []
+        assert server._affected_resource_uris(tools["office_run_script"], {"document_uri": "file:///a/x.docx"}) == []

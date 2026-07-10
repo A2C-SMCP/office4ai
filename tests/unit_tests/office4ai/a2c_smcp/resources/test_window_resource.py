@@ -52,6 +52,7 @@ class TestWindowResourceRead:
 
     @pytest.mark.asyncio
     async def test_read_word_only(self, resource: WindowResource) -> None:
+        # W4b-1：根索引逐条列出每文件的 per-file window 子资源
         clients = [
             make_client("file:///tmp/a.docx", namespace="/word", socket_id="s1"),
             make_client("file:///tmp/b.docx", namespace="/word", socket_id="s2", client_id="c2"),
@@ -60,10 +61,10 @@ class TestWindowResourceRead:
             mock_cm.get_all_clients.return_value = clients
             content = await resource.read()
 
-        assert "Word 文档 (2 个已连接)" in content
-        assert "file:///tmp/a.docx" in content
-        assert "file:///tmp/b.docx" in content
-        assert "PPT 文档 (0 个已连接)" in content
+        assert "WORD · a.docx" in content
+        assert "WORD · b.docx" in content
+        assert "window://office4ai/word/" in content
+        assert "PPT" not in content
 
     @pytest.mark.asyncio
     async def test_read_ppt_only(self, resource: WindowResource) -> None:
@@ -74,9 +75,9 @@ class TestWindowResourceRead:
             mock_cm.get_all_clients.return_value = clients
             content = await resource.read()
 
-        assert "Word 文档 (0 个已连接)" in content
-        assert "PPT 文档 (1 个已连接)" in content
-        assert "file:///tmp/slides.pptx" in content
+        assert "PPT · slides.pptx" in content
+        assert "window://office4ai/ppt/" in content
+        assert "WORD" not in content
 
     @pytest.mark.asyncio
     async def test_read_mixed(self, resource: WindowResource) -> None:
@@ -88,14 +89,23 @@ class TestWindowResourceRead:
             mock_cm.get_all_clients.return_value = clients
             content = await resource.read()
 
-        assert "Word 文档 (1 个已连接)" in content
-        assert "file:///tmp/a.docx" in content
-        assert "PPT 文档 (1 个已连接)" in content
-        assert "file:///tmp/slides.pptx" in content
+        assert "WORD · a.docx" in content
+        assert "PPT · slides.pptx" in content
+
+    @pytest.mark.asyncio
+    async def test_excel_skipped_until_w4b3(self, resource: WindowResource) -> None:
+        """excel 连接暂无 per-file 窗口（W4b-3 延后）→ 根索引不列出。"""
+        clients = [make_client("file:///tmp/book.xlsx", namespace="/excel")]
+        with patch("office4ai.a2c_smcp.resources.window.connection_manager") as mock_cm:
+            mock_cm.get_all_clients.return_value = clients
+            content = await resource.read()
+
+        assert "book.xlsx" not in content
+        assert "暂无文档连接" in content
 
     @pytest.mark.asyncio
     async def test_dedup_by_uri(self, resource: WindowResource) -> None:
-        """Same document with multiple socket connections should be counted once."""
+        """Same document with multiple socket connections should be listed once."""
         clients = [
             make_client("file:///tmp/a.docx", namespace="/word", socket_id="s1"),
             make_client("file:///tmp/a.docx", namespace="/word", socket_id="s2", client_id="c2"),
@@ -104,9 +114,8 @@ class TestWindowResourceRead:
             mock_cm.get_all_clients.return_value = clients
             content = await resource.read()
 
-        assert "Word 文档 (1 个已连接)" in content
-        # URI should appear only once despite two socket connections
-        assert content.count("file:///tmp/a.docx") == 1
+        # one window line for the doc despite two socket connections
+        assert content.count("WORD · a.docx") == 1
 
 
 class TestWindowResourceUpdateFromUri:

@@ -11,11 +11,18 @@ import os
 import shutil
 import sys
 from pathlib import Path
+from typing import Any
 
 from loguru import logger
 
 from office4ai.a2c_smcp.config import MCPServerConfig
+from office4ai.a2c_smcp.resources.per_file_window import (
+    affected_window_uris,
+    create_per_file_window,
+    per_file_window_base_uri,
+)
 from office4ai.a2c_smcp.server import BaseMCPServer
+from office4ai.a2c_smcp.tools.base import BaseTool
 from office4ai.certs.paths import get_cert_dir
 from office4ai.certs.trust_store import get_trust_store
 from office4ai.certs.validator import CertStatus, get_cert_expiry_info, validate_certs
@@ -298,18 +305,13 @@ class OfficeMCPServer(BaseMCPServer):
 
     def _register_resources(self) -> None:
         """注册资源 | Register resources"""
-        from office4ai.a2c_smcp.resources.ppt_window import PptWindowResource
         from office4ai.a2c_smcp.resources.skill import discover_skill_resources
         from office4ai.a2c_smcp.resources.window import WindowResource
-        from office4ai.a2c_smcp.resources.word_window import WordWindowResource
 
+        # 根索引常驻；per-file 子窗口（word/ppt）随 Add-In 连接动态注册（W4b-1 / #64，见
+        # _on_doc_connect），取代旧的 per-type 聚合窗口（window://office4ai/word|ppt）。
         root = WindowResource(self.workspace, priority=0, fullscreen=False)
-        word = WordWindowResource(self.workspace, priority=50, fullscreen=False)
-        ppt = PptWindowResource(self.workspace, priority=50, fullscreen=False)
-
         self.resources[root.base_uri] = root
-        self.resources[word.base_uri] = word
-        self.resources[ppt.base_uri] = ppt
 
         # authoring SKILL 能力包（milestone #4 · S3）：扫描 skills_root 下每个含 SKILL.md 的目录，
         # 经 skill:// 的 resources source 模式暴露供 A2C Computer 物化。S3 地基阶段 office/skills/
@@ -318,12 +320,8 @@ class OfficeMCPServer(BaseMCPServer):
             self.resources[skill.base_uri] = skill
             logger.info(f"注册 SKILL 资源 | Registered SKILL resource: {skill.base_uri}")
 
-    # Namespace → resource URIs mapping
-    _NAMESPACE_URI_MAP: dict[str, str] = {
-        "/word": "window://office4ai/word",
-        "/ppt": "window://office4ai/ppt",
-        "/excel": "window://office4ai/excel",
-    }
+    # Tool category → Socket.IO namespace（W4a 连接过滤 + per-file 窗口定位用）
+    _CATEGORY_NAMESPACE: dict[str, str] = {"word": "/word", "ppt": "/ppt", "excel": "/excel"}
     _ROOT_URI = "window://office4ai"
 
     async def _async_startup(self) -> None:
@@ -350,23 +348,54 @@ class OfficeMCPServer(BaseMCPServer):
         self.subscription_manager.clear()
         await self.workspace.stop()
 
+    # ── 动态工具收敛（W4a / #63）──
+
+    def _is_tool_available(self, tool: BaseTool) -> bool:
+        """按 Add-In 连接收敛工具集：常驻工具（requires_connection=False）始终暴露；
+
+        平台工具仅在其对应 namespace 有连接时暴露（无连接 → 移除；仅 Word 连接 → 移除
+        PPT/Excel）。契约锚点：spec §「W4 交互契约」契约①。
+        """
+        if not tool.requires_connection:
+            return True
+        namespace = self._CATEGORY_NAMESPACE.get(tool.category)
+        return bool(namespace and connection_manager.get_clients_by_namespace(namespace))
+
+    def _affected_resource_uris(self, tool: BaseTool, arguments: dict[str, Any]) -> list[str]:
+        """成功工具调用 → 通知其操作文件的 per-file 窗口（W4b-1）。
+
+        用工具入参里的 document_uri（归一化后与注册时同坐标系）定位 per-file 窗口 base_uri；
+        excel/无 document_uri/未知 category → 无对应窗口（返回空，不通知）。
+        """
+        doc_uri = arguments.get("document_uri")
+        if not isinstance(doc_uri, str) or not doc_uri:
+            return []
+        namespace = self._CATEGORY_NAMESPACE.get(tool.category)
+        if namespace is None:
+            return []
+        return affected_window_uris(namespace, doc_uri)
+
+    # ── per-file window 动态注册 + 桌面变化通知（W4b-1 / W4a）──
+
     def _on_doc_connect(self, doc_uri: str, namespace: str) -> None:
-        """Bridge document connect event to MCP resource subscription notifications."""
-        uris = self._namespace_to_uris(namespace)
-        self.subscription_manager.notify_fire_and_forget(uris)
+        """首个连接：注册该文件的 per-file 窗口，广播桌面变化（工具收敛 + 窗口列表）。"""
+        window = create_per_file_window(self.workspace, doc_uri, namespace)
+        if window is not None:
+            self.resources[window.base_uri] = window
+        self._notify_desktop_changed()
 
     def _on_doc_disconnect(self, doc_uri: str, namespace: str) -> None:
-        """Bridge document disconnect event to MCP resource subscription notifications."""
-        uris = self._namespace_to_uris(namespace)
-        self.subscription_manager.notify_fire_and_forget(uris)
+        """完全断连：注销该文件的 per-file 窗口，广播桌面变化。"""
+        base_uri = per_file_window_base_uri(namespace, doc_uri)
+        if base_uri is not None:
+            self.resources.pop(base_uri, None)
+        self._notify_desktop_changed()
 
-    def _namespace_to_uris(self, namespace: str) -> list[str]:
-        """Map a Socket.IO namespace to affected resource URIs (platform + root)."""
-        uris = [self._ROOT_URI]
-        platform_uri = self._NAMESPACE_URI_MAP.get(namespace)
-        if platform_uri:
-            uris.append(platform_uri)
-        return uris
+    def _notify_desktop_changed(self) -> None:
+        """连接变化统一通知：W4a tools/list_changed + W4b-1 resources/list_changed + 根索引 resource_updated。"""
+        self.subscription_manager.notify_list_changed_fire_and_forget(tools=True, resources=True)
+        # 根索引内容变了（列出的 per-file 窗口集变化）→ 通知其订阅者重读。
+        self.subscription_manager.notify_fire_and_forget([self._ROOT_URI])
 
 
 # ---------------------------------------------------------------------------

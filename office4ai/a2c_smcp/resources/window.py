@@ -5,6 +5,7 @@ from __future__ import annotations
 from urllib.parse import urlencode
 
 from office4ai.a2c_smcp.resources.base import BaseResource, parse_window_uri_params
+from office4ai.a2c_smcp.resources.per_file_window import WINDOW_TYPE_BY_NAMESPACE, per_file_window_base_uri
 from office4ai.environment.workspace.office_workspace import OfficeWorkspace
 from office4ai.environment.workspace.socketio.services.connection_manager import connection_manager
 
@@ -13,16 +14,17 @@ class WindowResource(BaseResource):
     """
     Office Workspace 根索引资源
 
-    通过 ``window://office4ai`` 向 AI Agent 展示子资源索引总览，
-    按文档类型统计已连接文档数。
+    通过 ``window://office4ai`` 向 AI Agent 展示子资源索引总览。W4b-1（#64）起改为
+    **每文件一个子窗口**（per-file window 取代 per-type 聚合），逐条列出已连接文件的
+    独立 ``window://`` 子资源。
 
     渲染示例（有文档连接时）::
 
         # Office 工作区
 
         ## 子资源
-        - window://office4ai/word — Word 文档 (2 个已连接)
-        - window://office4ai/ppt — PPT 文档 (1 个已连接)
+        - window://office4ai/word/report.docx-1a2b3c4d — WORD · report.docx
+        - window://office4ai/ppt/deck.pptx-5e6f7a8b — PPT · deck.pptx
 
     渲染示例（无文档连接时）::
 
@@ -61,7 +63,7 @@ class WindowResource(BaseResource):
 
     @property
     def description(self) -> str:
-        return "Office 工作区根索引，展示子资源（Word/PPT）连接状态总览。"
+        return "Office 工作区根索引，逐条列出每个已连接文件的独立 window 子资源。"
 
     @property
     def mime_type(self) -> str:
@@ -80,25 +82,21 @@ class WindowResource(BaseResource):
     def _render(self) -> str:
         clients = connection_manager.get_all_clients()
 
-        # 按 namespace 统计文档数（按 document_uri 去重）
-        word_docs: set[str] = set()
-        ppt_docs: set[str] = set()
+        # 每文件一个子窗口（按 per-file base_uri 去重）；excel 暂无 per-file 窗口 → 跳过（W4b-3）。
+        windows: dict[str, tuple[str, str]] = {}  # base_uri -> (wtype, document_uri)
         for c in clients:
-            if c.namespace == "/word":
-                word_docs.add(c.document_uri)
-            elif c.namespace == "/ppt":
-                ppt_docs.add(c.document_uri)
+            base_uri = per_file_window_base_uri(c.namespace, c.document_uri)
+            if base_uri is None:
+                continue
+            windows[base_uri] = (WINDOW_TYPE_BY_NAMESPACE[c.namespace], c.document_uri)
 
-        lines: list[str] = ["# Office 工作区", ""]
-        lines.append("## 子资源")
+        lines: list[str] = ["# Office 工作区", "", "## 子资源"]
 
-        if word_docs or ppt_docs:
-            lines.append(f"- window://office4ai/word — Word 文档 ({len(word_docs)} 个已连接)")
-            for uri in sorted(word_docs):
-                lines.append(f"  - {uri}")
-            lines.append(f"- window://office4ai/ppt — PPT 文档 ({len(ppt_docs)} 个已连接)")
-            for uri in sorted(ppt_docs):
-                lines.append(f"  - {uri}")
+        if windows:
+            for base_uri in sorted(windows):
+                wtype, doc_uri = windows[base_uri]
+                filename = doc_uri.rsplit("/", 1)[-1] or doc_uri
+                lines.append(f"- {base_uri} — {wtype.upper()} · {filename}")
         else:
             lines.append("暂无文档连接，等待 Office Add-In 接入。")
 

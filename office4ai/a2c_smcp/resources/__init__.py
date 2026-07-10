@@ -7,7 +7,13 @@
 """MCP 资源集合 | MCP resources."""
 
 from office4ai.a2c_smcp.resources.base import BaseResource
-from office4ai.a2c_smcp.resources.ppt_window import PptWindowResource
+from office4ai.a2c_smcp.resources.per_file_window import (
+    PerFileWindowResource,
+    PptFileWindowResource,
+    WordFileWindowResource,
+    create_per_file_window,
+    per_file_window_base_uri,
+)
 from office4ai.a2c_smcp.resources.skill import (
     DEFAULT_SKILL_HOST,
     SkillResource,
@@ -15,15 +21,17 @@ from office4ai.a2c_smcp.resources.skill import (
     discover_skill_resources,
 )
 from office4ai.a2c_smcp.resources.window import WindowResource
-from office4ai.a2c_smcp.resources.word_window import WordWindowResource
 
 __all__ = [
     "DEFAULT_SKILL_HOST",
     "BaseResource",
-    "PptWindowResource",
+    "PerFileWindowResource",
+    "PptFileWindowResource",
     "SkillResource",
     "SkillResourceError",
     "WindowResource",
-    "WordWindowResource",
+    "WordFileWindowResource",
+    "create_per_file_window",
     "discover_skill_resources",
+    "per_file_window_base_uri",
 ]

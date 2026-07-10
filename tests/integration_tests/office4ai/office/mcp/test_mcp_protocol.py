@@ -54,19 +54,12 @@ class TestMCPProtocol:
 
                 # 获取工具列表 | Get tools list
                 tools_result = await session.list_tools()
-                # 25 Word (21 + 4 OASP v0.2.0 table tools) + 24 PPT (21 + 3 OASP v0.2.0 chart tools)
-                # + 37 Excel (OASP 0.3.0 Draft: #18 read slice 3 + #19 Range CRUD/公式 7
-                #   + #20 Format/条件格式/合并 6 + #21 Worksheet 管理 5 + #22 Table 操作 6
-                #   + #23 Chart 操作 4 + #24 PivotTable 操作 3 + #25 Find&Filter 操作 3) = 86
-                # + 1 authoring standalone (milestone #4 · S1: office_run_script) = 87
-                assert len(tools_result.tools) == 87
-
-                # 验证工具名称前缀 | Verify tool name prefix（platform 工具带类型前缀；
-                # authoring standalone 工具 office_run_script 例外）
+                # W4a（#63）：list_tools 按 Add-In 连接动态收敛。子进程无任何 Add-In 连接
+                # → 工具集收敛到仅常驻 office_run_script（requires_connection=False）。
+                # 「87 个已注册」不变量见 test_server.py::test_tools_registered（server.tools）；
+                # 连接触发的收敛见 test_w4_desktop_convergence（端到端）。
                 tool_names = {t.name for t in tools_result.tools}
-                assert "office_run_script" in tool_names
-                platform_names = tool_names - {"office_run_script"}
-                assert all(name.startswith(("word_", "ppt_", "excel_")) for name in platform_names)
+                assert tool_names == {"office_run_script"}
 
     async def test_list_resources(self):
         """测试 list_resources 返回已注册资源 | Test list_resources returns registered resources"""
@@ -87,9 +80,11 @@ class TestMCPProtocol:
                 # 注：SKILL 资源在协议层被展平为「根 + 各子文件」多条目，总数随 SKILL 内容/后续
                 # S5/S6 变化 → 用 presence 断言而非硬编码总数（server.resources 注册数由单测钉住）。
                 resource_uris = {str(r.uri) for r in resources_result.resources}
-                assert any("window://office4ai/word" in uri for uri in resource_uris)
-                assert any("window://office4ai/ppt" in uri for uri in resource_uris)
+                # W4b-1（#64）：无连接时只有根索引 + SKILL；per-type 聚合窗口已移除，
+                # per-file 窗口随 Add-In 连接动态出现（子进程无连接故不含）。
                 assert any(uri.startswith("window://office4ai?") for uri in resource_uris)
+                assert not any("window://office4ai/word" in uri for uri in resource_uris)
+                assert not any("window://office4ai/ppt" in uri for uri in resource_uris)
                 assert "skill://com.a2c-smcp.office4ai/create-office-file" in resource_uris
                 assert "skill://com.a2c-smcp.office4ai/edit-office-file" in resource_uris
                 # 旧资源已删除
@@ -136,7 +131,7 @@ class TestMCPResourcesPhase1:
     """Phase 1: Window 资源 MCP 协议层集成测试"""
 
     async def test_list_resources_includes_window_resources(self):
-        """list_resources 返回 3 个资源 (root + word + ppt)，无旧资源"""
+        """list_resources 无连接时返回根索引 + SKILL；per-type 聚合窗口已移除（W4b-1）"""
         server_params = StdioServerParameters(
             command="uv",
             args=["run", "python", "-m", "office4ai.office.mcp.server"],
@@ -150,9 +145,9 @@ class TestMCPResourcesPhase1:
                 uris = [str(r.uri) for r in resources.resources]
 
                 # SKILL 资源协议层展平为多条目 → presence 断言（见 test_list_resources 注释）
-                assert any("window://office4ai/word" in u for u in uris)
-                assert any("window://office4ai/ppt" in u for u in uris)
                 assert any(u.startswith("window://office4ai?") for u in uris)
+                assert not any("window://office4ai/word" in u for u in uris)
+                assert not any("window://office4ai/ppt" in u for u in uris)
                 assert "skill://com.a2c-smcp.office4ai/create-office-file" in uris
                 assert "skill://com.a2c-smcp.office4ai/edit-office-file" in uris
                 assert not any("office://workspace/documents" in u for u in uris)
@@ -173,33 +168,19 @@ class TestMCPResourcesPhase1:
                 assert "Office 工作区" in content
                 assert "暂无文档连接" in content
 
-    async def test_read_word_window_no_connection(self):
-        """读取 Word 窗口资源（无连接）→ 空文档列表"""
+    async def test_aggregation_windows_removed(self):
+        """W4b-1：per-type 聚合窗口（word/ppt）已移除 → 读取报未找到资源。"""
         server_params = StdioServerParameters(
             command="uv",
             args=["run", "python", "-m", "office4ai.office.mcp.server"],
             cwd=str(project_root),
         )
 
-        async with stdio_client(server_params) as (read, write):
-            async with ClientSession(read, write) as session:
-                await session.initialize()
-                result = await session.read_resource(AnyUrl("window://office4ai/word"))
-                content = result.contents[0].text
-                assert "Word 工作区" in content
-                assert "文档列表 (0)" in content
-
-    async def test_read_ppt_window_no_connection(self):
-        """读取 PPT 窗口资源（无连接）"""
-        server_params = StdioServerParameters(
-            command="uv",
-            args=["run", "python", "-m", "office4ai.office.mcp.server"],
-            cwd=str(project_root),
-        )
+        from mcp.shared.exceptions import McpError
 
         async with stdio_client(server_params) as (read, write):
             async with ClientSession(read, write) as session:
                 await session.initialize()
-                result = await session.read_resource(AnyUrl("window://office4ai/ppt"))
-                content = result.contents[0].text
-                assert "PPT 工作区" in content
+                for uri in ("window://office4ai/word", "window://office4ai/ppt"):
+                    with pytest.raises(McpError, match="未找到资源 | Resource not found"):
+                        await session.read_resource(AnyUrl(uri))

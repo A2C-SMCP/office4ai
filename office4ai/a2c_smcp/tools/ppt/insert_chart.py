@@ -6,6 +6,7 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
+from office4ai.a2c_smcp.resources.per_file_window import affected_window_uris
 from office4ai.a2c_smcp.tools.base import BaseTool
 from office4ai.environment.workspace.base import DocumentStatus
 from office4ai.environment.workspace.dtos.ppt import (
@@ -112,5 +113,6 @@ class PptInsertChartTool(BaseTool):
             tool_name=self.name,
             result_data=result_data,
         )
-        self.workspace.notify_resource_updated(["window://office4ai/ppt", "window://office4ai"])
+        # 通知该文件的 per-file 窗口（内容变了）；不通知根索引——插图表未改变已连接文件集。
+        self.workspace.notify_resource_updated(affected_window_uris("/ppt", document_uri))
         return {"success": True, "data": result_data}

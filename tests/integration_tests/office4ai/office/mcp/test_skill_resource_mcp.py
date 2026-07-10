@@ -165,10 +165,10 @@ class TestSkillResourceRealServerSubprocess:
                 result = await session.list_resources()
                 uris = {str(r.uri) for r in result.resources}
 
-                # 3 个 window 资源仍在（word/ppt 的 uri 带 ?priority=...&fullscreen=... query）
+                # 根索引 window 资源仍在（W4b-1：per-type 聚合窗口移除，无连接故无 per-file 窗口）
                 assert any(u.startswith("window://office4ai?") for u in uris)
-                assert any("window://office4ai/word" in u for u in uris)
-                assert any("window://office4ai/ppt" in u for u in uris)
+                assert not any("window://office4ai/word" in u for u in uris)
+                assert not any("window://office4ai/ppt" in u for u in uris)
                 # skill:// 根 + 子资源出现
                 assert DEMO_BASE in uris
                 assert f"{DEMO_BASE}/SKILL.md" in uris

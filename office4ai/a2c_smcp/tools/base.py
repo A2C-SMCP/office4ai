@@ -58,7 +58,7 @@ class BaseTool(ABC):
         """平台类别: 'word' | 'ppt' | 'excel' | 'authoring' | Platform category
 
         'authoring' 标记不绑定单一 Office 平台的 standalone 工具（如 office_run_script），
-        其 category 不映射到任一 per-type window 资源（_category_to_resource_uris 返回 []）。
+        不投射到任一文件窗口资源，且 requires_connection 默认为 False（常驻，不随连接收敛）。
         """
         raise NotImplementedError
 
@@ -73,6 +73,20 @@ class BaseTool(ABC):
     def input_model(self) -> type[BaseModel]:  # pragma: no cover
         """Pydantic InputModel 类 | Pydantic InputModel class"""
         raise NotImplementedError
+
+    # ── 动态工具收敛（W4a / #63）| Dynamic tool convergence ──
+
+    @property
+    def requires_connection(self) -> bool:
+        """本工具是否依赖 Add-In 连接（W4a 动态收敛按此过滤 list_tools）。
+
+        默认按 ``category`` 派生：``word``/``ppt``/``excel`` 平台工具依赖对应 Add-In 连接
+        （``True``）；``authoring`` 等 standalone 工具（如 ``office_run_script``）常驻
+        （``False``），无连接也暴露。chart 工具（``category='ppt'``）经此默认即 ``True``——
+        即便有 Path A 离线能力，也按 W4a 二元模型随连接收敛；Path A 代码删除见 F1(#68)。
+        子类如需背离 category 语义可 override 本属性。
+        """
+        return self.category != "authoring"
 
     # ── 通用执行逻辑 | Generic execution logic ──
 

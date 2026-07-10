@@ -1,25 +1,27 @@
-"""PptWindowResource 契约测试 — 真实 Socket.IO + MockAddInClient."""
+"""PptFileWindowResource 契约测试 — 真实 Socket.IO + MockAddInClient (W4b-1 / #64)."""
 
 from __future__ import annotations
 
 import asyncio
 import time
+from collections.abc import Callable
 
 import pytest
 
-from office4ai.a2c_smcp.resources.ppt_window import PptWindowResource
+from office4ai.a2c_smcp.resources.per_file_window import PptFileWindowResource
 from tests.contract_tests.mock_addin.client import MockAddInClient
 
 
 @pytest.mark.asyncio
 @pytest.mark.contract
-class TestPptWindowContract:
+class TestPptFileWindowContract:
     async def test_read_fetches_presentation_and_slides(
         self,
-        ppt_window_resource: PptWindowResource,
+        make_ppt_file_window: Callable[[str], PptFileWindowResource],
     ) -> None:
         """完整链路：slideInfo 无参 + 带参响应 → 元数据 + slide 摘要渲染。"""
         doc_uri = "file:///tmp/contract_ppt_test.pptx"
+        resource = make_ppt_file_window(doc_uri)
 
         client = MockAddInClient(
             server_url="http://127.0.0.1:3003",
@@ -64,10 +66,9 @@ class TestPptWindowContract:
 
         await client.connect()
         try:
-            ppt_window_resource.workspace.update_last_activity(doc_uri, "ppt_get_slide_info", {})
+            content = await resource.read()
 
-            content = await ppt_window_resource.read()
-
+            assert "PPT 文档: contract_ppt_test.pptx" in content
             assert "总张数: 10" in content
             assert "当前幻灯片: 第 4 张" in content
             assert "➡️" in content
@@ -77,10 +78,11 @@ class TestPptWindowContract:
 
     async def test_serial_slide_fetch_count(
         self,
-        ppt_window_resource: PptWindowResource,
+        make_ppt_file_window: Callable[[str], PptFileWindowResource],
     ) -> None:
         """验证调用次数: 1 次无参 + (2*range+1) 次带参 (max bounded by total)."""
         doc_uri = "file:///tmp/contract_ppt_count.pptx"
+        resource = make_ppt_file_window(doc_uri)
 
         client = MockAddInClient(
             server_url="http://127.0.0.1:3003",
@@ -118,10 +120,9 @@ class TestPptWindowContract:
 
         await client.connect()
         try:
-            ppt_window_resource.workspace.update_last_activity(doc_uri, "ppt_get_slide_info", {})
-            ppt_window_resource._range = 2
+            resource._range = 2
 
-            await ppt_window_resource.read()
+            await resource.read()
 
             # 1 (无参) + 5 (slides 3,4,5,6,7) = 6 calls
             assert len(client.received_events) == 6
@@ -130,10 +131,11 @@ class TestPptWindowContract:
 
     async def test_partial_slide_timeout(
         self,
-        ppt_window_resource: PptWindowResource,
+        make_ppt_file_window: Callable[[str], PptFileWindowResource],
     ) -> None:
         """部分 slide 超时 → 超时的显示错误, 其余正常。"""
         doc_uri = "file:///tmp/contract_ppt_partial.pptx"
+        resource = make_ppt_file_window(doc_uri)
 
         client = MockAddInClient(
             server_url="http://127.0.0.1:3003",
@@ -173,9 +175,7 @@ class TestPptWindowContract:
 
         await client.connect()
         try:
-            ppt_window_resource.workspace.update_last_activity(doc_uri, "ppt_get_slide_info", {})
-
-            content = await ppt_window_resource.read()
+            content = await resource.read()
 
             # Slide 1 (index 1) should be degraded
             assert "幻灯片信息不可用" in content

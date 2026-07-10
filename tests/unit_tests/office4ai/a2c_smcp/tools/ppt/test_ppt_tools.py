@@ -12,6 +12,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
+from office4ai.a2c_smcp.resources.per_file_window import affected_window_uris
 from office4ai.a2c_smcp.tools.ppt import (
     PptAddSlideTool,
     PptDeleteElementTool,
@@ -1066,10 +1067,9 @@ class TestChartToolExecute:
         assert result["success"] is True
         assert result["data"]["elementId"].startswith("oasp-chart-")
         assert result["data"]["requiresReload"] is True
-        # Server-OOXML mutations must trigger MCP resource_updated notifications.
-        workspace_with_notify.notify_resource_updated.assert_called_once_with(
-            ["window://office4ai/ppt", "window://office4ai"]
-        )
+        # Server-OOXML mutations must trigger MCP resource_updated notifications
+        # (W4b-1: the file's per-file window; not the root index — the connected-file set is unchanged).
+        workspace_with_notify.notify_resource_updated.assert_called_once_with(affected_window_uris("/ppt", deck_uri))
         workspace_with_notify.update_last_activity.assert_called_once()
 
     @pytest.mark.asyncio

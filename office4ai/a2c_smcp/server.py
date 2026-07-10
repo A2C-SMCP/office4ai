@@ -57,11 +57,15 @@ class BaseMCPServer(ABC):
         raise NotImplementedError
 
     def _patch_subscribe_capability(self) -> None:
-        """Patch MCP Server capabilities to declare resources.subscribe=True.
+        """Patch MCP Server capabilities to declare resources.subscribe=True and listChanged.
 
         MCP SDK hardcodes subscribe=False in get_capabilities() even when
         subscribe/unsubscribe handlers are registered. We override
         create_initialization_options to fix this.
+
+        W4a/W4b-1 (#63/#64): also declare ``tools.listChanged`` + ``resources.listChanged``
+        by defaulting ``NotificationOptions`` when the caller passes none, so the server can
+        broadcast ``tools/list_changed`` / ``resources/list_changed`` on connection changes.
         """
         original_create = self.server.create_initialization_options
 
@@ -69,6 +73,8 @@ class BaseMCPServer(ABC):
             notification_options: NotificationOptions | None = None,
             experimental_capabilities: dict[str, Any] | None = None,
         ) -> Any:
+            if notification_options is None:
+                notification_options = NotificationOptions(tools_changed=True, resources_changed=True)
             options = original_create(notification_options, experimental_capabilities)
             caps = options.capabilities
             if caps.resources and (
@@ -90,17 +96,36 @@ class BaseMCPServer(ABC):
 
         self.server.create_initialization_options = patched_create_initialization_options  # type: ignore[method-assign]
 
-    # Category → resource URI mapping for subscription notifications.
-    # Only notifies the platform-specific resource, not the root resource.
-    _CATEGORY_URI_MAP: dict[str, list[str]] = {
-        "word": ["window://office4ai/word"],
-        "ppt": ["window://office4ai/ppt"],
-        "excel": ["window://office4ai/excel"],
-    }
+    def _affected_resource_uris(self, tool: BaseTool, arguments: dict[str, Any]) -> list[str]:
+        """Resource URIs a successful tool call should notify (``resource_updated``).
 
-    def _category_to_resource_uris(self, category: str) -> list[str]:
-        """Map a tool category to the resource URIs it affects."""
-        return self._CATEGORY_URI_MAP.get(category, [])
+        Base default: none. Subclasses that project windows (e.g. ``OfficeMCPServer`` with
+        per-file windows, W4b-1) override to target the specific document's window.
+        """
+        return []
+
+    # ── 动态工具收敛（W4a / #63）| Dynamic tool convergence ──
+
+    def _is_tool_available(self, tool: BaseTool) -> bool:
+        """Whether *tool* should be exposed given the current state.
+
+        Base: always available (no filtering). Subclasses override to converge the tool
+        set by Add-In connection state (W4a).
+        """
+        return True
+
+    def _visible_tools(self) -> list[BaseTool]:
+        """Currently exposed tools (after connection-based convergence filtering)."""
+        return [tool for tool in self.tools.values() if self._is_tool_available(tool)]
+
+    def _current_session(self) -> Any:
+        """The MCP ServerSession handling the in-flight request, or ``None`` outside one."""
+        try:
+            from mcp.server.lowlevel.server import request_ctx
+
+            return request_ctx.get().session
+        except Exception:
+            return None
 
     def _resolve_resource(self, uri_str: str) -> BaseResource | None:
         """Resolve a read URI to its owning resource.
@@ -134,13 +159,17 @@ class BaseMCPServer(ABC):
     def _setup_handlers(self) -> None:
         @self.server.list_tools()  # type: ignore[no-untyped-call]
         async def list_tools() -> list[Tool]:
+            session = self._current_session()
+            if session is not None:
+                self.subscription_manager.track_session(session)
+            # W4a: converge the exposed tool set by Add-In connection state.
             return [
                 Tool(
                     name=tool.name,
                     description=tool.description,
                     inputSchema=tool.input_schema,
                 )
-                for tool in self.tools.values()
+                for tool in self._visible_tools()
             ]
 
         @self.server.call_tool()
@@ -151,8 +180,8 @@ class BaseMCPServer(ABC):
 
             try:
                 result = await tool.execute(arguments)
-                # Notify subscribers of affected resources
-                affected = self._category_to_resource_uris(tool.category)
+                # Notify subscribers of affected resources (per-file window under W4b-1)
+                affected = self._affected_resource_uris(tool, arguments)
                 if affected:
                     await self.subscription_manager.notify_many(affected)
                 # office4ai #42: 委托工具决定 MCP 内容类型 (截图等发 image, 避免 base64 内联 text 撑爆上下文)
@@ -163,6 +192,9 @@ class BaseMCPServer(ABC):
 
         @self.server.list_resources()  # type: ignore[no-untyped-call]
         async def list_resources() -> list[Resource]:
+            session = self._current_session()
+            if session is not None:
+                self.subscription_manager.track_session(session)
             # Each resource contributes 1+ entries: window resources yield a single
             # Resource; a skill:// root in `resources` mode expands into a root
             # (carrying _meta.source) plus one sub-resource per packaged file.
