@@ -185,3 +185,77 @@ async def test_default_work_dir_is_created() -> None:
             for p in Path(result.path).iterdir():
                 p.unlink()
             Path(result.path).rmdir()
+
+
+# ---------------------------------------------------------------------------
+# ctypes 预热修复（#71）：装 audit hook 前预热受信重库，令 openpyxl→numpy 的
+# import 期 ctypes.dlopen 在受信阶段完成；用户脚本自身仍无法 import/用 ctypes。
+# ---------------------------------------------------------------------------
+
+
+def test_warmup_libs_declared_for_native_deps() -> None:
+    from office4ai.office.authoring.runtime import _NATIVE_WARMUP_LIBS
+
+    # 预热集必须是 allowlist 的子集（不会预热一个用户脚本本就不能 import 的库）。
+    assert _NATIVE_WARMUP_LIBS <= set(DEFAULT_ALLOWED_IMPORTS)
+    # openpyxl（→numpy）是本 bug 的直接触发库，必须在预热名单内。
+    assert "openpyxl" in _NATIVE_WARMUP_LIBS
+    # 父进程下发给子进程的 warmup 列表 = allowed_imports ∩ 原生库集合。
+    warmup = [name for name in DEFAULT_ALLOWED_IMPORTS if name in _NATIVE_WARMUP_LIBS]
+    assert "openpyxl" in warmup
+    assert "os" not in warmup  # 纯 stdlib 不预热
+
+
+async def test_openpyxl_workbook_runs_in_sandbox(tmp_path: Path) -> None:
+    # 回归 #71：openpyxl 在 Linux 上 import 期经 numpy 触发 ctypes.dlopen，预热前会被
+    # 沙箱拦成 SandboxViolation。本用例是该修复的端到端守护（Linux CI 上才能区分成败）。
+    script = "from openpyxl import Workbook\nwb = Workbook()\nwb.active['A1'] = 'hi'\nwb.save('out.xlsx')\n"
+    result = await run_script(script, work_dir=tmp_path)
+    assert result.ok is True, result.stderr
+    assert (tmp_path / "out.xlsx").exists()
+
+
+async def test_user_script_cannot_import_ctypes_even_after_warmup(tmp_path: Path) -> None:
+    # 安全回归：预热可能把 ctypes 经 numpy 送进 sys.modules，但用户帧 import 仍受 allowlist
+    # 门控（与 sys.modules 缓存无关），故用户脚本依然无法 import ctypes。
+    result = await run_script("import ctypes\n", work_dir=tmp_path)
+    assert result.ok is False
+    assert "ctypes" in result.stderr
+    assert "not allowed" in result.stderr
+
+
+def test_warmup_trusted_libs_is_best_effort() -> None:
+    import sys
+
+    from office4ai.office.authoring._sandbox_child import _warmup_trusted_libs
+
+    # 未知库静默跳过（不抛），已知库被导入进 sys.modules。
+    _warmup_trusted_libs(["base64", "office4ai_no_such_lib_zzz"])
+    assert "base64" in sys.modules
+
+
+async def test_user_script_cannot_use_ctypes_via_sys_modules_bypass(tmp_path: Path) -> None:
+    # 预热可能把 ctypes 经 numpy 送进子进程 sys.modules。即便用户脚本绕过 import allowlist
+    # 直接经 sys.modules 取到 ctypes，任何 dlopen/CDLL 仍触发进程级 audit hook 被拦——这是
+    # 本 PR 新增可达性的精确守护。跨平台成立：Linux（已预热）走 audit 拦截；macOS（未预热）
+    # sys.modules 无 ctypes → KeyError；两路都是「用户拿不到可用的 ctypes」。
+    script = "import sys\nsys.modules['ctypes'].CDLL(None)\n"
+    result = await run_script(script, work_dir=tmp_path)
+    assert result.ok is False
+    assert "ctypes" in result.stderr
+
+
+def test_child_env_pins_single_thread_blas() -> None:
+    # 预热 numpy 会拉起 OpenBLAS 线程池 busy-spin；子进程 env 必须封顶到单线程，
+    # 否则 RLIMIT_CPU(SIGXCPU) 会先于 wall-clock 超时触发。
+    from office4ai.office.authoring.runtime import _child_env
+
+    env = _child_env()
+    for var in (
+        "OMP_NUM_THREADS",
+        "OPENBLAS_NUM_THREADS",
+        "MKL_NUM_THREADS",
+        "NUMEXPR_NUM_THREADS",
+        "VECLIB_MAXIMUM_THREADS",
+    ):
+        assert env[var] == "1", var
