@@ -37,7 +37,10 @@ class WordReplaceTextInput(BaseModel):
     )
     format: TextFormat | None = Field(
         None,
-        description="Text formatting to apply to the replaced text (bold, italic, fontSize, etc.)",
+        description=(
+            "Text formatting to apply to the replaced text. Font attributes go under 'font' "
+            "(WordFont: bold, italic, underline, size, name, color, highlightColor); optional 'styleName'."
+        ),
     )
 
 

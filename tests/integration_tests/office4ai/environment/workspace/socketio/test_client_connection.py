@@ -7,11 +7,13 @@ Test client connection flow
 import pytest
 from socketio import AsyncClient  # type: ignore[import-untyped]
 
+from office4ai.environment.workspace.socketio.versioning import SERVER_VERSION
+
 # OASP 0.3.0 起握手强制校验 oaspVersion（version-first），客户端必须注入同 MAJOR.MINOR 版本
 INTEGRATION_AUTH = {
     "clientId": "integration_test_client",
     "documentUri": "file:///tmp/integration_test.docx",
-    "oaspVersion": "0.3.0",
+    "oaspVersion": str(SERVER_VERSION),  # 同 Server 版本，随 bump 自动跟随
 }
 
 

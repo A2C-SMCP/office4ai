@@ -11,6 +11,7 @@ PPT MCP Tools 单元测试 | PPT MCP Tools unit tests
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
+from pydantic import ValidationError
 
 from office4ai.a2c_smcp.tools.ppt import (
     PptAddSlideTool,
@@ -229,7 +230,7 @@ class TestExecuteFlow:
             {
                 "document_uri": "file:///test.pptx",
                 "text": "Hello PPT",
-                "options": {"slideIndex": 0, "left": 100, "top": 200, "fontSize": 18},
+                "options": {"slideIndex": 0, "left": 100, "top": 200, "font": {"size": 18}},
             }
         )
 
@@ -238,6 +239,8 @@ class TestExecuteFlow:
         assert action.action_name == "insert:text"
         assert action.params["text"] == "Hello PPT"
         assert action.params["options"]["slide_index"] == 0
+        # font attributes consolidated under the nested font sub-object (OASP 0.4.0)
+        assert action.params["options"]["font"]["size"] == 18
 
     @pytest.mark.asyncio
     async def test_insert_image_action(self, mock_workspace):
@@ -312,7 +315,7 @@ class TestExecuteFlow:
             {
                 "document_uri": "file:///test.pptx",
                 "elementId": "shape-001",
-                "updates": {"text": "Updated title", "fontSize": 28, "bold": True},
+                "updates": {"text": "Updated title", "font": {"size": 28, "bold": True}},
             }
         )
 
@@ -321,7 +324,9 @@ class TestExecuteFlow:
         assert action.action_name == "update:textBox"
         assert action.params["elementId"] == "shape-001"
         assert action.params["updates"]["text"] == "Updated title"
-        assert action.params["updates"]["bold"] is True
+        # font attributes consolidated under the nested font sub-object (OASP 0.4.0)
+        assert action.params["updates"]["font"]["bold"] is True
+        assert action.params["updates"]["font"]["size"] == 28
 
     @pytest.mark.asyncio
     async def test_update_image_action(self, mock_workspace):
@@ -402,8 +407,16 @@ class TestExecuteFlow:
             {
                 "document_uri": "file:///test.pptx",
                 "elementId": "shape-030",
-                "rowFormats": [{"rowIndex": 0, "backgroundColor": "#4472C4", "fontSize": 14}],
-                "cellFormats": [{"rowIndex": 1, "columnIndex": 0, "bold": True, "fontColor": "#333333"}],
+                "rowFormats": [{"rowIndex": 0, "backgroundColor": "#4472C4", "font": {"size": 14}}],
+                "cellFormats": [
+                    {
+                        "rowIndex": 1,
+                        "columnIndex": 0,
+                        "font": {"bold": True, "color": "#333333"},
+                        "horizontalAlignment": "Center",
+                        "verticalAlignment": "Middle",
+                    }
+                ],
             }
         )
 
@@ -413,6 +426,14 @@ class TestExecuteFlow:
         assert action.params["elementId"] == "shape-030"
         assert len(action.params["rowFormats"]) == 1
         assert len(action.params["cellFormats"]) == 1
+        # font attributes consolidated under nested font sub-object (OASP 0.4.0)
+        assert action.params["rowFormats"][0]["font"]["size"] == 14
+        cell_fmt = action.params["cellFormats"][0]
+        assert cell_fmt["font"]["bold"] is True
+        assert cell_fmt["font"]["color"] == "#333333"
+        # PPT table alignment uses the office.js PowerPoint enums (Center / Middle)
+        assert cell_fmt["horizontal_alignment"] == "Center"
+        assert cell_fmt["vertical_alignment"] == "Middle"
 
     @pytest.mark.asyncio
     async def test_update_element_action(self, mock_workspace):
@@ -979,7 +1000,7 @@ class TestElementIdIntCoercion:
             (PptReorderElementTool, {"action": "bringToFront"}),
             (PptUpdateTableCellTool, {"cells": [{"rowIndex": 0, "columnIndex": 0, "text": "A"}]}),
             (PptUpdateTableRowColumnTool, {"rows": [{"rowIndex": 0, "values": ["A"]}]}),
-            (PptUpdateTableFormatTool, {"rowFormats": [{"rowIndex": 0, "bold": True}]}),
+            (PptUpdateTableFormatTool, {"rowFormats": [{"rowIndex": 0, "font": {"bold": True}}]}),
         ],
     )
     async def test_all_tools_int_element_id(self, mock_workspace, tool_cls, extra_params):
@@ -1709,3 +1730,169 @@ class TestMcpContentMapping:
         blocks = tool.to_mcp_content(result)
 
         assert blocks == [{"type": "text", "text": str(result)}]
+
+
+# ============================================================================
+# OASP 0.4.0 font abstraction — DTO wire-shape coverage (PptFont / runs / paragraphs)
+# ============================================================================
+# The nested font sub-object is the authoritative wire form (model_dump(by_alias=True)).
+# These assert the new capabilities the 0.4.0 refactor introduced on the /ppt DTOs.
+
+
+class TestPptFontWireShape:
+    """PptFont (OASP 0.4.0) — nested font sub-object wire round-trip."""
+
+    def test_extended_effect_flags_round_trip(self) -> None:
+        """New capability: strikethrough/doubleStrikethrough/superscript/subscript/allCaps/smallCaps [1.8]."""
+        from office4ai.environment.workspace.dtos.ppt import PptFont
+
+        font = PptFont(
+            size=18,
+            name="Calibri",
+            color="#333333",
+            bold=True,
+            italic=False,
+            underline="Single",
+            strikethrough=True,
+            double_strikethrough=True,
+            superscript=False,
+            subscript=True,
+            all_caps=True,
+            small_caps=False,
+        )
+
+        data = font.model_dump(by_alias=True, exclude_none=True)
+
+        assert data["size"] == 18
+        assert data["name"] == "Calibri"
+        assert data["color"] == "#333333"
+        assert data["bold"] is True
+        assert data["italic"] is False
+        assert data["underline"] == "Single"
+        # extended effect flags surface with camelCase aliases on the wire
+        assert data["strikethrough"] is True
+        assert data["doubleStrikethrough"] is True
+        assert data["superscript"] is False
+        assert data["subscript"] is True
+        assert data["allCaps"] is True
+        assert data["smallCaps"] is False
+
+    def test_camelcase_input_populates_snake_case_fields(self) -> None:
+        """populate_by_name: camelCase wire keys map onto snake_case Python fields."""
+        from office4ai.environment.workspace.dtos.ppt import PptFont
+
+        font = PptFont(**{"doubleStrikethrough": True, "allCaps": True, "smallCaps": True})
+
+        assert font.double_strikethrough is True
+        assert font.all_caps is True
+        assert font.small_caps is True
+
+    def test_half_point_size_accepted(self) -> None:
+        """size 为 number（float），接受半磅字号（PowerPoint 常见 10.5 / 7.5pt），与 WordFont.size 一致。"""
+        from office4ai.environment.workspace.dtos.ppt import PptFont
+
+        font = PptFont(size=10.5)
+        assert font.size == 10.5
+        assert font.model_dump(by_alias=True, exclude_none=True)["size"] == 10.5
+
+    def test_non_positive_size_rejected(self) -> None:
+        """size 必须为正（gt=0），与 WordFont.size 对齐。"""
+        from office4ai.environment.workspace.dtos.ppt import PptFont
+
+        with pytest.raises(ValidationError):
+            PptFont(size=0)
+        with pytest.raises(ValidationError):
+            PptFont(size=-1)
+
+
+class TestTextBoxUpdatesWireShape:
+    """TextBoxUpdates (OASP 0.4.0) — whole-box font + run-level + paragraph bullet nested wire."""
+
+    def test_runs_and_paragraphs_nested_wire(self) -> None:
+        """New capability: runs[] (PptTextRun) + paragraphs[] (bulletFormat visible/type/style)."""
+        from office4ai.environment.workspace.dtos.ppt import (
+            BulletFormat,
+            PptFont,
+            PptParagraphStyle,
+            PptTextRun,
+            TextBoxUpdates,
+        )
+
+        updates = TextBoxUpdates(
+            text="Agenda",
+            fillColor="#FFFFFF",
+            font=PptFont(size=20, bold=True),
+            runs=[PptTextRun(start=0, length=6, font=PptFont(color="#FF0000", italic=True))],
+            paragraphs=[
+                PptParagraphStyle(
+                    start=0,
+                    length=6,
+                    bulletFormat=BulletFormat(visible=True, type="Numbered", style="ArabicNumeralPeriod"),
+                )
+            ],
+        )
+
+        data = updates.model_dump(by_alias=True, exclude_none=True)
+
+        assert data["text"] == "Agenda"
+        assert data["fillColor"] == "#FFFFFF"
+        # whole-box base-layer font
+        assert data["font"] == {"size": 20, "bold": True}
+        # run-level local formatting
+        assert data["runs"][0]["start"] == 0
+        assert data["runs"][0]["length"] == 6
+        assert data["runs"][0]["font"] == {"color": "#FF0000", "italic": True}
+        # paragraph-level bullet formatting (bullet_type aliases to "type" on the wire)
+        para = data["paragraphs"][0]
+        assert para["start"] == 0
+        assert para["length"] == 6
+        assert para["bulletFormat"] == {"visible": True, "type": "Numbered", "style": "ArabicNumeralPeriod"}
+
+    def test_run_indices_reject_negative(self) -> None:
+        """PptTextRun start/length carry ge=0 constraints."""
+        from office4ai.environment.workspace.dtos.ppt import PptFont, PptTextRun
+
+        with pytest.raises(ValidationError):
+            PptTextRun(start=-1, length=3, font=PptFont(bold=True))
+
+
+class TestPptTableCellFormatWireShape:
+    """PPT tableFormat CellFormat (OASP 0.4.0) — nested font + office.js PowerPoint alignment enums."""
+
+    def test_new_alignment_enums_and_nested_font(self) -> None:
+        """New capability: horizontalAlignment='Center' / verticalAlignment='Middle' + font sub-object."""
+        from office4ai.environment.workspace.dtos.ppt import CellFormat, PptFont
+
+        fmt = CellFormat(
+            rowIndex=1,
+            columnIndex=0,
+            backgroundColor="#4472C4",
+            font=PptFont(bold=True, color="#FFFFFF"),
+            horizontalAlignment="Center",
+            verticalAlignment="Middle",
+        )
+
+        data = fmt.model_dump(by_alias=True, exclude_none=True)
+
+        assert data["rowIndex"] == 1
+        assert data["columnIndex"] == 0
+        assert data["backgroundColor"] == "#4472C4"
+        assert data["font"] == {"bold": True, "color": "#FFFFFF"}
+        # PPT uses Center (not Centered) / Middle (not Center) per office.js enums
+        assert data["horizontalAlignment"] == "Center"
+        assert data["verticalAlignment"] == "Middle"
+
+    def test_row_and_column_format_nested_font(self) -> None:
+        """RowFormat / ColumnFormat carry the nested font (fontSize removed in 0.4.0)."""
+        from office4ai.environment.workspace.dtos.ppt import ColumnFormat, PptFont, RowFormat
+
+        row = RowFormat(rowIndex=0, height=30, backgroundColor="#EEEEEE", font=PptFont(size=14))
+        col = ColumnFormat(columnIndex=2, width=120, font=PptFont(size=12, bold=True))
+
+        row_data = row.model_dump(by_alias=True, exclude_none=True)
+        col_data = col.model_dump(by_alias=True, exclude_none=True)
+
+        assert row_data["font"] == {"size": 14}
+        assert row_data["height"] == 30
+        assert col_data["font"] == {"size": 12, "bold": True}
+        assert col_data["width"] == 120

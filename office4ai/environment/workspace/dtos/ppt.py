@@ -167,9 +167,121 @@ class PptInsertShapeRequest(BaseRequest):
     options: Optional["ShapeInsertOptions"] = Field(default=None, description="Insertion options")
 
 
+# ============================================================================
+# Font abstraction (PptFont) + text formatting — OASP 0.4.0
+# 字体属性收敛为 PptFont 子对象，文本框（整框 / run 级）与表格单元格复用。对齐 office.js。
+# ============================================================================
+
+# PPT 下划线样式（对齐 office.js ShapeFontUnderlineStyle，17 值 PascalCase，双端零映射）。
+ShapeFontUnderlineStyle = Literal[
+    "None",
+    "Single",
+    "Double",
+    "Heavy",
+    "Dotted",
+    "DottedHeavy",
+    "Dash",
+    "DashHeavy",
+    "DashLong",
+    "DashLongHeavy",
+    "DotDash",
+    "DotDashHeavy",
+    "DotDotDash",
+    "DotDotDashHeavy",
+    "Wavy",
+    "WavyHeavy",
+    "WavyDouble",
+]
+
+# 段落 / 单元格水平对齐（office.js ParagraphHorizontalAlignment，7 值，PowerPointApi 1.9）。
+ParagraphHorizontalAlignment = Literal[
+    "Left",
+    "Center",
+    "Right",
+    "Justify",
+    "JustifyLow",
+    "Distributed",
+    "ThaiDistributed",
+]
+
+# 文本 / 单元格垂直对齐（office.js TextVerticalAlignment，6 值，PowerPointApi 1.9）。
+TextVerticalAlignment = Literal[
+    "Top",
+    "Middle",
+    "Bottom",
+    "TopCentered",
+    "MiddleCentered",
+    "BottomCentered",
+]
+
+# 项目符号类型（office.js，PowerPointApi 1.10）。
+BulletType = Literal["None", "Numbered", "Unnumbered", "Unsupported"]
+
+
+class PptFont(SocketIOBaseModel):
+    """
+    PPT 字体格式（OASP 0.4.0）。文本框整框级 / run 级 / 表格单元格复用同一结构。
+    对齐 office.js ShapeFont，双端零映射。所有字段可选，未提供的属性保持原样。
+
+    requirement set（文本框语境）：size/name/color/bold/italic/underline = 1.4；
+    strikethrough/doubleStrikethrough/superscript/subscript/allCaps/smallCaps = 1.8。
+    用于 ppt:update:tableFormat 时经 TableCell.font 整体抬平到 1.9。
+    """
+
+    size: float | None = Field(default=None, alias="size", description="Font size (points), positive number", gt=0)
+    name: str | None = Field(default=None, alias="name", description="Font family name")
+    color: str | None = Field(default=None, alias="color", description="Font color (hex, e.g. '#333333')")
+    bold: bool | None = Field(default=None, alias="bold", description="Bold text")
+    italic: bool | None = Field(default=None, alias="italic", description="Italic text")
+    underline: ShapeFontUnderlineStyle | None = Field(
+        default=None, alias="underline", description="Underline style (17-value PascalCase enum) [1.4]"
+    )
+    strikethrough: bool | None = Field(default=None, alias="strikethrough", description="Strikethrough [1.8]")
+    double_strikethrough: bool | None = Field(
+        default=None, alias="doubleStrikethrough", description="Double strikethrough [1.8]"
+    )
+    superscript: bool | None = Field(default=None, alias="superscript", description="Superscript [1.8]")
+    subscript: bool | None = Field(default=None, alias="subscript", description="Subscript [1.8]")
+    all_caps: bool | None = Field(default=None, alias="allCaps", description="All caps [1.8]")
+    small_caps: bool | None = Field(default=None, alias="smallCaps", description="Small caps [1.8]")
+
+
+class BulletFormat(SocketIOBaseModel):
+    """
+    段落项目符号格式（对齐 office.js paragraphFormat.bulletFormat）。
+    仅 visible / type / style 可写；无 character / 字体 / 颜色。
+    """
+
+    visible: bool | None = Field(default=None, alias="visible", description="Show/hide bullet [1.4]")
+    bullet_type: BulletType | None = Field(
+        default=None, alias="type", description="Bullet type (None/Numbered/Unnumbered/Unsupported) [1.10]"
+    )
+    style: str | None = Field(
+        default=None,
+        alias="style",
+        description="Numbering/symbol style, aligned to office.js bullet style enum (e.g. 'ArabicNumeralPeriod') [1.10]",
+    )
+
+
+class PptTextRun(SocketIOBaseModel):
+    """run 级局部格式：对文本框内一段字符区间单独设置字体。"""
+
+    start: int = Field(..., alias="start", description="Start char index (0-based, UTF-16 code unit)", ge=0)
+    length: int = Field(..., alias="length", description="Char count (UTF-16 code unit)", ge=0)
+    font: PptFont = Field(..., alias="font", description="Font applied to this character range")
+
+
+class PptParagraphStyle(SocketIOBaseModel):
+    """段落级格式（当前仅项目符号），以字符区间寻址其接触到的段落。"""
+
+    start: int = Field(..., alias="start", description="Start char index (0-based, UTF-16 code unit)", ge=0)
+    length: int = Field(..., alias="length", description="Char count (UTF-16 code unit)", ge=0)
+    bullet_format: BulletFormat = Field(..., alias="bulletFormat", description="Bullet format for the paragraph(s)")
+
+
 class TextInsertOptions(SocketIOBaseModel):
     """
-    Text insertion options.
+    Text insertion options (OASP 0.4.0). Font attributes consolidated under ``font`` (PptFont).
     """
 
     slide_index: int | None = Field(default=None, alias="slideIndex", description="Slide index (default: current)")
@@ -177,14 +289,12 @@ class TextInsertOptions(SocketIOBaseModel):
     top: float | None = Field(default=None, description="Top position (points)")
     width: float | None = Field(default=None, description="Width (points)")
     height: float | None = Field(default=None, description="Height (points)")
-    font_size: int | None = Field(default=None, alias="fontSize", description="Font size")
-    font_name: str | None = Field(default=None, alias="fontName", description="Font name")
-    color: str | None = Field(default=None, description="Font color (hex, e.g. '#333333')")
     fill_color: str | None = Field(
         default=None,
         alias="fillColor",
         description="Text box fill color (hex). Omit for no fill (default); 'none' to explicitly disable.",
     )
+    font: PptFont | None = Field(default=None, alias="font", description="Font formatting applied to the inserted text")
     border_color: str | None = Field(
         default=None,
         alias="borderColor",
@@ -302,16 +412,24 @@ class PptUpdateTextBoxRequest(BaseRequest):
 
 class TextBoxUpdates(SocketIOBaseModel):
     """
-    Text box update fields.
+    Text box update fields (OASP 0.4.0). Font consolidated under ``font``; run-level via ``runs``,
+    paragraph bullet via ``paragraphs``. Application order: text → font → runs → paragraphs
+    (run/paragraph ``start``/``length`` align to the final text after any ``text`` replacement).
     """
 
-    text: str | None = Field(default=None, description="New text content")
-    font_size: int | None = Field(default=None, alias="fontSize", description="Font size")
-    font_name: str | None = Field(default=None, alias="fontName", description="Font name")
-    color: str | None = Field(default=None, description="Font color (hex)")
-    fill_color: str | None = Field(default=None, alias="fillColor", description="Fill color (hex)")
-    bold: bool | None = Field(default=None, description="Bold text")
-    italic: bool | None = Field(default=None, description="Italic text")
+    text: str | None = Field(default=None, description="New text content (whole box)")
+    fill_color: str | None = Field(default=None, alias="fillColor", description="Text box fill color (hex)")
+    font: PptFont | None = Field(default=None, alias="font", description="Whole-box font formatting (base layer)")
+    runs: list[PptTextRun] | None = Field(
+        default=None,
+        alias="runs",
+        description="Run-level local formatting (char-range addressed; later runs override earlier overlaps)",
+    )
+    paragraphs: list[PptParagraphStyle] | None = Field(
+        default=None,
+        alias="paragraphs",
+        description="Paragraph-level formatting (bullet), char-range addressed",
+    )
 
 
 class PptGetSlideInfoRequest(BaseRequest):
@@ -421,44 +539,48 @@ class PptUpdateTableRowColumnRequest(BaseRequest):
 
 class CellFormat(SocketIOBaseModel):
     """
-    Format for a specific table cell.
+    Format for a specific table cell (OASP 0.4.0). Font consolidated under ``font`` (PptFont, whole-cell;
+    no run-level). Alignment uses the office.js PowerPoint enums (7-value horizontal / 6-value vertical).
     """
 
     row_index: int = Field(..., alias="rowIndex", description="Row index (0-based)", ge=0)
     column_index: int = Field(..., alias="columnIndex", description="Column index (0-based)", ge=0)
     background_color: str | None = Field(default=None, alias="backgroundColor", description="Background color (hex)")
-    font_size: int | None = Field(default=None, alias="fontSize", description="Font size")
-    font_color: str | None = Field(default=None, alias="fontColor", description="Font color (hex)")
-    bold: bool | None = Field(default=None, description="Bold text")
-    italic: bool | None = Field(default=None, description="Italic text")
-    horizontal_alignment: Literal["Left", "Center", "Right"] | None = Field(
-        default=None, alias="horizontalAlignment", description="Horizontal alignment"
+    font: PptFont | None = Field(
+        default=None, alias="font", description="Cell font formatting (whole cell; no run-level)"
     )
-    vertical_alignment: Literal["Top", "Middle", "Bottom"] | None = Field(
-        default=None, alias="verticalAlignment", description="Vertical alignment"
+    horizontal_alignment: ParagraphHorizontalAlignment | None = Field(
+        default=None, alias="horizontalAlignment", description="Horizontal alignment (7-value enum)"
+    )
+    vertical_alignment: TextVerticalAlignment | None = Field(
+        default=None, alias="verticalAlignment", description="Vertical alignment (6-value enum)"
     )
 
 
 class RowFormat(SocketIOBaseModel):
     """
-    Format for a table row.
+    Format for a table row (OASP 0.4.0). ``font`` / ``backgroundColor`` fan out per-cell; ``height`` is row-native.
     """
 
     row_index: int = Field(..., alias="rowIndex", description="Row index (0-based)", ge=0)
     height: float | None = Field(default=None, description="Row height (points)")
     background_color: str | None = Field(default=None, alias="backgroundColor", description="Background color (hex)")
-    font_size: int | None = Field(default=None, alias="fontSize", description="Font size")
+    font: PptFont | None = Field(
+        default=None, alias="font", description="Font formatting (applied per-cell in the row)"
+    )
 
 
 class ColumnFormat(SocketIOBaseModel):
     """
-    Format for a table column.
+    Format for a table column (OASP 0.4.0). ``font`` / ``backgroundColor`` fan out per-cell; ``width`` is column-native.
     """
 
     column_index: int = Field(..., alias="columnIndex", description="Column index (0-based)", ge=0)
     width: float | None = Field(default=None, description="Column width (points)")
     background_color: str | None = Field(default=None, alias="backgroundColor", description="Background color (hex)")
-    font_size: int | None = Field(default=None, alias="fontSize", description="Font size")
+    font: PptFont | None = Field(
+        default=None, alias="font", description="Font formatting (applied per-cell in the column)"
+    )
 
 
 class PptUpdateTableFormatRequest(BaseRequest):

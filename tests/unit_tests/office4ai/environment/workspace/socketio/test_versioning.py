@@ -78,8 +78,8 @@ class TestServerConstants:
     def test_server_version_matches_package(self) -> None:
         assert str(SERVER_VERSION) == __version__
 
-    def test_server_version_is_030(self) -> None:
-        assert (SERVER_VERSION.major, SERVER_VERSION.minor) == (0, 3)
+    def test_server_version_is_040(self) -> None:
+        assert (SERVER_VERSION.major, SERVER_VERSION.minor) == (0, 4)
 
     def test_min_max_window(self) -> None:
         assert SERVER_MIN_SUPPORTED == OaspVersion(SERVER_VERSION.major, SERVER_VERSION.minor, 0)
