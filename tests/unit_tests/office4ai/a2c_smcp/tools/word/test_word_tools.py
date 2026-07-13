@@ -151,14 +151,14 @@ class TestExecuteFlow:
             {
                 "document_uri": "file:///test.docx",
                 "text": "Bold Text",
-                "format": {"bold": True, "font_size": 14},
+                "format": {"font": {"bold": True, "size": 14}},
             }
         )
 
         action = mock_workspace.execute.call_args[0][0]
         assert action.params["text"] == "Bold Text"
-        assert action.params["format"]["bold"] is True
-        assert action.params["format"]["font_size"] == 14
+        assert action.params["format"]["font"]["bold"] is True
+        assert action.params["format"]["font"]["size"] == 14
 
     @pytest.mark.asyncio
     async def test_append_text_builds_correct_action(self, mock_workspace):
@@ -213,7 +213,7 @@ class TestExecuteFlow:
                 "document_uri": "file:///test.docx",
                 "search_text": "important",
                 "replace_text": "important",
-                "format": {"bold": True, "color": "#FF0000", "font_size": 16},
+                "format": {"font": {"bold": True, "color": "#FF0000", "size": 16}},
                 "options": {"replace_all": True},
             }
         )
@@ -223,9 +223,9 @@ class TestExecuteFlow:
         assert action.action_name == "replace:text"
         assert action.params["search_text"] == "important"
         assert action.params["replace_text"] == "important"
-        assert action.params["format"]["bold"] is True
-        assert action.params["format"]["color"] == "#FF0000"
-        assert action.params["format"]["font_size"] == 16
+        assert action.params["format"]["font"]["bold"] is True
+        assert action.params["format"]["font"]["color"] == "#FF0000"
+        assert action.params["format"]["font"]["size"] == 16
         assert result["success"] is True
 
     @pytest.mark.asyncio
@@ -458,7 +458,7 @@ class TestExecuteFlow:
         result = await tool.execute(
             {
                 "document_uri": "file:///test.docx",
-                "content": {"text": "Replacement text", "format": {"bold": True}},
+                "content": {"text": "Replacement text", "format": {"font": {"bold": True}}},
             }
         )
 
@@ -466,6 +466,7 @@ class TestExecuteFlow:
         assert action.category == "word"
         assert action.action_name == "replace:selection"
         assert action.params["content"]["text"] == "Replacement text"
+        assert action.params["content"]["format"]["font"]["bold"] is True
         assert result["success"] is True
 
     @pytest.mark.asyncio
@@ -1213,8 +1214,7 @@ class TestWordUpdateTableCellTool:
                             "horizontalAlignment": "Centered",
                             "verticalAlignment": "Center",
                             "backgroundColor": "#1F4E79",
-                            "fontColor": "#FFFFFF",
-                            "bold": True,
+                            "font": {"color": "#FFFFFF", "bold": True},
                         },
                     }
                 ],
@@ -1230,7 +1230,9 @@ class TestWordUpdateTableCellTool:
         # snake_case is expected internally because DTO field names are snake_case
         assert cell["format"]["horizontal_alignment"] == "Centered"
         assert cell["format"]["background_color"] == "#1F4E79"
-        assert cell["format"]["bold"] is True
+        # font attributes consolidated under the nested font sub-object (OASP 0.4.0)
+        assert cell["format"]["font"]["color"] == "#FFFFFF"
+        assert cell["format"]["font"]["bold"] is True
         assert result["success"] is True
 
     @pytest.mark.asyncio

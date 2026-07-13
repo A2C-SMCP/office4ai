@@ -79,17 +79,17 @@ async def test_insert_text_with_options(
         "top": 200.0,
         "width": 300.0,
         "height": 50.0,
-        "fontSize": 24,
-        "fontName": "Arial",
-        "color": "#FF0000",
+        "font": {"size": 24, "name": "Arial", "color": "#FF0000", "strikethrough": True},
     }
 
     def response_factory(request: dict) -> dict:
         assert "options" in request
         opts = request["options"]
         assert opts["slideIndex"] == 2
-        assert opts["fontSize"] == 24
-        assert opts["color"] == "#FF0000"
+        # OASP 0.4.0: 插入即带字体，字体收敛到 font 子对象
+        assert opts["font"]["size"] == 24
+        assert opts["font"]["color"] == "#FF0000"
+        assert opts["font"]["strikethrough"] is True
 
         return {
             "requestId": request["requestId"],

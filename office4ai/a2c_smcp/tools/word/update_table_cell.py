@@ -26,9 +26,9 @@ class WordUpdateTableCellInput(BaseModel):
         ...,
         description=(
             "Cells to update. Each entry needs rowIndex / columnIndex and at least one of "
-            "text / format. format supports backgroundColor, fontName, fontSize, fontColor, "
-            "bold, italic, horizontalAlignment ('Left' | 'Centered' | 'Right' | 'Justified'), "
-            "verticalAlignment ('Top' | 'Center' | 'Bottom')."
+            "text / format. format = { backgroundColor, font (WordFont: bold, italic, underline, size, "
+            "name, color, highlightColor), horizontalAlignment ('Left' | 'Centered' | 'Right' | 'Justified'), "
+            "verticalAlignment ('Top' | 'Center' | 'Bottom') }."
         ),
         min_length=1,
     )

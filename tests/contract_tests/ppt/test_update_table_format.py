@@ -27,8 +27,9 @@ async def test_update_table_format_cell_formats(
             "rowIndex": 0,
             "columnIndex": 0,
             "backgroundColor": "#FF0000",
-            "bold": True,
-            "fontSize": 14,
+            "font": {"bold": True, "size": 14, "underline": "Single"},
+            "horizontalAlignment": "Center",
+            "verticalAlignment": "Middle",
         },
     ]
 
@@ -37,7 +38,13 @@ async def test_update_table_format_cell_formats(
         assert len(request["cellFormats"]) == 1
         fmt = request["cellFormats"][0]
         assert fmt["backgroundColor"] == "#FF0000"
-        assert fmt["bold"] is True
+        # OASP 0.4.0: 字体收敛到 font 子对象
+        assert fmt["font"]["bold"] is True
+        assert fmt["font"]["size"] == 14
+        assert fmt["font"]["underline"] == "Single"
+        # 对齐改用 office.js PowerPoint 枚举（Center/Middle）
+        assert fmt["horizontalAlignment"] == "Center"
+        assert fmt["verticalAlignment"] == "Middle"
 
         return {
             "requestId": request["requestId"],
@@ -87,12 +94,15 @@ async def test_update_table_format_row_formats(
 ):
     """测试行级别格式更新。"""
     row_formats = [
-        {"rowIndex": 0, "height": 50.0, "backgroundColor": "#EEEEEE", "fontSize": 16},
+        {"rowIndex": 0, "height": 50.0, "backgroundColor": "#EEEEEE", "font": {"size": 16, "bold": True}},
     ]
 
     def response_factory(request: dict) -> dict:
         assert len(request["rowFormats"]) == 1
         assert request["rowFormats"][0]["height"] == 50.0
+        # OASP 0.4.0: 行级字体升级为完整 PptFont（原仅 fontSize）
+        assert request["rowFormats"][0]["font"]["size"] == 16
+        assert request["rowFormats"][0]["font"]["bold"] is True
 
         return {
             "requestId": request["requestId"],
@@ -138,12 +148,14 @@ async def test_update_table_format_column_formats(
     """测试列级别格式更新。"""
     column_formats = [
         {"columnIndex": 0, "width": 150.0, "backgroundColor": "#DDDDDD"},
-        {"columnIndex": 1, "width": 200.0, "fontSize": 12},
+        {"columnIndex": 1, "width": 200.0, "font": {"size": 12}},
     ]
 
     def response_factory(request: dict) -> dict:
         assert len(request["columnFormats"]) == 2
         assert request["columnFormats"][0]["width"] == 150.0
+        # OASP 0.4.0: 列级字体升级为完整 PptFont（原仅 fontSize）
+        assert request["columnFormats"][1]["font"]["size"] == 12
 
         return {
             "requestId": request["requestId"],
@@ -212,7 +224,7 @@ async def test_update_table_format_error(
             params={
                 "document_uri": client.document_uri,
                 "elementId": "nonexistent",
-                "cellFormats": [{"rowIndex": 0, "columnIndex": 0, "bold": True}],
+                "cellFormats": [{"rowIndex": 0, "columnIndex": 0, "font": {"bold": True}}],
             },
         )
         result = await workspace.execute(action)

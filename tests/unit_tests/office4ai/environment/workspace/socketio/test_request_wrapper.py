@@ -73,20 +73,21 @@ class TestWrapRequest:
         assert wrapped1["requestId"] != wrapped2["requestId"]
 
     def test_wrap_word_insert_text(self) -> None:
-        """Test wrapping word:insert:text with all parameters"""
+        """Test wrapping word:insert:text with nested font format (OASP 0.4.0)"""
         business_params = {
             "document_uri": "file:///test.docx",
             "text": "Hello World",
             "location": "Cursor",
-            "format": {"bold": True, "fontSize": 14},
+            "format": {"font": {"bold": True, "size": 14}},
         }
 
         wrapped = wrap_request("word:insert:text", business_params)
 
         assert wrapped["text"] == "Hello World"
         assert wrapped["location"] == "Cursor"
-        assert wrapped["format"]["bold"] is True
-        assert wrapped["format"]["fontSize"] == 14
+        # font attributes consolidated under nested font sub-object (size renamed from fontSize)
+        assert wrapped["format"]["font"]["bold"] is True
+        assert wrapped["format"]["font"]["size"] == 14
 
     def test_wrap_excel_get_worksheet_info(self) -> None:
         """Test wrapping excel:get:worksheetInfo (snake_case worksheet_name → camelCase alias)"""
@@ -407,17 +408,18 @@ class TestWrapRequest:
         assert "worksheet_name" not in wrapped
 
     def test_wrap_ppt_insert_text(self) -> None:
-        """Test wrapping ppt:insert:text"""
+        """Test wrapping ppt:insert:text with nested font options (OASP 0.4.0)"""
         business_params = {
             "document_uri": "file:///test.pptx",
             "text": "Slide Title",
-            "options": {"fontSize": 32},
+            "options": {"font": {"size": 32}},
         }
 
         wrapped = wrap_request("ppt:insert:text", business_params)
 
         assert wrapped["text"] == "Slide Title"
-        assert wrapped["options"]["fontSize"] == 32
+        # font attributes consolidated under nested font sub-object (size renamed from fontSize)
+        assert wrapped["options"]["font"]["size"] == 32
 
 
 class TestIsWrappableEvent:

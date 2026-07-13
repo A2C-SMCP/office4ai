@@ -15,7 +15,10 @@ class PptInsertTextInput(BaseModel):
 
     document_uri: str = Field(..., description="Target document URI (e.g. file:///path/to/presentation.pptx)")
     text: str = Field(..., description="Text to insert")
-    options: TextInsertOptions | None = Field(None, description="Insertion options (position, size, font, color)")
+    options: TextInsertOptions | None = Field(
+        None,
+        description="Insertion options (position, size, fillColor, font: PptFont with size/name/color/bold/italic/underline/...)",
+    )
 
 
 class PptInsertTextTool(BaseTool):

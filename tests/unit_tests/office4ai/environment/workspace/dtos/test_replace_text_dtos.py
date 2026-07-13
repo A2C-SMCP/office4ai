@@ -14,6 +14,7 @@ from office4ai.environment.workspace.dtos.word import (
     ReplaceOptions,
     ReplaceTextResult,
     TextFormat,
+    WordFont,
     WordReplaceTextRequest,
     WordReplaceTextResponse,
 )
@@ -183,8 +184,8 @@ class TestWordReplaceTextRequest:
         assert request.replace_text == "replaced"
 
     def test_valid_request_with_format(self) -> None:
-        """Test creating valid request with text formatting"""
-        fmt = TextFormat(bold=True, italic=False, fontSize=14, color="#FF0000")
+        """Test creating valid request with nested-font text formatting"""
+        fmt = TextFormat(font=WordFont(bold=True, italic=False, size=14, color="#FF0000"))
 
         request = WordReplaceTextRequest(
             requestId="req_010",
@@ -195,14 +196,15 @@ class TestWordReplaceTextRequest:
         )
 
         assert request.format is not None
-        assert request.format.bold is True
-        assert request.format.italic is False
-        assert request.format.font_size == 14
-        assert request.format.color == "#FF0000"
+        assert request.format.font is not None
+        assert request.format.font.bold is True
+        assert request.format.font.italic is False
+        assert request.format.font.size == 14
+        assert request.format.font.color == "#FF0000"
 
     def test_request_with_format_serialization(self) -> None:
-        """Test format field serializes to camelCase payload"""
-        fmt = TextFormat(bold=True, styleName="Heading 1")
+        """Test nested font + styleName serialize to camelCase payload"""
+        fmt = TextFormat(font=WordFont(bold=True), styleName="Heading 1")
 
         request = WordReplaceTextRequest(
             requestId="req_011",
@@ -214,7 +216,7 @@ class TestWordReplaceTextRequest:
 
         payload = request.to_payload()
 
-        assert payload["format"]["bold"] is True
+        assert payload["format"]["font"]["bold"] is True
         assert payload["format"]["styleName"] == "Heading 1"
 
     def test_request_without_format(self) -> None:

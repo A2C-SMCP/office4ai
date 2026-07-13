@@ -592,81 +592,93 @@ class WordAppendTextRequest(BaseRequest):
     )
 
 
-class TextFormat(SocketIOBaseModel):
+# ============================================================================
+# Font abstraction (WordFont) — OASP 0.4.0
+# 字体属性收敛为 WordFont 子对象，TextFormat 与 CellFormat 复用。对齐 Word.js Word.Font。
+# ============================================================================
+
+# Word 下划线样式枚举（对齐 Word.js Word.UnderlineType，18 个可 SET 值，PascalCase）。
+# 排除仅回读的 "Mixed" 与已废弃的 "Hidden" / "DotLine"。
+UnderlineStyle = Literal[
+    "None",
+    "Single",
+    "Word",
+    "Double",
+    "Thick",
+    "Dotted",
+    "DottedHeavy",
+    "DashLine",
+    "DashLineHeavy",
+    "DashLineLong",
+    "DashLineLongHeavy",
+    "DotDashLine",
+    "DotDashLineHeavy",
+    "TwoDotDashLine",
+    "TwoDotDashLineHeavy",
+    "Wave",
+    "WaveHeavy",
+    "WaveDouble",
+]
+
+
+class WordFont(SocketIOBaseModel):
     """
-    Text formatting options.
+    Word 字体格式（OASP 0.4.0）。整段（TextFormat.font）与表格单元格（CellFormat.font）复用。
+    对齐 Word.js ``Word.Font``，双端零映射。所有字段可选，未提供的属性保持原样。
 
-    Uses Pydantic aliases for protocol compliance.
-
-    Confluence Spec: https://turingfocus.atlassian.net/wiki/pages/29753356/word+insert+text
-
-    Priority Rule (Important):
-        - Direct formatting (bold/italic/fontSize/etc) takes precedence over styleName
-        - If any direct format fields are provided, styleName is ignored
-        - If only styleName is provided, Word style is applied
-        - If neither is provided, default formatting is used
-
-    Examples:
-        # ❌ Not recommended: styleName will be ignored when direct format is present
-        format = {"bold": True, "style_name": "Heading 1"}  # Only bold takes effect
-
-        # ✅ Recommended: Use Word style only
-        format = {"style_name": "Heading 1"}  # Apply Heading 1 style
-
-        # ✅ Recommended: Use direct format only
-        format = {"bold": True, "color": "#FF0000"}  # Precise format control
+    版本门槛：文本字体 WordApi 1.1；用于表格单元格时经 cell.body.font 抬至 1.3。
     """
 
     bold: bool | None = Field(default=None, alias="bold", description="Bold text")
-    italic: bool | None = Field(
-        default=None,
-        alias="italic",
-        description="Italic text",
-    )
-    font_size: int | None = Field(
-        default=None,
-        alias="fontSize",
-        description="Font size",
-    )
-    font_name: str | None = Field(
-        default=None,
-        alias="fontName",
-        description="Font name",
-    )
-    color: str | None = Field(
-        default=None,
-        alias="color",
-        description="Font color (hex)",
-    )
-    underline: (
-        Literal[
-            "Mixed",
-            "None",
-            "Hidden",
-            "DotLine",
-            "Single",
-            "Word",
-            "Double",
-            "Thick",
-            "Dotted",
-            "DottedHeavy",
-            "DashLine",
-            "DashLineHeavy",
-            "DashLineLong",
-            "DashLineLongHeavy",
-            "DotDashLine",
-            "DotDashLineHeavy",
-            "TwoDotDashLine",
-            "TwoDotDashLineHeavy",
-            "Wave",
-            "WaveHeavy",
-            "WaveDouble",
-        ]
-        | None
-    ) = Field(
+    italic: bool | None = Field(default=None, alias="italic", description="Italic text")
+    underline: UnderlineStyle | None = Field(
         default=None,
         alias="underline",
-        description="Underline type (Word.UnderlineType)",
+        description="Underline style (Word.UnderlineType, PascalCase; 18 settable values)",
+    )
+    size: float | None = Field(
+        default=None,
+        alias="size",
+        description="Font size (points), positive number",
+        gt=0,
+    )
+    name: str | None = Field(default=None, alias="name", description="Font family name")
+    color: str | None = Field(default=None, alias="color", description="Font color (hex, e.g. '#FF0000')")
+    highlight_color: str | None = Field(
+        default=None,
+        alias="highlightColor",
+        description=(
+            "Highlight color: hex '#RRGGBB' or a Word preset name (e.g. 'Yellow'). "
+            "Desktop Word supports only 15 preset highlight colors; arbitrary RGB snaps to the "
+            "nearest preset — prefer preset names for precise control. Protocol allows null to "
+            "clear highlight, but this Server cannot emit explicit null (payloads use exclude_none)."
+        ),
+    )
+
+
+class TextFormat(SocketIOBaseModel):
+    """
+    Text formatting options (OASP 0.4.0).
+
+    Font attributes are consolidated under ``font`` (WordFont); ``styleName`` is an
+    independent concern.
+
+    Priority Rule (Important):
+        - When both ``font`` and ``styleName`` are provided, ``font`` takes precedence.
+        - Processing order: apply ``styleName`` first, then override with ``font``.
+
+    Examples:
+        # Word style only
+        format = {"style_name": "Heading 1"}
+
+        # Direct font only
+        format = {"font": {"bold": True, "color": "#FF0000"}}
+    """
+
+    font: Optional["WordFont"] = Field(
+        default=None,
+        alias="font",
+        description="Font formatting (see WordFont)",
     )
     style_name: str | None = Field(
         default=None,
@@ -1363,24 +1375,11 @@ class CellFormat(SocketIOBaseModel):
         alias="backgroundColor",
         description="Cell background color (hex, e.g. '#1F4E79')",
     )
-    font_name: str | None = Field(
+    font: Optional["WordFont"] = Field(
         default=None,
-        alias="fontName",
-        description="Font family name",
+        alias="font",
+        description="Cell font formatting (WordFont; applied to entire cell body, overrides paragraph/run fonts)",
     )
-    font_size: float | None = Field(
-        default=None,
-        alias="fontSize",
-        description="Font size (points), positive number",
-        gt=0,
-    )
-    font_color: str | None = Field(
-        default=None,
-        alias="fontColor",
-        description="Font color (hex)",
-    )
-    bold: bool | None = Field(default=None, alias="bold", description="Bold text")
-    italic: bool | None = Field(default=None, alias="italic", description="Italic text")
 
 
 class TableSummary(SocketIOBaseModel):

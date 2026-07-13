@@ -19,7 +19,13 @@ class WordAppendTextInput(BaseModel):
         default="End",
         description="Append location: Start (beginning of document) or End (end of document)",
     )
-    format: TextFormat | None = Field(None, description="Text formatting options (bold, italic, fontSize, etc.)")
+    format: TextFormat | None = Field(
+        None,
+        description=(
+            "Text formatting. Font attributes go under 'font' (WordFont: bold, italic, underline, size, "
+            "name, color, highlightColor); optional 'styleName'. Example: {'font': {'bold': true, 'size': 14}}."
+        ),
+    )
 
 
 class WordAppendTextTool(BaseTool):

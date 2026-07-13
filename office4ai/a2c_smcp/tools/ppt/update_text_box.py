@@ -15,7 +15,14 @@ class PptUpdateTextBoxInput(BaseModel):
 
     document_uri: str = Field(..., description="Target document URI (e.g. file:///path/to/presentation.pptx)")
     elementId: str | int = Field(..., description="Element ID to update")
-    updates: TextBoxUpdates = Field(..., description="Updates to apply (text, fontSize, fontName, color, bold, italic)")
+    updates: TextBoxUpdates = Field(
+        ...,
+        description=(
+            "Updates to apply: text, fillColor, font (PptFont: size, name, color, bold, italic, underline, "
+            "strikethrough, doubleStrikethrough, superscript, subscript, allCaps, smallCaps), "
+            "runs (run-level [{start, length, font}]), paragraphs (bullet [{start, length, bulletFormat}])."
+        ),
+    )
 
     # OF4AI-8: LLM 将纯数字字符串 ID（如 "5"）推断为 int，需强转回 str 以通过下游 DTO 校验
     @field_validator("elementId", mode="before")

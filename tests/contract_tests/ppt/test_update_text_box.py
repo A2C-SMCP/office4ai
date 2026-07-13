@@ -80,9 +80,19 @@ async def test_update_text_box_text_and_style(
     def response_factory(request: dict) -> dict:
         updates = request["updates"]
         assert updates["text"] == "Bold Title"
-        assert updates["fontSize"] == 32
-        assert updates["bold"] is True
-        assert updates["color"] == "#FF0000"
+        # OASP 0.4.0: 字体收敛到 font 子对象
+        assert updates["font"]["size"] == 32
+        assert updates["font"]["bold"] is True
+        assert updates["font"]["color"] == "#FF0000"
+        assert updates["font"]["underline"] == "WavyHeavy"
+        assert updates["fillColor"] == "#EEEEEE"
+        # run 级局部格式 + 段落 bullet（嵌套区间寻址）
+        assert updates["runs"][0] == {"start": 0, "length": 4, "font": {"color": "#C00000", "allCaps": True}}
+        assert updates["paragraphs"][0]["bulletFormat"] == {
+            "visible": True,
+            "type": "Numbered",
+            "style": "ArabicNumeralPeriod",
+        }
 
         return {
             "requestId": request["requestId"],
@@ -110,12 +120,23 @@ async def test_update_text_box_text_and_style(
                 "elementId": "shape-001",
                 "updates": {
                     "text": "Bold Title",
-                    "fontSize": 32,
-                    "fontName": "Arial",
-                    "color": "#FF0000",
-                    "bold": True,
-                    "italic": False,
+                    "font": {
+                        "size": 32,
+                        "name": "Arial",
+                        "color": "#FF0000",
+                        "bold": True,
+                        "italic": False,
+                        "underline": "WavyHeavy",
+                    },
                     "fillColor": "#EEEEEE",
+                    "runs": [{"start": 0, "length": 4, "font": {"color": "#C00000", "allCaps": True}}],
+                    "paragraphs": [
+                        {
+                            "start": 0,
+                            "length": 20,
+                            "bulletFormat": {"visible": True, "type": "Numbered", "style": "ArabicNumeralPeriod"},
+                        }
+                    ],
                 },
             },
         )

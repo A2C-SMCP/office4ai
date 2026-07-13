@@ -38,6 +38,7 @@ from office4ai.environment.workspace.dtos.word import (
     TableSummary,
     TextFormat,
     WordDeleteCommentRequest,
+    WordFont,
     WordGetCommentsRequest,
     WordGetCommentsResponse,
     WordGetDocumentStatsRequest,
@@ -496,13 +497,15 @@ class TestWordInsertTextRequest:
         assert request_cursor.location == "Cursor"
 
     def test_valid_request_with_format(self) -> None:
-        """Test creating valid request with text format"""
+        """Test creating valid request with text format (nested font, OASP 0.4.0)"""
         format_options = TextFormat(
-            bold=True,
-            italic=False,
-            fontSize=14,
-            fontName="Arial",
-            color="#FF0000",
+            font=WordFont(
+                bold=True,
+                italic=False,
+                size=14,
+                name="Arial",
+                color="#FF0000",
+            )
         )
 
         request = WordInsertTextRequest(
@@ -515,25 +518,27 @@ class TestWordInsertTextRequest:
 
         assert request.text == "Formatted text"
         assert request.format is not None
-        assert request.format.bold is True
-        assert request.format.italic is False
-        assert request.format.font_size == 14
-        assert request.format.font_name == "Arial"
-        assert request.format.color == "#FF0000"
+        assert request.format.font is not None
+        assert request.format.font.bold is True
+        assert request.format.font.italic is False
+        assert request.format.font.size == 14
+        assert request.format.font.name == "Arial"
+        assert request.format.font.color == "#FF0000"
 
     def test_request_with_dict_format(self) -> None:
-        """Test creating request with format as dict"""
+        """Test creating request with nested font format as dict"""
         request = WordInsertTextRequest(
             requestId="req_006",
             documentUri="file:///test.docx",
             text="Text with format",
-            format={"bold": True, "italic": True, "fontSize": 12},
+            format={"font": {"bold": True, "italic": True, "size": 12}},
         )
 
         assert request.format is not None
-        assert request.format.bold is True
-        assert request.format.italic is True
-        assert request.format.font_size == 12
+        assert request.format.font is not None
+        assert request.format.font.bold is True
+        assert request.format.font.italic is True
+        assert request.format.font.size == 12
 
     def test_missing_required_fields(self) -> None:
         """Test validation fails without required fields"""
@@ -587,7 +592,7 @@ class TestWordInsertTextRequest:
             documentUri="file:///test.docx",
             text="Hello",
             location="Start",
-            format={"bold": True},
+            format={"font": {"bold": True}},
         )
 
         payload = request.to_payload()
@@ -596,7 +601,7 @@ class TestWordInsertTextRequest:
         assert payload["documentUri"] == "file:///test.docx"
         assert payload["text"] == "Hello"
         assert payload["location"] == "Start"
-        assert payload["format"]["bold"] is True
+        assert payload["format"]["font"]["bold"] is True
         assert isinstance(payload["timestamp"], int)
 
     def test_build_class_method(self) -> None:
@@ -615,131 +620,207 @@ class TestWordInsertTextRequest:
 
 
 class TestTextFormat:
-    """Test TextFormat DTO"""
+    """Test TextFormat DTO (OASP 0.4.0: nested font sub-object + styleName)"""
 
     def test_default_format(self) -> None:
         """Test creating format with default values"""
         format_options = TextFormat()
 
-        assert format_options.bold is None
-        assert format_options.italic is None
-        assert format_options.font_size is None
-        assert format_options.font_name is None
-        assert format_options.color is None
-        assert format_options.underline is None
+        assert format_options.font is None
         assert format_options.style_name is None
 
     def test_custom_format(self) -> None:
-        """Test creating format with custom values"""
+        """Test creating format with a nested font sub-object + styleName"""
         format_options = TextFormat(
-            bold=True,
-            italic=True,
-            fontSize=16,
-            fontName="Times New Roman",
-            color="#0000FF",
-            underline="Single",
+            font=WordFont(
+                bold=True,
+                italic=True,
+                size=16,
+                name="Times New Roman",
+                color="#0000FF",
+                underline="Single",
+            ),
             styleName="Heading 1",
         )
 
-        assert format_options.bold is True
-        assert format_options.italic is True
-        assert format_options.font_size == 16
-        assert format_options.font_name == "Times New Roman"
-        assert format_options.color == "#0000FF"
-        assert format_options.underline == "Single"
+        assert format_options.font is not None
+        assert format_options.font.bold is True
+        assert format_options.font.italic is True
+        assert format_options.font.size == 16
+        assert format_options.font.name == "Times New Roman"
+        assert format_options.font.color == "#0000FF"
+        assert format_options.font.underline == "Single"
         assert format_options.style_name == "Heading 1"
 
     def test_partial_format(self) -> None:
-        """Test creating format with partial fields"""
-        format_options = TextFormat(bold=True, fontSize=14)
+        """Test creating format with a partially-populated font"""
+        format_options = TextFormat(font=WordFont(bold=True, size=14))
 
-        assert format_options.bold is True
-        assert format_options.italic is None
-        assert format_options.font_size == 14
-        assert format_options.font_name is None
+        assert format_options.font is not None
+        assert format_options.font.bold is True
+        assert format_options.font.italic is None
+        assert format_options.font.size == 14
+        assert format_options.font.name is None
 
     def test_format_with_underline_types(self) -> None:
-        """Test different underline types"""
+        """Test different underline types carried on the nested font"""
         # Single underline
-        format_single = TextFormat(underline="Single")
-        assert format_single.underline == "Single"
+        format_single = TextFormat(font=WordFont(underline="Single"))
+        assert format_single.font.underline == "Single"
 
         # Double underline
-        format_double = TextFormat(underline="Double")
-        assert format_double.underline == "Double"
+        format_double = TextFormat(font=WordFont(underline="Double"))
+        assert format_double.font.underline == "Double"
 
         # Dotted underline
-        format_dotted = TextFormat(underline="Dotted")
-        assert format_dotted.underline == "Dotted"
+        format_dotted = TextFormat(font=WordFont(underline="Dotted"))
+        assert format_dotted.font.underline == "Dotted"
 
     def test_format_with_style_name_only(self) -> None:
         """Test format with only style name (recommended approach)"""
         format_options = TextFormat(styleName="Title")
 
         assert format_options.style_name == "Title"
-        # All direct format fields should be None
-        assert format_options.bold is None
-        assert format_options.italic is None
-        assert format_options.font_size is None
+        # font sub-object should be absent
+        assert format_options.font is None
 
-    def test_format_priority_rule_direct_format(self) -> None:
+    def test_format_priority_rule_direct_font(self) -> None:
         """
-        Test that direct format takes precedence over styleName.
+        Test that a direct font can coexist with styleName.
 
         Note: This is a documentation test - actual priority enforcement
-        happens in the Add-In implementation, not in the DTO.
+        (font overrides styleName) happens in the Add-In implementation, not the DTO.
         """
-        # Not recommended: styleName will be ignored when direct format is present
+        # Not recommended: styleName will be overridden when a direct font is present
         format_options = TextFormat(
-            bold=True,
+            font=WordFont(bold=True),
             styleName="Heading 1",
         )
 
-        assert format_options.bold is True
+        assert format_options.font is not None
+        assert format_options.font.bold is True
         assert format_options.style_name == "Heading 1"
-        # The Add-In should ignore styleName when bold is present
+        # The Add-In should override styleName with the font when both are present
 
     def test_format_serialization(self) -> None:
-        """Test format can be serialized to dict with correct aliases"""
+        """Test format serializes to nested font wire shape with correct aliases"""
         format_options = TextFormat(
-            bold=True,
-            italic=False,
-            fontSize=12,
-            fontName="Arial",
-            underline="Single",
+            font=WordFont(
+                bold=True,
+                italic=False,
+                size=12,
+                name="Arial",
+                underline="Single",
+            )
         )
 
         # Convert to dict (as it would be sent over Socket.IO)
         data = format_options.model_dump(by_alias=True, exclude_none=True)
 
-        assert data["bold"] is True
-        assert data["italic"] is False
-        assert data["fontSize"] == 12
-        assert data["fontName"] == "Arial"
-        assert data["underline"] == "Single"
+        assert data["font"]["bold"] is True
+        assert data["font"]["italic"] is False
+        assert data["font"]["size"] == 12
+        assert data["font"]["name"] == "Arial"
+        assert data["font"]["underline"] == "Single"
         # None values should be excluded with exclude_none=True
-        assert "color" not in data
+        assert "color" not in data["font"]
+        assert "highlightColor" not in data["font"]
         assert "styleName" not in data
 
     def test_format_from_dict(self) -> None:
-        """Test creating format from dict with aliases"""
+        """Test creating format from a nested-font dict with aliases"""
         format_options = TextFormat(
             **{
-                "bold": True,
-                "italic": True,
-                "fontSize": 14,
-                "color": "#FF0000",
-                "underline": "Double",
+                "font": {
+                    "bold": True,
+                    "italic": True,
+                    "size": 14,
+                    "color": "#FF0000",
+                    "underline": "Double",
+                },
                 "styleName": "Normal",
             }
         )
 
-        assert format_options.bold is True
-        assert format_options.italic is True
-        assert format_options.font_size == 14
-        assert format_options.color == "#FF0000"
-        assert format_options.underline == "Double"
+        assert format_options.font is not None
+        assert format_options.font.bold is True
+        assert format_options.font.italic is True
+        assert format_options.font.size == 14
+        assert format_options.font.color == "#FF0000"
+        assert format_options.font.underline == "Double"
         assert format_options.style_name == "Normal"
+
+    def test_font_and_style_name_coexist_serialization(self) -> None:
+        """New capability: font sub-object and styleName both serialize side by side (OASP 0.4.0)"""
+        format_options = TextFormat(
+            font=WordFont(bold=True, size=14),
+            style_name="Heading 1",
+        )
+
+        data = format_options.model_dump(by_alias=True, exclude_none=True)
+
+        assert data["styleName"] == "Heading 1"
+        assert data["font"] == {"bold": True, "size": 14}
+
+
+class TestWordFont:
+    """Test WordFont DTO (OASP 0.4.0 font abstraction)"""
+
+    def test_all_fields_round_trip(self) -> None:
+        """snake_case input + camelCase wire aliases (size/name renamed from fontSize/fontName)"""
+        font = WordFont(
+            bold=True,
+            italic=False,
+            underline="Single",
+            size=14,
+            name="Calibri",
+            color="#1F4E79",
+            highlight_color="Yellow",
+        )
+
+        data = font.model_dump(by_alias=True, exclude_none=True)
+
+        assert data["bold"] is True
+        assert data["italic"] is False
+        assert data["underline"] == "Single"
+        assert data["size"] == 14
+        assert data["name"] == "Calibri"
+        assert data["color"] == "#1F4E79"
+        assert data["highlightColor"] == "Yellow"
+
+    def test_highlight_color_round_trip(self) -> None:
+        """New capability: highlightColor accepts both preset name and hex, round-trips via alias"""
+        # Preset name
+        font_preset = WordFont(highlightColor="Yellow")
+        assert font_preset.highlight_color == "Yellow"
+        assert font_preset.model_dump(by_alias=True, exclude_none=True)["highlightColor"] == "Yellow"
+
+        # Hex value (snake_case input via populate_by_name)
+        font_hex = WordFont(highlight_color="#FFFF00")
+        assert font_hex.highlight_color == "#FFFF00"
+        assert font_hex.model_dump(by_alias=True, exclude_none=True)["highlightColor"] == "#FFFF00"
+
+    def test_new_underline_value_accepted(self) -> None:
+        """New capability: extended UnderlineStyle values (e.g. DashLine) are accepted"""
+        font = WordFont(underline="DashLine")
+        assert font.underline == "DashLine"
+
+        font_wave = WordFont(underline="WaveDouble")
+        assert font_wave.underline == "WaveDouble"
+
+    def test_removed_underline_value_rejected(self) -> None:
+        """Removed legacy underline values (Mixed/Hidden/DotLine) must be rejected"""
+        for removed in ("Mixed", "Hidden", "DotLine"):
+            with pytest.raises(ValidationError):
+                WordFont(underline=removed)  # type: ignore[arg-type]
+
+    def test_size_must_be_positive(self) -> None:
+        """size has gt=0 constraint (fontSize=0 no longer valid)"""
+        with pytest.raises(ValidationError):
+            WordFont(size=0)
+
+        with pytest.raises(ValidationError):
+            WordFont(size=-1)
 
 
 class TestWordGetStylesRequest:
@@ -1072,8 +1153,8 @@ class TestWordReplaceSelectionRequest:
         assert request.content.text is None
 
     def test_valid_request_with_text_and_format(self) -> None:
-        """Test creating valid request with text and format"""
-        text_format = TextFormat(bold=True, italic=True, fontSize=14)
+        """Test creating valid request with text and nested-font format"""
+        text_format = TextFormat(font=WordFont(bold=True, italic=True, size=14))
         content = ReplaceContent(text="Formatted text", format=text_format)
 
         request = WordReplaceSelectionRequest(
@@ -1084,21 +1165,23 @@ class TestWordReplaceSelectionRequest:
 
         assert request.content.text == "Formatted text"
         assert request.content.format is not None
-        assert request.content.format.bold is True
-        assert request.content.format.italic is True
-        assert request.content.format.font_size == 14
+        assert request.content.format.font is not None
+        assert request.content.format.font.bold is True
+        assert request.content.format.font.italic is True
+        assert request.content.format.font.size == 14
 
     def test_request_with_dict_content(self) -> None:
-        """Test creating request with content as dict"""
+        """Test creating request with content as dict (nested font)"""
         request = WordReplaceSelectionRequest(
             requestId="req_004",
             documentUri="file:///test.docx",
-            content={"text": "Test", "format": {"bold": True}},
+            content={"text": "Test", "format": {"font": {"bold": True}}},
         )
 
         assert request.content.text == "Test"
         assert request.content.format is not None
-        assert request.content.format.bold is True
+        assert request.content.format.font is not None
+        assert request.content.format.font.bold is True
 
     def test_missing_required_fields(self) -> None:
         """Test validation fails without required fields"""
@@ -1218,34 +1301,37 @@ class TestReplaceContent:
         assert content.format is None
 
     def test_content_with_text_and_format(self) -> None:
-        """Test creating content with text and format"""
+        """Test creating content with text and nested-font format"""
         format_obj = TextFormat(
-            bold=True,
-            italic=False,
-            fontSize=16,
-            fontName="Arial",
-            color="#FF0000",
+            font=WordFont(
+                bold=True,
+                italic=False,
+                size=16,
+                name="Arial",
+                color="#FF0000",
+            )
         )
         content = ReplaceContent(text="Bold red text", format=format_obj)
 
         assert content.text == "Bold red text"
         assert content.format is not None
-        assert content.format.bold is True
-        assert content.format.italic is False
-        assert content.format.font_size == 16
-        assert content.format.font_name == "Arial"
-        assert content.format.color == "#FF0000"
+        assert content.format.font is not None
+        assert content.format.font.bold is True
+        assert content.format.font.italic is False
+        assert content.format.font.size == 16
+        assert content.format.font.name == "Arial"
+        assert content.format.font.color == "#FF0000"
 
     def test_content_serialization(self) -> None:
-        """Test content can be serialized to dict with correct aliases"""
-        format_obj = TextFormat(bold=True, fontSize=14)
+        """Test content serializes to nested font wire shape with correct aliases"""
+        format_obj = TextFormat(font=WordFont(bold=True, size=14))
         content = ReplaceContent(text="Test", format=format_obj)
 
-        data = content.model_dump(by_alias=True)
+        data = content.model_dump(by_alias=True, exclude_none=True)
 
         assert data["text"] == "Test"
-        assert data["format"]["bold"] is True
-        assert data["format"]["fontSize"] == 14
+        assert data["format"]["font"]["bold"] is True
+        assert data["format"]["font"]["size"] == 14
 
 
 class TestWordGetSelectedContentResponse:
@@ -2956,22 +3042,22 @@ class TestCellFormat:
             CellFormat(verticalAlignment="Middle")
 
     def test_zero_font_size_rejected(self) -> None:
+        """font.size 仍受 gt=0 约束：CellFormat(font=WordFont(size=0)) 应被拒绝（OASP 0.4.0）"""
         with pytest.raises(ValidationError):
-            CellFormat(fontSize=0)
+            CellFormat(font=WordFont(size=0))
 
     def test_alias_round_trip(self) -> None:
-        """snake_case 输入 + camelCase 输出"""
+        """snake_case 输入 + camelCase 输出（字体收敛到 font 子对象）"""
         fmt = CellFormat(
             horizontal_alignment="Centered",
             background_color="#1F4E79",
-            font_color="#FFFFFF",
-            bold=True,
+            font=WordFont(color="#FFFFFF", bold=True),
         )
         payload = fmt.model_dump(by_alias=True, exclude_none=True)
         assert payload["horizontalAlignment"] == "Centered"
         assert payload["backgroundColor"] == "#1F4E79"
-        assert payload["fontColor"] == "#FFFFFF"
-        assert payload["bold"] is True
+        assert payload["font"]["color"] == "#FFFFFF"
+        assert payload["font"]["bold"] is True
 
 
 class TestTableSummary:
@@ -3058,8 +3144,7 @@ class TestWordUpdateTableCellRequest:
                         "horizontalAlignment": "Centered",
                         "verticalAlignment": "Center",
                         "backgroundColor": "#1F4E79",
-                        "fontColor": "#FFFFFF",
-                        "bold": True,
+                        "font": {"color": "#FFFFFF", "bold": True},
                     },
                 }
             ],
@@ -3071,6 +3156,8 @@ class TestWordUpdateTableCellRequest:
         assert cell["text"] == "甲方信息"
         assert cell["format"]["horizontalAlignment"] == "Centered"
         assert cell["format"]["backgroundColor"] == "#1F4E79"
+        assert cell["format"]["font"]["color"] == "#FFFFFF"
+        assert cell["format"]["font"]["bold"] is True
 
     def test_empty_cells_rejected(self) -> None:
         with pytest.raises(ValidationError):

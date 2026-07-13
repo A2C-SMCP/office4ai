@@ -35,8 +35,10 @@ async def test_update_table_cell_with_format(
         assert fmt["horizontalAlignment"] == "Centered"
         assert fmt["verticalAlignment"] == "Center"
         assert fmt["backgroundColor"] == "#1F4E79"
-        assert fmt["fontColor"] == "#FFFFFF"
-        assert fmt["bold"] is True
+        # OASP 0.4.0: 字体收敛到 font 子对象（WordFont）
+        assert fmt["font"]["color"] == "#FFFFFF"
+        assert fmt["font"]["bold"] is True
+        assert fmt["font"]["underline"] == "Single"
 
         return {
             "requestId": request["requestId"],
@@ -73,8 +75,7 @@ async def test_update_table_cell_with_format(
                             "horizontalAlignment": "Centered",
                             "verticalAlignment": "Center",
                             "backgroundColor": "#1F4E79",
-                            "fontColor": "#FFFFFF",
-                            "bold": True,
+                            "font": {"color": "#FFFFFF", "bold": True, "underline": "Single"},
                         },
                     }
                 ],
@@ -137,14 +138,14 @@ async def test_update_table_cell_batch(
                         "rowIndex": 1,
                         "columnIndex": 0,
                         "text": "甲方",
-                        "format": {"backgroundColor": "#EEEEEE", "bold": True},
+                        "format": {"backgroundColor": "#EEEEEE", "font": {"bold": True}},
                     },
                     {"rowIndex": 1, "columnIndex": 1, "text": "ACME Corp"},
                     {
                         "rowIndex": 2,
                         "columnIndex": 0,
                         "text": "地址",
-                        "format": {"backgroundColor": "#EEEEEE", "bold": True},
+                        "format": {"backgroundColor": "#EEEEEE", "font": {"bold": True}},
                     },
                     {"rowIndex": 2, "columnIndex": 1, "text": "上海市"},
                 ],

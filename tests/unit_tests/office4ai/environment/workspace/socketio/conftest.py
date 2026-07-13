@@ -16,6 +16,10 @@ from office4ai.environment.workspace.socketio.services.connection_manager import
     ClientInfo,
     ConnectionManager,
 )
+from office4ai.environment.workspace.socketio.versioning import SERVER_VERSION
+
+# 与 Server 同版本的 oaspVersion（单一事实源，避免版本 bump 时握手 fixture 漂移）
+_COMPATIBLE_OASP_VERSION = str(SERVER_VERSION)
 
 
 @pytest.fixture
@@ -65,7 +69,7 @@ def valid_handshake_data() -> dict[str, Any]:
     return {
         "clientId": "test_client_123",
         "documentUri": "file:///tmp/test.docx",
-        "oaspVersion": "0.3.0",
+        "oaspVersion": _COMPATIBLE_OASP_VERSION,
     }
 
 
@@ -74,7 +78,7 @@ def invalid_handshake_data_missing_client_id() -> dict[str, Any]:
     """缺少 clientId 的无效握手数据（oaspVersion 合法，确保停在业务参数校验）"""
     return {
         "documentUri": "file:///tmp/test.docx",
-        "oaspVersion": "0.3.0",
+        "oaspVersion": _COMPATIBLE_OASP_VERSION,
     }
 
 
@@ -83,7 +87,7 @@ def invalid_handshake_data_missing_document_uri() -> dict[str, Any]:
     """缺少 documentUri 的无效握手数据（oaspVersion 合法，确保停在业务参数校验）"""
     return {
         "clientId": "test_client_123",
-        "oaspVersion": "0.3.0",
+        "oaspVersion": _COMPATIBLE_OASP_VERSION,
     }
 
 
@@ -93,7 +97,7 @@ def invalid_handshake_data_invalid_uri() -> dict[str, Any]:
     return {
         "clientId": "test_client_123",
         "documentUri": "invalid-uri-format",
-        "oaspVersion": "0.3.0",
+        "oaspVersion": _COMPATIBLE_OASP_VERSION,
     }
 
 

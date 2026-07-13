@@ -244,21 +244,20 @@ async def test_replace_text_with_format(
     4. Workspace 发送带 format 的 word:replace:text 命令
     5. 验证 format 数据正确传递到 Mock 客户端
     """
-    # Arrange
+    # Arrange (OASP 0.4.0: 字体收敛到 format.font = WordFont)
     expected_format = {
-        "bold": True,
-        "color": "#FF0000",
-        "fontSize": 16,
+        "font": {"bold": True, "color": "#FF0000", "size": 16, "underline": "Single"},
     }
 
     def response_with_format_validation(request: dict) -> dict:
         """验证 format 字段的响应工厂"""
         # 验证 format 正确传递
         assert "format" in request, "format field should be present in request"
-        actual_format = request["format"]
-        assert actual_format["bold"] is True
-        assert actual_format["color"] == "#FF0000"
-        assert actual_format["fontSize"] == 16
+        actual_font = request["format"]["font"]
+        assert actual_font["bold"] is True
+        assert actual_font["color"] == "#FF0000"
+        assert actual_font["size"] == 16
+        assert actual_font["underline"] == "Single"
 
         return {
             "requestId": request["requestId"],
@@ -302,8 +301,8 @@ async def test_replace_text_with_format(
         assert event_name == "word:replace:text"
         assert event_data["searchText"] == "important"
         assert event_data["replaceText"] == "important"
-        assert event_data["format"]["bold"] is True
-        assert event_data["format"]["color"] == "#FF0000"
+        assert event_data["format"]["font"]["bold"] is True
+        assert event_data["format"]["font"]["color"] == "#FF0000"
     finally:
         await client.disconnect()
 
