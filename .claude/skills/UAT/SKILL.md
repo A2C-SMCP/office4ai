@@ -1,7 +1,7 @@
 ---
 name: uat
 description: 执行 Office4AI MCP Server 注册级验收测试（tools, resources）
-argument-hint: <可选：场景文件名 word-tools | ppt-tools | resources，留空则验收所有场景>
+argument-hint: <可选：场景文件名 word-tools | ppt-tools | excel-tools | resources，留空则验收所有场景>
 ---
 
 # UAT - User Acceptance Testing Skill
