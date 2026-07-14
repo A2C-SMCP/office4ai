@@ -295,7 +295,7 @@ class TestExecuteFlow:
             {
                 "document_uri": "file:///test.pptx",
                 "shapeType": "RoundedRectangle",
-                "options": {"fillColor": "#4472C4", "text": "Click here"},
+                "options": {"fillColor": "#4472C4", "text": "Click here", "font": {"size": 18, "bold": True}},
             }
         )
 
@@ -304,6 +304,9 @@ class TestExecuteFlow:
         assert action.action_name == "insert:shape"
         assert action.params["shapeType"] == "RoundedRectangle"
         assert action.params["options"]["fill_color"] == "#4472C4"
+        # OASP 0.4.0: 插入即带字体，字体收敛到嵌套 font 子对象
+        assert action.params["options"]["font"]["size"] == 18
+        assert action.params["options"]["font"]["bold"] is True
 
     @pytest.mark.asyncio
     async def test_update_text_box_action(self, mock_workspace):

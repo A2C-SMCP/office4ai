@@ -31,7 +31,14 @@ class PptInsertShapeInput(BaseModel):
             "Note: 'Line' is currently unreliable (rendered like a rectangle, office-editor4ai #60) — avoid for now."
         ),
     )
-    options: ShapeInsertOptions | None = Field(None, description="Shape insertion options (position, size, style)")
+    options: ShapeInsertOptions | None = Field(
+        None,
+        description=(
+            "Shape insertion options (position, size, style, text, and font: PptFont with "
+            "size/name/color/bold/italic/underline/...). text/font apply to text-capable shapes "
+            "only — passing them on 'Line' (no text box) is rejected with 4002."
+        ),
+    )
 
 
 class PptInsertShapeTool(BaseTool):
@@ -49,7 +56,10 @@ class PptInsertShapeTool(BaseTool):
             "Line, Arrow, Star, and TextBox shape types "
             "(TextBox = a real text box with no fill/border; 'Line' is unreliable, see office-editor4ai #60). "
             "By default shapes have NO fill and NO border; set fillColor / borderColor (hex) to add them, "
-            "or pass 'none' / borderWidth=0 to explicitly disable. Supports optional position, size, and text."
+            "or pass 'none' / borderWidth=0 to explicitly disable. Supports optional position, size, text, and "
+            "font (insert-with-font). text/font are for text-capable shapes only (all except 'Line', which has "
+            "no text box); passing text/font on 'Line' is rejected with 4002. When both text and font are given, "
+            "font is applied to the inserted text."
         )
 
     @property
