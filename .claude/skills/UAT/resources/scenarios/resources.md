@@ -20,15 +20,19 @@
 
 | # | 资源 URI | 预期 name | 预期 mimeType | 关键点 |
 |---|----------|-----------|---------------|--------|
-| R-01 | `window://office4ai` | Office 工作区 | `text/plain` | 根索引；无文档时渲染"暂无文档连接"，有文档时逐条列出 per-file 子窗口 |
-| R-02 | `skill://com.a2c-smcp.office4ai/create-office-file` | create-office-file（SKILL 名） | `text/markdown` | W1 建文件 SKILL 根；**须带 `_meta.source="resources"`** |
-| R-03 | `skill://com.a2c-smcp.office4ai/edit-office-file` | edit-office-file | `text/markdown` | W2 编辑 SKILL 根；带 `_meta.source="resources"` |
-| R-04 | `skill://com.a2c-smcp.office4ai/extract-template` | extract-template | `text/markdown` | W3 抽模板 SKILL 根；带 `_meta.source="resources"` |
-| R-05 | `skill://com.a2c-smcp.office4ai/<leaf>/<rel>`（子资源） | 各包内文件 | 按扩展名（`.md`→`text/markdown`、`.py`→`text/x-python`、`.txt`→`text/plain` …） | 每个 SKILL 包的 `SKILL.md` / `scripts/` 等作为兄弟子资源出现，**不带** `_meta` |
+| R-01 | `window://office4ai`（读取 URI 带 `?priority=&fullscreen=`） | Office 工作区 | `text/plain` | 根索引；无文档时渲染"暂无文档连接"，有文档时逐条列出 per-file 子窗口 |
+| R-02 | `skill://com.a2c-smcp.office4ai/create-office-file` | create-office-file（leaf 名） | **`inode/directory`** | W1 建文件 SKILL **根（目录型）**；**须带 `_meta.source="resources"`** |
+| R-03 | `skill://com.a2c-smcp.office4ai/edit-office-file` | edit-office-file | **`inode/directory`** | W2 编辑 SKILL 根；带 `_meta.source="resources"` |
+| R-04 | `skill://com.a2c-smcp.office4ai/extract-template` | extract-template | **`inode/directory`** | W3 抽模板 SKILL 根；带 `_meta.source="resources"` |
+| R-05 | `skill://com.a2c-smcp.office4ai/<leaf>/<rel>`（子资源） | 包内文件相对路径 | 按扩展名（`SKILL.md`/`references/*.md`→`text/markdown`、`scripts/*.py`→`text/x-python`、`.txt`→`text/plain`） | 每个 SKILL 包的 `SKILL.md` / `references/` / `scripts/` 作为兄弟子资源，**不带** `_meta` |
 
-> skill host 默认 `com.a2c-smcp.office4ai`；可被 `OFFICE4AI_SKILLS_ROOT` 环境变量整体覆盖（则 leaf 集合随之变化）。R-02～R-04 对应包内 `office/skills/` 的 3 个生产 SKILL。
+> skill host 默认 `com.a2c-smcp.office4ai`；可被 `OFFICE4AI_SKILLS_ROOT` 环境变量整体覆盖（则 leaf 集合随之变化）。R-02～R-04 对应包内 `office/skills/` 的 3 个生产 SKILL；每包 ≈ 8 个资源（1 目录根 + `SKILL.md` + 2~3 `references/` + 4 `scripts/`）。
+>
+> **断连态静态资源基线（实测）**：共 **25 个** = 1 根 window + 3 SKILL 根 + 21 SKILL 子资源；**无任何 per-file 窗口**。
 
 ### B. 动态 per-file 窗口资源（**需先连接对应文档**）
+
+> 本节只核对 per-file 窗口的**注册**（URI / name / mimeType）；其**动态收敛行为 + 实时内容**（连接前后 re-read 对照、`resources/list_changed`、`resources/updated`）见 `resource-convergence` 场景。
 
 先分别接入一个 Word / PPT / Excel 文档（Add-In 握手成功），再在 Resources 列表中核对：
 

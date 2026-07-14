@@ -4,6 +4,8 @@
 
 验证 37 个 Excel MCP 工具在 MCP Inspector 中正确注册，参数 schema 符合预期。
 
+> ⚠️ **前置：需 Excel Add-In 已连接**（W4a/#63 动态收敛）。Excel 工具 `requires_connection=True`，**断连态下不出现是正常收敛、非缺陷**（见 `tool-convergence` 场景 Round 1）。本场景为**连接态**下的逐工具 schema 核对。
+
 > 约定：几乎所有工具都带可选参数 `worksheet_name`（省略则作用于活动工作表）。下表仅在该项为唯一/关键可选参数时标注，其余可选参数逐一列出。
 
 ## 验证清单
