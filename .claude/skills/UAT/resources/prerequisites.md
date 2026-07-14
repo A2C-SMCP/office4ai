@@ -1,6 +1,8 @@
 # UAT 前置条件
 
-## 环境要求
+> 分两阶段：**Phase 1 注册验收**（下方「环境要求」）+ **Phase 2 功能验收**（末尾「Phase 2」节）。按执行的阶段满足对应前置。
+
+## Phase 1 — 注册验收环境要求
 
 ### 1. Office4AI MCP Server
 
@@ -28,7 +30,19 @@ npx @anthropic-ai/mcp-inspector
 
 > 连接 Add-In 需 **office-editor4ai** 配合：启动对应 dev server（`pnpm dev:word|dev:ppt|dev:excel`）→ 打开对应 Office 应用 + 文档 → sideload 加载项 → taskpane 握手成功。UAT 执行到需要连接的场景时，**引导用户逐步完成**。
 
-## MCP Inspector 操作指引
+## Phase 2 — 功能验收环境要求（manual_test E2E）
+
+Phase 2 在真实 Office + Add-In 环境跑 `manual_tests/` E2E，验证功能可用。需：
+
+1. **macOS + 对应 Office 桌面版**（Word / PowerPoint / Excel）。
+2. **office-editor4ai dev server**：`cd office-editor4ai && pnpm dev:word|dev:ppt|dev:excel`（对应平台）。
+3. **打开对应文档 + 激活 taskpane**：触发人打开文档 → 加载项面板点 word/ppt/excel-editor → taskpane 与 workspace 握手（`https://127.0.0.1:4443`；脚本自起的 workspace 双绑 `:3000`+`:4443`）。
+4. **依赖就绪**：`poe install-dev`；部分 authoring/word 路径需 LibreOffice `soffice`（脚本会探测）。
+5. **运行方式**：功能 E2E 脚本需 `dangerouslyDisableSandbox`（网络 bind + AppleScript + Office）。category runner 连接超时 30s，触发人需**及时激活 taskpane**；部分用例（get_selection / replace_selection / select_text）会**提示手动选中文本**，照做即可。
+
+> **health 档例外**：`test_{excel|word}_e2e.py --mode health` / `test_word_table_e2e.py --mode health` 只校验事件接线，**无需 Add-In**，可先跑做接线回归。
+
+## MCP Inspector 操作指引（Phase 1）
 
 ### 查看 Tool 列表
 
