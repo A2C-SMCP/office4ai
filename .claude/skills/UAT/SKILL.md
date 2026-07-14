@@ -1,7 +1,7 @@
 ---
 name: uat
 description: 执行 Office4AI MCP Server 注册级验收测试（tools, resources）
-argument-hint: <可选：场景文件名 word-tools | ppt-tools | resources，留空则验收所有场景>
+argument-hint: <可选：场景文件名 word-tools | ppt-tools | excel-tools | resources | tool-convergence | resource-convergence，留空则验收所有场景>
 ---
 
 # UAT - User Acceptance Testing Skill
@@ -47,8 +47,14 @@ argument-hint: <可选：场景文件名 word-tools | ppt-tools | resources，�
 
 #### Resource 验收（Resource UAT）
 - **注册存在性**：资源是否出现在 Resources 列表中
-- **URI 格式**：URI 是否符合 `window://office4ai[/category]` 格式
-- **元数据**：name、description、mimeType 是否正确
+- **URI 格式**：URI 是否符合 `window://office4ai[/{type}/{doc_id}]` 或 `skill://<host>/<leaf>` 格式
+- **元数据**：name、description、mimeType 是否正确；skill 根须带 `_meta.source=resources`
+
+#### 动态收敛验收（Convergence UAT，W4a/W4b）
+- **工具收敛（W4a/#63）**：平台工具（word/ppt/excel）**断连时隐藏、连接对应 Add-In 后暴露**；常驻工具（`office_run_script`）恒在。见 `tool-convergence` 场景（两轮对照）。
+- **资源收敛（W4b/#64,#66）**：per-file 窗口 `window://office4ai/{type}/{doc_id}` **随连接出现/断开注销**；内容**实时反映所连文件真实状态**（须重新拉取最新值对照）。见 `resource-convergence` 场景。
+- **通知**：连接变化应广播 `tools/list_changed` / `resources/list_changed`；写操作/活动切换发 `resources/updated`。
+- ⚠️ 「无 Add-In 时看不到平台工具/per-file 窗口」是**正确收敛，不是缺陷**——两轮组合（先断后连）才能证明设计预期。
 
 ### 报告格式
 
