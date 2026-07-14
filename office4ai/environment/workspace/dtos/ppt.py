@@ -342,7 +342,14 @@ class SlideTableInsertOptions(SocketIOBaseModel):
 
 class ShapeInsertOptions(SocketIOBaseModel):
     """
-    Shape insertion options.
+    Shape insertion options (OASP 0.4.0).
+
+    ``text`` / ``font`` 仅适用 **text-capable 形状**——``TextBox`` 及具备文本框的几何形状
+    （``Rectangle`` / ``RoundedRectangle`` / ``Circle`` / ``Oval`` / ``Triangle`` / ``Star`` /
+    ``Arrow``）。对无文本框的 ``Line`` 传入 ``font`` / ``text`` → AddIn 前置 ``4002 INVALID_PARAM``
+    （语义误用，静态拒绝，与能力不足 ``3016`` 分离）。``text`` 与 ``font`` 并存时施加顺序
+    ``text`` → ``font``（``font`` 作用于插入后的最终文本）。text-capable 门控由 AddIn 权威裁决，
+    Server 透传并兜住其返回码（对齐 events-ppt.md ``ppt:insert:shape``）。
     """
 
     slide_index: int | None = Field(default=None, alias="slideIndex", description="Slide index (default: current)")
@@ -365,7 +372,18 @@ class ShapeInsertOptions(SocketIOBaseModel):
         alias="borderWidth",
         description="Border width (points). Omit or 0 for no border (default).",
     )
-    text: str | None = Field(default=None, description="Shape text")
+    text: str | None = Field(
+        default=None,
+        description="Shape text (text-capable shapes only; passing on 'Line' → 4002)",
+    )
+    font: PptFont | None = Field(
+        default=None,
+        alias="font",
+        description=(
+            "Font formatting applied to the inserted shape's text (text-capable shapes only; "
+            "passing on 'Line' → 4002). Applied after 'text' when both are present."
+        ),
+    )
 
 
 # ============================================================================
