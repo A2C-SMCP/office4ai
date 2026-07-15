@@ -268,10 +268,22 @@ async def run_full_workflow(workspace: Any, uri: str, rc: ResultCollector) -> No
     # ── #25 Find&Filter: 查找与筛选 ──────────────────────────────────────
     print("\n" + "─" * 70 + "\n#25 Find&Filter 查找与筛选\n" + "─" * 70)
     await step("find:values", "查找 East", search_text="East")
+    # 夹具：set:autoFilter 必须落在「干净、无表」区域。#22 已把 A1:C4 变成 Table「表1」，
+    # 而 worksheet 级 autoFilter 不能套在 Table range 上（Office.js 抛 InvalidArgument →
+    # 通用 3000，office-editor4ai 复盘确认）。故在未被前序触及的 A20:C23 写一份独立数据供筛选；
+    # 此写入仅作夹具、不经 step() 计入事件汇总。（对表 range 设筛选另属 Add-In 易用性增强，见 #78 后续。）
+    await excel_op(
+        workspace,
+        uri,
+        "set:range",
+        quiet=True,
+        address="A20:C23",
+        values=[["Region", "Q1", "Q2"], ["East", 10, 20], ["West", 30, 40], ["North", 50, 60]],
+    )
     await step(
         "set:autoFilter",
-        "按 Region 筛选",
-        address="A1:C4",
+        "按 Region 筛选（独立区域 A20:C23，避开表1）",
+        address="A20:C23",
         criteria=[{"column_index": 0, "filter_on": "Values", "values": ["East", "West"]}],
     )
     await step("clear:autoFilter", "清筛选")
