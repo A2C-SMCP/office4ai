@@ -155,33 +155,33 @@ async def test_set_formula_success(excel_roundtrip, excel_factory):
 
 
 async def test_get_range_invalid_address(excel_roundtrip):
-    """无效区域地址 → 5002 RANGE_INVALID。"""
+    """无效区域地址 → 3009 RANGE_INVALID（oasp#17）。"""
 
     def factory(request: dict) -> dict:
-        return _err(request, "5002", "Invalid range address 'ZZZ'")
+        return _err(request, "3009", "Invalid range address 'ZZZ'")
 
     result, _ = await excel_roundtrip("get:range", {"address": "ZZZ"}, factory)
     assert result.success is False
-    assert "5002" in (result.error or "")
+    assert "3009" in (result.error or "")
 
 
 async def test_set_formula_error(excel_roundtrip):
-    """公式语法错误 → 5005 FORMULA_ERROR。"""
+    """公式语法错误 → 3017 FORMULA_ERROR（oasp#17 新增）。"""
 
     def factory(request: dict) -> dict:
-        return _err(request, "5005", "Formula syntax error")
+        return _err(request, "3017", "Formula syntax error")
 
     result, _ = await excel_roundtrip("set:formula", {"address": "B1", "formula": "=BADFUNC("}, factory)
     assert result.success is False
-    assert "5005" in (result.error or "")
+    assert "3017" in (result.error or "")
 
 
 async def test_set_range_protected_sheet(excel_roundtrip):
-    """受保护工作表写入 → 5004 PROTECTED_SHEET。"""
+    """受保护工作表写入 → 3003 DOCUMENT_READ_ONLY(scope:worksheet)（oasp#17）。"""
 
     def factory(request: dict) -> dict:
-        return _err(request, "5004", "Worksheet is protected")
+        return _err(request, "3003", "Worksheet is protected")
 
     result, _ = await excel_roundtrip("set:range", {"address": "A1", "values": [["x"]]}, factory)
     assert result.success is False
-    assert "5004" in (result.error or "")
+    assert "3003" in (result.error or "")

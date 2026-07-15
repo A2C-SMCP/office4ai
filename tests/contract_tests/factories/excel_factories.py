@@ -295,9 +295,18 @@ class ExcelDataFactory:
         return {"cleared": cleared}
 
     # ------------------------------------------------------------------
-    # 错误响应（error 信封 portion；code 取 events-excel.md 错误码 5001–5010）
+    # 错误响应（error 信封 portion；code 取 events-excel.md §Excel 错误码映射，
+    # oasp#17：5xxx 退役 → 通用 3xxx；3010 类用 details.kind 区分对象类型）
     # ------------------------------------------------------------------
 
-    def error(self, code: str = "5002", message: str = "Invalid range address") -> dict[str, Any]:
-        """生成错误信封的 ``error`` 部分 ``{code, message}``。"""
-        return {"code": code, "message": message}
+    def error(
+        self,
+        code: str = "3009",
+        message: str = "Invalid range address",
+        details: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        """生成错误信封的 ``error`` 部分 ``{code, message, details?}``。"""
+        err: dict[str, Any] = {"code": code, "message": message}
+        if details is not None:
+            err["details"] = details
+        return err

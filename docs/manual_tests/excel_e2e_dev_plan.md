@@ -27,44 +27,50 @@
 
 | # | 子问题 | 目录 | 事件数 | 场景脚本数 | 关键错误码 |
 |---|--------|------|--------|-----------|-----------|
-| 1 | #29 Read/Foundation | `read_state_e2e/` | 3 | 3 | 5001 |
-| 2 | #30 Range CRUD+公式 | `range_e2e/` | 7 | 5 | 5002 / 5005 / 5004 |
-| 3 | #31 Format/条件格式/合并 | `format_e2e/` | 6 | 4 | 5003 / 5002 |
-| 4 | #32 Worksheet 管理 | `worksheet_e2e/` | 5 | 3 | 5001 |
-| 5 | #33 Table 操作 | `table_e2e/` | 6 | 4 | 5006 / 5009 / 4004 |
-| 6 | #34 Chart 操作 | `chart_e2e/` | 4 | 4 | 4002 / 5007 / 5002 |
-| 7 | #35 PivotTable 操作 | `pivot_table_e2e/` | 3 | 3 | 5008 / 5010 / 5002 |
-| 8 | #36 Find&Filter | `find_filter_e2e/` | 3 | 2 | 4004 / 5001 / 5002 |
+| 1 | #29 Read/Foundation | `read_state_e2e/` | 3 | 3 | 3010(kind:worksheet) |
+| 2 | #30 Range CRUD+公式 | `range_e2e/` | 7 | 5 | 3009 / 3017 / 3003 |
+| 3 | #31 Format/条件格式/合并 | `format_e2e/` | 6 | 4 | 3014 / 3009 |
+| 4 | #32 Worksheet 管理 | `worksheet_e2e/` | 5 | 3 | 3010(kind:worksheet) / 3004 |
+| 5 | #33 Table 操作 | `table_e2e/` | 6 | 4 | 3010(kind:table) / 3018 / 4004 |
+| 6 | #34 Chart 操作 | `chart_e2e/` | 4 | 4 | 4002 / 3010(kind:chart) / 3009 |
+| 7 | #35 PivotTable 操作 | `pivot_table_e2e/` | 3 | 3 | 3010(kind:pivotTable) / 3016 / 3009 |
+| 8 | #36 Find&Filter | `find_filter_e2e/` | 3 | 2 | 4004 / 3010(kind:worksheet) / 3009 |
 
 > 顺序理由：Read 先行（其他测试用读类 data 做断言）；Range 次之（多数功能需要先铺数据）；最后 Chart/Pivot/Filter 依赖前面铺的数据夹具。
 
 ---
 
-## ⚠️ 错误码现实（真机实测，#29 发现，影响全部子问题）
+## 错误码（oasp#17 已定案，issue #82 校准）
 
-Issue #28–#36 的 DoD 与旧 DTO 注释写的 **`5001–5010` Excel 错误码在实现里不存在**。Add-In
-（`office-editor4ai/packages/shared/src/error-codes.ts`）按 **OASP 0.3.0 error-handling 表用 `3xxx`/`4xxx`**
-（#26 已删除历史 5xxx 漂移）。所有子问题的错误码用例**按真实码断言**：
+**协议裁决**（[oasp-protocol#17] · commit `531af28`）：早期草案 `5001–5010` 专属块整体退役，
+逐码收敛回通用注册表（**规范层 MUST**——线缆可观测条件出现时不得降级 `3000`）。本文档
+早期记录的「真机 3000、细分码 dead code」是当时 Add-In 实现缺口的忠实观测，该经验判断
+（5xxx 不存在、应为通用 3xxx）已被协议正式采纳并定案为下表权威映射：
 
-| 旧 DoD（过时） | 真实码 | 含义 |
+| 旧 5xxx（退役） | 权威码（oasp#17） | 含义 / 区分键 |
 |---------------|-------|------|
-| 5001 WORKSHEET_NOT_FOUND | **3000** DOCUMENT_ERROR ✅#32真机确认 | worksheet/资源不存在（"请求的资源不存在"） |
-| 5002 RANGE_INVALID | **3000** DOCUMENT_ERROR ⚠️ | 非法/畸形 address（**非** 3009，见下） |
-| 5003 MERGE_CONFLICT | 3014 ALREADY_MERGED（待真机核实） | 合并冲突 |
-| 5006 TABLE_NOT_FOUND / 5009 | **3000** DOCUMENT_ERROR ✅#33真机确认 | 表不存在/索引越界（"请求的表格不存在"；3010/3013 未发射） |
-| 5007 CHART_NOT_FOUND / 无效 chartType | **3000** DOCUMENT_ERROR ✅#34真机确认 | 图表不存在/非法类型枚举（4002/3015 未发射） |
-| 5008 PIVOT_NOT_FOUND / 5010 / 5002 | **3000** DOCUMENT_ERROR ✅#35真机确认 | 透视表/资源不存在（空串→4000） |
-| 4002 INVALID_PARAM / 4004 PARAM_OUT_OF_RANGE | **4000** VALIDATION_ERROR ✅#33/#36真机确认 | Zod 校验失败（含 nonnegative / min(1) 空串）统一 4000，非 4002/4004 |
+| 5001 WORKSHEET_NOT_FOUND | **3010** ELEMENT_NOT_FOUND | `details.kind:"worksheet"` |
+| 5002 RANGE_INVALID | **3009** RANGE_INVALID | 非法/畸形 address |
+| 5003 MERGE_CONFLICT | **3014** ALREADY_MERGED | 合并冲突 |
+| 5004 PROTECTED_SHEET | **3003** DOCUMENT_READ_ONLY | `details.scope:"worksheet"` |
+| 5005 FORMULA_ERROR | **3017** FORMULA_ERROR ⭐新增 | 公式语法/引用错 |
+| 5006 TABLE_NOT_FOUND | **3010** ELEMENT_NOT_FOUND | `details.kind:"table"` |
+| 5007 CHART_NOT_FOUND | **3010** ELEMENT_NOT_FOUND | `details.kind:"chart"` |
+| 5008 PIVOT_NOT_FOUND | **3010** ELEMENT_NOT_FOUND | `details.kind:"pivotTable"` |
+| 5009 DATA_TYPE_MISMATCH | **3018** DATA_TYPE_MISMATCH ⭐新增 | apply-time 类型不兼容（≠4003） |
+| 5010 NOT_SUPPORTED | **3016** API_NOT_SUPPORTED | `details.requiredApiSet` |
 
-> 标「待核实」的在做对应子问题时真机确认实际码。后续应回头修订 Issue DoD、
-> `docs/manual_tests/excel_v0.3.0.md` B 节、`manual_tests/excel/test_excel_e2e.py` foundation 冒烟里残留的 5xxx。
+> **过渡期（issue #82 校准）**：Add-In 接线（office-editor4ai#80）前 `excelErrorCode()`
+> 仍是 Zod→`4000` / 其余→`3000` 二值分类，真机实收 `3000` 兜底。故全部错误码用例已
+> 收紧为**权威码 + `details.kind`** 断言并标 `xfail_reason`——接线前 ⚠️ XFAIL（计通过），
+> 接线后 🎉 XPASS，届时摘 `xfail_reason` 转正。仅 **schema 违规**（类型错/缺必填/空串/
+> 负数）才是 `4000`。
 >
-> ⚠️ **#30 真机修正：非法 address → 3000，不是 3009**。`3009 RANGE_INVALID` 在
-> `error-codes.ts` 有定义但**全仓 0 个 handler 发射**（dead code，仅 error-codes.ts + 对齐测试引用）。
-> `excel-handlers.ts` 的 `excelErrorCode()` 只把 **Zod 失败 → `4000` VALIDATION_ERROR**，其余一切
-> Office.js 运行期异常（含 `getRange`/`setFormula` 拒绝畸形地址）→ **`3000` OFFICE_API_ERROR**。
-> 故所有「非法范围地址」类错误码用例按 **3000** 断言；仅 **schema 违规**（类型错/缺必填）才得 `4000`。
-> 上表 3009/3010/3013/3015 等「待核实」码同样可能实为 3000——做到对应子问题时按此真机复核。
+> **3018 挂账**：写入类型不兼容目前无可稳定触发的线缆条件（Office.js 写入多隐式转换），
+> 断言用例待 office-editor4ai#80 接线时联动定义触发条件后补充。
+>
+> 下方各子问题分节的错误码行已同步为权威码；历史真机记录（`excel_v0.3.0.md` D 节）
+> 保留当时观测原貌，以本节权威映射为准。
 
 ---
 
@@ -121,38 +127,38 @@ Issue #28–#36 的 DoD 与旧 DTO 注释写的 **`5001–5010` Excel 错误码�
 - `test_workbook_info.py`：多 sheet / 隐藏 sheet(isHidden) / activeSheet / fileName
 - `test_worksheet_info.py`：默认 active / 指定 worksheetName / usedRange 行列 / tableCount,chartCount / 空表
 - `test_selected_range.py`：单元格 / 2D values / 空选区 / 混合类型
-- 错误码：5001（worksheetInfo 传 ghost 表名）
+- 错误码：3010+kind:worksheet（worksheetInfo 传 ghost 表名）
 
 **#30 range_e2e/**
 - `test_set_get_range.py` / `test_clear_range.py` / `test_copy_range.py` / `test_shift_range.py` / `test_set_formula.py`
 - 双验证：cell value / 公式字符串 / 清除后为空；falsy `0`/`False` 落格
-- 错误码：5002 / 5005 / 5004
+- 错误码：3009 / 3017 / 3003(scope:worksheet)
 
 **#31 format_e2e/**
 - `test_set_range_format.py`（font/fill/alignment/borders/numberFormat/偏更新）/ `test_get_range_format.py` / `test_conditional_format.py` / `test_merge_cells.py`
 - 双验证：fill hex / number_format / merged_ranges / 字体属性
-- 错误码：5003 / 5002；注意读写不对称（写偏更新模型 vs 读 RangeFormatInfo）
+- 错误码：3014 / 3009；注意读写不对称（写偏更新模型 vs 读 RangeFormatInfo）
 
 **#32 worksheet_e2e/**
 - `test_add_worksheet.py` / `test_rename_activate.py` / `test_delete_worksheet.py`
-- 双验证：`sheet_names`（增/删/改名）；错误码：5001
+- 双验证：`sheet_names`（增/删/改名）；错误码：3010+kind:worksheet / 3004（add 重名）
 
 **#33 table_e2e/**
 - `test_insert_table.py` / `test_get_table.py` / `test_table_rows.py`（含 `rowIndex=0` falsy）/ `test_sort_table.py`
-- 双验证：`table_names` / 排序后行序 / 追加行内容；错误码：5006 / 5009 / 4004
+- 双验证：`table_names` / 排序后行序 / 追加行内容；错误码：3010+kind:table / 3018(挂账) / 4004
 
 **#34 chart_e2e/**（视觉为主，openpyxl `chart_count` best-effort）
 - `test_insert_chart.py`（ColumnClustered/Line/Pie/XYScatter…）/ `test_get_charts.py` / `test_update_chart.py` / `test_delete_chart.py`
-- 错误码：4002（无效 chartType）/ 5007 / 5002
+- 错误码：4002（无效 chartType）/ 3010+kind:chart / 3009
 
 **#35 pivot_table_e2e/**（视觉为主，openpyxl 透视支持有限）
 - `test_insert_pivot_table.py` / `test_get_pivot_tables.py` / `test_delete_pivot_table.py`
 - 只用 sourceAddress + targetAddress 创建，**不构造** rows/columns/values/filters（spec 未定义）
-- 错误码：5008 / 5010 / 5002
+- 错误码：3010+kind:pivotTable / 3016 / 3009
 
 **#36 find_filter_e2e/**
 - `test_find_values.py`（matchCase/matchEntireCell 默认 false 须落 wire，含无命中）/ `test_auto_filter.py`
-- 双验证：`auto_filter_ref` / 返回 matches；错误码：4004 / 5001 / 5002
+- 双验证：`auto_filter_ref` / 返回 matches；错误码：4004 / 3010+kind:worksheet / 3009
 
 ---
 

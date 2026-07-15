@@ -3,7 +3,8 @@ Excel Range E2E — set:formula（设置单元格公式）
 
 覆盖 ``excel:set:formula``（透传公式字符串，含前导 '='）。在 Data 表数值区域写入
 SUM / 算术 / 引用类公式，openpyxl（data_only=False）读盘核对单元格保存的**公式字符串**。
-含错误码用例：非法 address → ``3009 RANGE_INVALID``（真实码，旧 DoD 5002 已过时）。
+含错误码用例：非法 address → ``3009 RANGE_INVALID``、畸形公式 → ``3017 FORMULA_ERROR``
+（oasp#17 定案权威码；Add-In 接线前（office-editor4ai#80）以 XFAIL 运行）。
 
 注意：openpyxl 不计算公式，读到的是公式串本身；Excel 可能做轻度规范化（大小写/空格），
 故断言对「去空格 + 大写」后的子串做包含匹配，避免被格式差异误伤。
@@ -87,14 +88,26 @@ TEST_CASES: list[ExcelCase] = [
         tags=["ref"],
     ),
     ExcelCase(
-        # 真机实测：非法 address → 3000 DOCUMENT_ERROR（详见 test_set_get_range 用例 6 注释 /
-        # README「错误码现实」）。3009 RANGE_INVALID 为 dead code（无 handler 发射）。
-        name="错误码 3000 — 非法 address（DOCUMENT_ERROR）",
+        # oasp#17 定案：非法/畸形 address → 3009 RANGE_INVALID（不得降级 3000；
+        # 旧 DoD 5002 与「真机 3000、3009 dead code」口径均已过时，见 README「错误码」）。
+        name="错误码 3009 — 非法 address（RANGE_INVALID）",
         fixture_name=GRID,
-        description="set:formula 传非法地址 → 3000（旧 DoD 5002 / 假设的 3009 均不成立，真机为 3000）",
+        description="set:formula 传非法地址 → 3009（oasp#17 定案）",
         action="set:formula",
         params={"address": "ZZZZ99999999", "formula": "=1+1", "worksheet_name": "Data"},
-        expect_error_code="3000",
+        expect_error_code="3009",
+        xfail_reason="待 Add-In 接线 office-editor4ai#80",
+        tags=["error"],
+    ),
+    ExcelCase(
+        # oasp#17 新增 3017 FORMULA_ERROR：公式语法错误或引用无效（set:formula 专属）。
+        name="错误码 3017 — 公式语法错误（FORMULA_ERROR）",
+        fixture_name=GRID,
+        description="set:formula 合法地址 + 畸形公式 '=SUM((' → 3017（oasp#17 新增码）",
+        action="set:formula",
+        params={"address": "E5", "formula": "=SUM((", "worksheet_name": "Data"},
+        expect_error_code="3017",
+        xfail_reason="待 Add-In 接线 office-editor4ai#80",
         tags=["error"],
     ),
 ]

@@ -94,24 +94,24 @@ async def test_delete_pivot_table_success(excel_roundtrip, excel_factory):
 
 
 async def test_delete_pivot_table_not_found(excel_roundtrip):
-    """透视表不存在 → 5008 PIVOT_NOT_FOUND。"""
+    """透视表不存在 → 3010 ELEMENT_NOT_FOUND(kind:pivotTable)（oasp#17）。"""
 
     def factory(request: dict) -> dict:
-        return _err(request, "5008", "Pivot table 'Ghost' not found")
+        return _err(request, "3010", "Pivot table 'Ghost' not found")
 
     result, _ = await excel_roundtrip("delete:pivotTable", {"pivot_table_name": "Ghost"}, factory)
     assert result.success is False
-    assert "5008" in (result.error or "")
+    assert "3010" in (result.error or "")
 
 
 async def test_insert_pivot_table_not_supported(excel_roundtrip):
-    """平台不支持透视表 → 5010 NOT_SUPPORTED。"""
+    """平台不支持透视表 → 3016 API_NOT_SUPPORTED（oasp#17）。"""
 
     def factory(request: dict) -> dict:
-        return _err(request, "5010", "Pivot tables are not supported on this platform")
+        return _err(request, "3016", "Pivot tables are not supported on this platform")
 
     result, _ = await excel_roundtrip(
         "insert:pivotTable", {"source_address": "A1:D100", "target_address": "F1"}, factory
     )
     assert result.success is False
-    assert "5010" in (result.error or "")
+    assert "3016" in (result.error or "")

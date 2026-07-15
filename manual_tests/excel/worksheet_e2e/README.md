@@ -32,12 +32,15 @@
 4 张自描述表（A1 = `<表名>-A1`）：`Alpha`（activeSheet）/ `Beta`（改名·删除目标）/
 `Gamma`（激活目标）/ `Delta`（隔离表，增删改其它表时须原样保留）。每个 case 打开独立工作副本，互不污染。
 
-## 错误码现实（#29/#30 已确立，本套件沿用）
+## 错误码（oasp#17 已定案，issue #82 校准）
 
-非法/不存在的表名 → **`3000` DOCUMENT_ERROR**，**不是** 旧 DoD 写的 `5001 WORKSHEET_NOT_FOUND`。
-`excelErrorCode()` 仅把 Zod 校验失败映射为 `4000`，其余一切 Office.js 运行期异常（含
-`worksheets.getItem()` 取不到表、`worksheets.add()` 重名）→ `3000`。`5001`/`3009` 等细分码均为
-dead code。
+- 工作表不存在（getItem 失败）→ **`3010` ELEMENT_NOT_FOUND**（`details.kind:"worksheet"`）
+- add 重名（名称已存在）→ **`3004` OPERATION_FAILED**（events-excel.md add:worksheet）
+- Zod 校验失败 → `4000` VALIDATION_ERROR（不变）
+
+以上为规范层 MUST（不得降级 `3000`；旧 `5001` 与「细分码 dead code、真机 3000」口径
+均已过时）。Add-In 接线（office-editor4ai#80）前真机仍返 `3000` 兜底，e2e 用例以
+**XFAIL** 运行，接线后摘 `xfail_reason` 转正。
 
 ## 运行
 

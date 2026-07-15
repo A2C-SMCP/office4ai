@@ -39,6 +39,43 @@ is consumable by the `create-office-file` and `edit-office-file` SKILLs. No Add-
 > **学模式、别抄源码**：`scripts/` 是参考脚本，读它学 glue，然后 `import` helper 写你自己的几行：
 > `from office4ai.office.authoring.helpers import wrap_in_sdt, replace_runs_with_token, promote_slide_to_layout`。
 
+## 先勘锚点 · inspect-first（抽取前先看清参考文件结构）
+
+抽取由你**显式指定**可变部分，所以下手前必须先看清参考文件长什么样。无 Add-In 连接时，
+把 `office_run_script` 当**只读探针**：先提交一段**只 `print`、不写盘**的脚本，把标题样式 /
+命名区域 / 版式名 / 现有 SDT 读出来，内容经返回契约的 **`logs`** 回传；据此决定抽哪些、取什么
+alias/token 名。纯读**不产文件**（`summary.produced` 为空），`work_dir` 可省。下列片段均经沙箱实测 `ok=True`。
+
+**勘 Word 标题锚点**（决定哪些标题升级为 SDT / token）
+```python
+from docx import Document
+doc = Document(r"/本地路径/reference.docx")
+for i, p in enumerate(doc.paragraphs):
+    if p.style.name.startswith(("Heading", "Title")):
+        print(f"[{i}] {p.style.name}: {p.text}")   # i 即 wrap_in_sdt 的 para_index
+```
+
+**勘 Excel 命名区域**（决定清哪块、`locate_by_named_range` 用哪名）
+```python
+from openpyxl import load_workbook
+wb = load_workbook(r"/本地路径/reference.xlsx")
+print("sheets:", wb.sheetnames)
+print("named:", [n for n in wb.defined_names])
+```
+
+**勘 PPT 版式名**（`promote_slide_to_layout` 命名 / 日后 `locate_by_master` 用）
+```python
+from pptx import Presentation
+prs = Presentation(r"/本地路径/reference.pptx")
+for mi, master in enumerate(prs.slide_masters):
+    for layout in master.slide_layouts:
+        print(f"master[{mi}] layout: {layout.name}")
+```
+
+> 已含 SDT 的模板想核对 alias（SDT 文本**不在** `doc.paragraphs`），见 `edit-office-file` SKILL 的
+> 「列 SDT 占位 alias」片段（`qn()` + `iter/findall`）；**别用** `sdt.xpath('.//w:alias/@w:val')`——
+> 裸 lxml 元素不认 `w:` 前缀，会抛 `XPathEvalError`。
+
 ## 参考脚本 | Reference scripts（读之学模式）
 
 | 脚本 | 平台 | 抽取方向 | 产出可被谁消费 |

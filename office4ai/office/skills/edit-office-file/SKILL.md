@@ -33,6 +33,53 @@ English: Edit an existing Office file (template operations first-class) by submi
 
 > **学模式、别抄源码**：`scripts/` 是参考脚本，读它学 glue，然后 `import` helper 写你自己的几行。
 
+## 先探再改 · inspect-first（无连接态下先看清目标文件）
+
+无 Add-In 连接时你**看不到**目标文件长什么样——但可以把 `office_run_script` 当**只读探针**：
+先提交一段**只 `print`、不写盘**的脚本，把大纲 / SDT 占位 alias / 命名区 / 某页内容读出来，
+内容会经返回契约的 **`logs`** 字段回传；据此再写真正的编辑脚本。纯读**不产文件**
+（`summary.produced` 为空），`work_dir` 可省。下列片段均经沙箱实测 `ok=True`。
+
+**看 Word 大纲（各级标题）**
+```python
+from docx import Document
+doc = Document(r"/本地路径/report.docx")
+for i, p in enumerate(doc.paragraphs):
+    if p.style.name.startswith(("Heading", "Title")):
+        print(f"[{i}] {p.style.name}: {p.text}")
+```
+
+**列 SDT 占位 alias**（企业模板填充前必看——SDT 文本**不在** `doc.paragraphs`，须走 XML）
+```python
+from docx import Document
+from docx.oxml.ns import qn
+doc = Document(r"/本地路径/template.docx")
+for sdt in doc.element.iter(qn('w:sdt')):
+    a = sdt.findall('.//' + qn('w:alias'))
+    print("SDT alias:", a[0].get(qn('w:val')) if a else "(none)")
+```
+> ⚠️ 别写 `sdt.xpath('.//w:alias/@w:val')`——`w:sdt` 是 python-docx 未注册的裸 lxml 元素，
+> 其 `.xpath()` 不认 `w:` 前缀会抛 `XPathEvalError`。用 `qn()` + `iter/findall`（Clark 记法）。
+
+**看 PPT 某一页文字**（第 N 页 → `slides[N-1]`）
+```python
+from pptx import Presentation
+slide = Presentation(r"/本地路径/deck.pptx").slides[2]  # 第 3 页
+for sh in slide.shapes:
+    if sh.has_text_frame:
+        print(sh.text)
+```
+
+**看 Excel 表清单 + 命名区 + 某表数据**
+```python
+from openpyxl import load_workbook
+wb = load_workbook(r"/本地路径/book.xlsx")
+print("sheets:", wb.sheetnames)
+print("named:", [n for n in wb.defined_names])
+for row in wb["Sales"].iter_rows(values_only=True):
+    print(row)
+```
+
 ## 参考脚本 | Reference scripts
 
 | 脚本 | 技术 | 保真点 |

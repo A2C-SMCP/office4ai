@@ -20,10 +20,10 @@
 
 | 文件 | 用例数 | 覆盖 |
 |------|-------|------|
-| `test_insert_table.py` | 4 | 在已有数据上建表 / 带 data 写空白区 / styleName / 错误码 3000 |
-| `test_get_table.py` | 4 | get:table 富信息 / get:tables 精简列表 / 跨表按名取 / 错误码 3000 |
-| `test_table_rows.py` | 6 | add 追加 / delete rowIndex=0(falsy) / delete 中间 / 越界 3000 / 负数 4000 / 表不存在 3000 |
-| `test_sort_table.py` | 4 | 单列升 / 单列降 / 多级(断 tie) / 错误码 3000 |
+| `test_insert_table.py` | 4 | 在已有数据上建表 / 带 data 写空白区 / styleName / 错误码 3009 |
+| `test_get_table.py` | 4 | get:table 富信息 / get:tables 精简列表 / 跨表按名取 / 错误码 3010(kind:table) |
+| `test_table_rows.py` | 6 | add 追加 / delete rowIndex=0(falsy) / delete 中间 / 越界 4004 / 负数 4000 / 表不存在 3010(kind:table) |
+| `test_sort_table.py` | 4 | 单列升 / 单列降 / 多级(断 tie) / 错误码 3010(kind:table) |
 
 **合计 18 case。**
 
@@ -38,12 +38,16 @@ openpyxl 直接写 Excel 表（ListObject），Excel 打开后 Office.js `worksh
 
 ## 错误码现实（Zod 校验决定两条路径）
 
-| 触发 | 错误码 |
+| 触发 | 错误码（oasp#17 权威） |
 |------|-------|
-| 表不存在（合法非空 id）/ rowIndex·columnIndex **越界**（合法非负但 Office.js 拒绝） | **`3000`** DOCUMENT_ERROR |
+| 表不存在（合法非空 id） | **`3010`** ELEMENT_NOT_FOUND（`details.kind:"table"`） |
+| rowIndex·columnIndex **越界**（合法非负但超范围） | **`4004`** PARAM_OUT_OF_RANGE |
 | tableId **空串** / rowIndex·columnIndex **负数**（Zod `nonnegative()` 失败） | **`4000`** VALIDATION_ERROR |
 
-> ⚠️ 实测为 `4000`（非旧 DoD 写的 `4004`）：`excelErrorCode()` 仅把 Zod 失败映射为 `4000`，其余一切 Office.js 运行期异常 → `3000`。旧 DoD 的 `5006`/`5009` 均为 dead code。
+> oasp#17 已定案上述权威码（规范层 MUST，不得降级 `3000`；旧 `5006`/`5009` 退役为
+> `3010(kind:table)`/`3018`）。Add-In 接线（office-editor4ai#80）前真机仍是 Zod→`4000` /
+> 其余→`3000` 二值分类，e2e 用例以 **XFAIL** 运行，接线后摘 `xfail_reason` 转正。
+> 写入值类型不兼容 → `3018 DATA_TYPE_MISMATCH` 的断言用例挂账待 #80 定义可稳定触发条件。
 
 ## 运行
 

@@ -8,7 +8,8 @@ wire 形态（AddIn worksheets.ts 确认）:
 - get:worksheets → ``{worksheets: [{name, index, isActive, isHidden}]}``
 
 双重验证：协议返回 + openpyxl ``sheet_names`` 读盘核对新表已落盘。
-含错误码用例：add 重名 → 3000 DOCUMENT_ERROR（Office.js 拒绝重复表名；3009 为 dead code）。
+含错误码用例：add 重名 → 3004 OPERATION_FAILED（名称已存在，oasp#17 / events-excel.md
+add:worksheet；Add-In 接线前 XFAIL）。
 
 运行方式:
     uv run python manual_tests/excel/worksheet_e2e/test_add_worksheet.py --test all
@@ -143,12 +144,13 @@ TEST_CASES: list[ExcelCase] = [
         tags=["get", "add"],
     ),
     ExcelCase(
-        name="错误码 3000 — add 重名工作表（DOCUMENT_ERROR）",
+        name="错误码 3004 — add 重名工作表（OPERATION_FAILED）",
         fixture_name=BOOK,
-        description="add:worksheet name='Alpha'（已存在）→ 3000（Office.js 拒绝重名）",
+        description="add:worksheet name='Alpha'（已存在）→ 3004（oasp#17，events-excel.md add:worksheet「名称已存在」）",
         action="add:worksheet",
         params={"name": "Alpha"},
-        expect_error_code="3000",
+        expect_error_code="3004",
+        xfail_reason="待 Add-In 接线 office-editor4ai#80",
         tags=["error"],
     ),
 ]

@@ -114,6 +114,11 @@ class TestErrorCode:
         assert ErrorCode.DOCUMENT_NOT_FOUND == "3001"
         assert ErrorCode.SELECTION_EMPTY == "3002"
 
+    def test_excel_convergence_errors(self) -> None:
+        """oasp#17 /excel 错误码收敛：5xxx 退役后新增的两个通用码"""
+        assert ErrorCode.FORMULA_ERROR == "3017"
+        assert ErrorCode.DATA_TYPE_MISMATCH == "3018"
+
     def test_validation_errors(self) -> None:
         """Test validation error codes (4xxx)"""
         assert ErrorCode.VALIDATION_ERROR == "4000"

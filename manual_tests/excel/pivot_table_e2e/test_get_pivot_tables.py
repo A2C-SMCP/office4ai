@@ -6,7 +6,8 @@ Excel PivotTable E2E — get:pivotTables（列举透视表）
 wire 形态（AddIn pivotTable.ts 确认）:
 - get:pivotTables（worksheetName?）→ ``{pivotTables:[{name, id}]}``（每条仅 2 字段）
 
-含错误码：不存在的 worksheet → 3000 DOCUMENT_ERROR。
+含错误码：不存在的 worksheet → 3010 ELEMENT_NOT_FOUND(kind:worksheet)（oasp#17 定案；
+Add-In 接线前 XFAIL）。
 
 运行方式:
     uv run python manual_tests/excel/pivot_table_e2e/test_get_pivot_tables.py --test all
@@ -107,12 +108,14 @@ TEST_CASES: list[ExcelCase] = [
         tags=["get", "empty"],
     ),
     ExcelCase(
-        name="错误码 3000 — 不存在的 worksheet（DOCUMENT_ERROR）",
+        name="错误码 3010 — 不存在的 worksheet（ELEMENT_NOT_FOUND kind:worksheet）",
         fixture_name=PIVOT,
-        description="get:pivotTables worksheet_name='NoSuch' → 3000",
+        description="get:pivotTables worksheet_name='NoSuch' → 3010 + details.kind=worksheet（oasp#17）",
         action="get:pivotTables",
         params={"worksheet_name": "NoSuchSheet"},
-        expect_error_code="3000",
+        expect_error_code="3010",
+        expect_error_details={"kind": "worksheet"},
+        xfail_reason="待 Add-In 接线 office-editor4ai#80",
         tags=["error"],
     ),
 ]

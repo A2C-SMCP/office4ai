@@ -23,6 +23,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import inspect
+import json
 import os
 import sys
 import time
@@ -53,7 +54,15 @@ class ExcelCase:
         action: 不含 ``excel:`` 前缀的动作名（如 ``"get:workbookInfo"``）。
         params: snake_case 业务参数（无需 ``document_uri``）。
         validator: 成功路径验证器（可选）；双参时第二参为 :class:`WorkbookReader`。
-        expect_error_code: 错误码路径——置位时**预期失败**且 error 含该码（如 ``"5001"``）。
+        expect_error_code: 错误码路径——置位时**预期失败**且 error 含该码（如 ``"3009"``，
+            权威码见 OASP events-excel.md §Excel 错误码映射 / oasp#17）。
+        expect_error_details: 错误码路径的 details 子集断言（如 ``{"kind": "worksheet"}``），
+            从错误字符串尾部的 ``(details: {...})`` 反解析后逐键比对（渲染侧见
+            ``office_workspace.format_wire_error``）。
+        xfail_reason: 置位时启用 xfail 语义——严格断言不满足但确为失败响应时记
+            ⚠️ XFAIL（计通过，套件不红）；严格断言满足时记 🎉 XPASS 提示可摘标。
+            用于「协议已定案但 Add-In 尚未接线」的过渡期（office-editor4ai#80）。
+            注意 XFAIL 仍要求响应**必须失败**，防止掩盖「本应失败却成功」的回归。
         pre_ops: 量测动作前的预备操作 ``[(action, params), ...]``（如先 set 再 get）。
         flow: 自定义多步流——``async (workspace, document_uri, reader) -> bool``。置位时**取代**
             标准「单 action + validator」路径（在 pre_ops 之后运行），用于需要「先 insert 拿
@@ -68,11 +77,50 @@ class ExcelCase:
     params: dict[str, Any] = field(default_factory=dict)
     validator: Validator | None = None
     expect_error_code: str | None = None
+    expect_error_details: dict[str, Any] | None = None
+    xfail_reason: str | None = None
     pre_ops: list[tuple[str, dict[str, Any]]] = field(default_factory=list)
     flow: Callable[..., Any] | None = None
     select_hint: str | None = None
     applescript_select: str | None = None
     tags: list[str] = field(default_factory=list)
+
+
+# 与 office_workspace.format_wire_error 的渲染格式配对："{code}: {message} (details: {json})"
+_DETAILS_MARKER = "(details: "
+
+
+def parse_error_details(err: str) -> dict[str, Any] | None:
+    """从摊平的错误字符串尾部反解析 details JSON；无 details 或畸形时返回 None。
+
+    取**最后一次**出现的 ``(details: {`` 标记——真 details 由 format_wire_error 追加在
+    尾部，即使 wire message 自身含 ``(details: {...})`` 字面量也不会误捕获。
+    """
+    marker = err.rfind(_DETAILS_MARKER + "{")
+    if marker == -1 or not err.endswith(")"):
+        return None
+    try:
+        parsed = json.loads(err[marker + len(_DETAILS_MARKER) : -1])
+    except json.JSONDecodeError:
+        return None
+    return parsed if isinstance(parsed, dict) else None
+
+
+def evaluate_error_case(
+    ok: bool,
+    err: str | None,
+    expect_code: str,
+    expect_details: dict[str, Any] | None = None,
+) -> bool:
+    """错误码路径的严格判定：必须失败 + error 含权威码 + details 子集匹配。"""
+    if ok or expect_code not in (err or ""):
+        return False
+    if expect_details:
+        actual = parse_error_details(err or "")
+        if actual is None:
+            return False
+        return all(actual.get(key) == value for key, value in expect_details.items())
+    return True
 
 
 def _call_validator(validator: Validator, data: dict[str, Any], reader: WorkbookReader) -> bool:
@@ -131,10 +179,24 @@ async def _run_single(runner: ExcelTestRunner, case: ExcelCase, number: int) -> 
             ok, data, err = await excel_op(workspace, fixture.document_uri, case.action, **case.params)
             print(f"\n⏱️  执行时间: {(time.time() - start) * 1000:.1f}ms")
 
-            # 错误码路径：预期失败 + 校验码
+            # 错误码路径：预期失败 + 校验权威码（+ details 子集）；xfail 语义见 ExcelCase docstring
             if case.expect_error_code:
-                passed = (not ok) and case.expect_error_code in (err or "")
-                print(f"   {'✅' if passed else '❌'} 预期失败 [{case.expect_error_code}] → ok={ok} err={err}")
+                expected = case.expect_error_code + (
+                    f" details⊇{case.expect_error_details}" if case.expect_error_details else ""
+                )
+                strict = evaluate_error_case(ok, err, case.expect_error_code, case.expect_error_details)
+                if strict:
+                    passed = True
+                    if case.xfail_reason:
+                        print(f"   🎉 XPASS [{expected}] → err={err}（Add-In 已接线，可摘 xfail_reason 转正）")
+                    else:
+                        print(f"   ✅ 预期失败 [{expected}] → ok={ok} err={err}")
+                elif case.xfail_reason and not ok:
+                    passed = True
+                    print(f"   ⚠️  XFAIL（{case.xfail_reason}）期望 [{expected}] 实收: err={err}")
+                else:
+                    passed = False
+                    print(f"   ❌ 预期失败 [{expected}] → ok={ok} err={err}")
                 _verdict(number, passed)
                 return passed
 
@@ -233,5 +295,5 @@ def run_main(title: str, cases: list[ExcelCase]) -> None:
 def case_kind(case: ExcelCase) -> str:
     """用例类别标签（用于 --list 展示）。"""
     if case.expect_error_code:
-        return f"err {case.expect_error_code}"
+        return f"err {case.expect_error_code}" + (" xfail" if case.xfail_reason else "")
     return ",".join(case.tags) if case.tags else "ok"

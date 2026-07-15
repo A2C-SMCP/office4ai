@@ -23,7 +23,7 @@ range_e2e/
 ├── test_clear_range.py    # clear:range（4 个用例）
 ├── test_copy_range.py     # copy:range（3 个用例）
 ├── test_shift_range.py    # insert:range + delete:range（4 个用例）
-├── test_set_formula.py    # set:formula（4 个用例，含错误码 3009）
+├── test_set_formula.py    # set:formula（5 个用例，含错误码 3009/3017）
 └── README.md              # 本文档
 ```
 
@@ -48,7 +48,7 @@ range_e2e/
 | 3 | **falsy 存活** | `[[0, False, '']]` → get 读回 0/False 必须存活为本身（不被吞为 null） |
 | 4 | 读已有数据 | get Data!A1:C4 → 4×3，表头 [Region,Q1,Q2]，C4=350 |
 | 5 | includeFormat | get includeFormat=true → 返回 RangeFormatInfo（font/fill） |
-| 6 | 错误码 3000 | 非法 address → DOCUMENT_ERROR（真机实测；3009 为 dead code，见下） |
+| 6 | 错误码 3009 | 非法 address → RANGE_INVALID（oasp#17 定案；Add-In 接线前 XFAIL，见下） |
 
 ### 2. 清除范围 (`test_clear_range.py`)
 
@@ -83,7 +83,8 @@ range_e2e/
 | 1 | SUM 公式 | E2 = '=SUM(B2:C2)' → 公式落盘 |
 | 2 | 算术公式 | E3 = '=B3+C3' → 公式落盘 |
 | 3 | 引用/乘法 | E4 = '=B4*2' → 公式落盘 |
-| 4 | 错误码 3000 | 非法 address → DOCUMENT_ERROR（同上，3009 为 dead code） |
+| 4 | 错误码 3009 | 非法 address → RANGE_INVALID（oasp#17 定案；Add-In 接线前 XFAIL） |
+| 5 | 错误码 3017 | 合法地址 + 畸形公式 '=SUM((' → FORMULA_ERROR（oasp#17 新增码） |
 
 > openpyxl 不计算公式，读到的是公式串本身；断言对「去空格 + 大写」后做子串包含匹配，
 > 容忍 Excel 轻度规范化。
@@ -109,22 +110,20 @@ uv run python manual_tests/excel/range_e2e/test_clear_range.py --list
 > 真机激活：首个用例弹出工作簿后，在 Excel「加载项」点选本地 TFEditor4Office 激活**一次**，
 > 后续用例自动重连。给手动激活留时间可设 `EXCEL_E2E_TIMEOUT=120`。
 
-## 错误码现实（真机实测：非法 address → **3000**，3009 是 dead code）
+## 错误码（oasp#17 已定案：非法 address → **3009 RANGE_INVALID**）
 
-> ⚠️ 两层过时：① Issue/旧 DTO 注释写的 `5002` 不存在；② 连「真实码应为 3009 RANGE_INVALID」
-> 这个推断也**不成立**。真机实测 `get:range` / `set:formula` 传非法地址 `ZZZZ99999999` 返回
-> **`3000 DOCUMENT_ERROR`**。
+> **协议裁决**（[oasp-protocol#17]，issue #82 跟进）：`/excel` 旧 5xxx 草案块整体退役，
+> 非法/畸形 address → **`3009 RANGE_INVALID`**、公式语法错 → **`3017 FORMULA_ERROR`**（新增）
+> 为规范层 MUST——线缆可观测条件出现时 Add-In **必须**返回具体码，**不得**降级 `3000`。
+> 本 README 早期记录的「真机 3000、3009 是 dead code」正是该裁决要消解的实现缺口，
+> 经验判断（`5002` 不存在、真实码应为 `3009`）已被协议正式采纳。
 >
-> 源码确认（`office-editor4ai`）：
-> - `error-codes.ts` 定义了 `RANGE_INVALID="3009"`，但**全仓 0 个 handler 发射它**（仅
->   error-codes.ts 与对齐测试引用）—— 3009 是 **dead code**。
-> - `excel-handlers.ts` 的 `excelErrorCode()` 只把 **Zod 校验失败 → `4000` VALIDATION_ERROR**，
->   其余一切 Office.js 运行期异常（含 `getRange` 拒绝畸形地址）→ **`3000` OFFICE_API_ERROR**。
-> - 畸形串 `ZZZZ99999999` 能过 Zod（是合法 string），故在 Office.js 层被拒 → 落到 3000。
->
-> **结论**：非法范围地址类用例一律按 **3000** 断言（与 #29 的 5001→3000 同源）。仅当构造
-> **schema 违规**（类型错/缺必填）时才会得到 `4000`。详见 `docs/manual_tests/excel_e2e_dev_plan.md`
-> 「错误码现实」与 `read_state_e2e/README.md`。
+> **过渡期现实**：Add-In 接线（office-editor4ai#80）前 `excelErrorCode()` 仍是
+> Zod→`4000` / 其余 Office.js 异常→`3000` 的二值分类，真机实收 `3000`。因此本套件错误码
+> 用例断言权威 `3009`/`3017` 并标 `xfail_reason`——接线前记 ⚠️ XFAIL（计通过），接线后
+> 严格命中 🎉 XPASS，届时摘 `xfail_reason` 转正。
+> 仅当构造 **schema 违规**（类型错/缺必填/空串）时才是 `4000`。详见
+> `docs/manual_tests/excel_e2e_dev_plan.md`「错误码」与 `read_state_e2e/README.md`。
 
 ## 前置条件
 
@@ -144,10 +143,12 @@ uv run python manual_tests/excel/range_e2e/test_clear_range.py --list
 Office.js 的 `copyFrom` 以 targetAddress 为左上角粘贴；insert/delete 的位移方向由
 `shiftDirection` 决定。Shift 表的自描述标签可直接看出「谁落到哪」。
 
-### Q3: 错误码不是 3009
+### Q3: 错误码用例显示 ⚠️ XFAIL 而非 ✅
 
-不同 Add-In 版本对非法地址的判定可能落到 3000（DOCUMENT_ERROR）等相邻码。真机实测以
-Add-In 实际返回为准，必要时按 #29 的做法回填真实码。
+正常：Add-In 尚未接线（office-editor4ai#80），真机对非法地址仍返 `3000` 兜底，
+套件按 xfail 语义计通过。接线后同一用例会变 🎉 XPASS，届时把用例里的
+`xfail_reason` 摘掉即转正为严格断言（权威码 `3009`，oasp#17 定案，不再随
+Add-In 版本漂移）。
 
 ## 相关文档
 
@@ -158,4 +159,4 @@ Add-In 实际返回为准，必要时按 #29 的做法回填真实码。
 
 ## 最后更新
 
-2026-06-18
+2026-07-15（issue #82：错误码校准至 oasp#17 权威码，增 3017 用例）

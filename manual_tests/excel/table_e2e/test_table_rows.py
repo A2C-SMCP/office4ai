@@ -10,7 +10,7 @@ wire 形态（AddIn table.ts 确认）:
 
 双重验证：openpyxl 读 Roster 表正文单元格核对「谁还在 / 谁上移」。RosterTable 正文 A2:B4 =
 R0row/R1row/R2row（自描述）。错误码两路径：
-- 表不存在 / rowIndex 越界（合法非负但 Office.js 拒绝）→ ``3000``；
+- 表不存在 → ``3010``(kind:table)；rowIndex 越界（合法非负）→ ``4004``（oasp#17，接线前 XFAIL）；
 - rowIndex 负数（Zod nonnegative 失败）→ ``4000``。
 
 运行方式:
@@ -108,12 +108,13 @@ TEST_CASES: list[ExcelCase] = [
         tags=["delete"],
     ),
     ExcelCase(
-        name="错误码 3000 — rowIndex 越界（DOCUMENT_ERROR）",
+        name="错误码 4004 — rowIndex 越界（PARAM_OUT_OF_RANGE）",
         fixture_name=TBL,
-        description="delete:tableRow rowIndex=99（合法非负但越界）→ 3000",
+        description="delete:tableRow rowIndex=99（合法非负但越界）→ 4004（oasp#17，events-excel.md 逐事件表）",
         action="delete:tableRow",
         params={"table_id": "RosterTable", "row_index": 99, "worksheet_name": "Roster"},
-        expect_error_code="3000",
+        expect_error_code="4004",
+        xfail_reason="待 Add-In 接线 office-editor4ai#80",
         tags=["error"],
     ),
     ExcelCase(
@@ -126,12 +127,14 @@ TEST_CASES: list[ExcelCase] = [
         tags=["error", "zod"],
     ),
     ExcelCase(
-        name="错误码 3000 — add 表不存在（DOCUMENT_ERROR）",
+        name="错误码 3010 — add 表不存在（ELEMENT_NOT_FOUND kind:table）",
         fixture_name=TBL,
-        description="add:tableRow tableId='NoSuchTable' → 3000（请求的表格不存在）",
+        description="add:tableRow tableId='NoSuchTable' → 3010 + details.kind=table（oasp#17）",
         action="add:tableRow",
         params={"table_id": "NoSuchTable", "values": ["x", 1], "worksheet_name": "Roster"},
-        expect_error_code="3000",
+        expect_error_code="3010",
+        expect_error_details={"kind": "table"},
+        xfail_reason="待 Add-In 接线 office-editor4ai#80",
         tags=["error"],
     ),
 ]

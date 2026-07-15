@@ -1678,30 +1678,28 @@ class TestFormatResult:
 #
 # 单个工具的错误码透传已在 TestFormatResult 中按工具散点覆盖。下面两个类做的是
 # **跨工具一致性守卫**（非散点重复）：
-#   1. 错误码完整表 × 两个工具家族 —— 把 events-excel.md 的 5001–5010（+ 4002/4004）
-#      整张表集中断言一次，任一码经 write/get 两类 format_result 均原样透传；spec 新增
-#      错误码而代码未处理时，这里会立即暴露。
+#   1. 错误码完整表 × 两个工具家族 —— 把 events-excel.md §Excel 错误码映射（oasp#17：
+#      5xxx 退役 → 通用 3xxx，+ 4002/4004）整张表集中断言一次，任一码经 write/get 两类
+#      format_result 均原样透传；spec 新增错误码而代码未处理时，这里会立即暴露。
 #   2. get 列表摘要家族 —— 5 个结构同构的 get 工具在空数据 / 缺键下统一 "0 X(s)" 不崩。
 
-# events-excel.md §错误码表（5001–5010）+ 通用参数错误码（图表/筛选用到的 4002/4004）。
+# events-excel.md §Excel 错误码映射（oasp#17 权威表）+ 参数错误码 4002/4004。
 EXCEL_ERROR_CODES = [
-    ("5001", "WORKSHEET_NOT_FOUND"),
-    ("5002", "RANGE_INVALID"),
-    ("5003", "MERGE_CONFLICT"),
-    ("5004", "PROTECTED_SHEET"),
-    ("5005", "FORMULA_ERROR"),
-    ("5006", "TABLE_NOT_FOUND"),
-    ("5007", "CHART_NOT_FOUND"),
-    ("5008", "PIVOT_NOT_FOUND"),
-    ("5009", "DATA_TYPE_MISMATCH"),
-    ("5010", "NOT_SUPPORTED"),
+    ("3010", "ELEMENT_NOT_FOUND"),  # worksheet/table/chart/pivotTable，details.kind 区分
+    ("3009", "RANGE_INVALID"),
+    ("3014", "ALREADY_MERGED"),
+    ("3003", "DOCUMENT_READ_ONLY"),
+    ("3017", "FORMULA_ERROR"),
+    ("3018", "DATA_TYPE_MISMATCH"),
+    ("3016", "API_NOT_SUPPORTED"),
+    ("3004", "OPERATION_FAILED"),
     ("4002", "INVALID_PARAM"),
     ("4004", "PARAM_OUT_OF_RANGE"),
 ]
 
 
 class TestExcelErrorCodeMatrix:
-    """错误码 5001–5010（+ 4002/4004）经两类 format_result 全表透传守卫（#26）。"""
+    """错误码权威表（oasp#17 通用 3xxx + 4002/4004）经两类 format_result 全表透传守卫（#26/#82）。"""
 
     @pytest.mark.parametrize(("code", "name"), EXCEL_ERROR_CODES)
     def test_write_tool_propagates_every_error_code(self, mock_workspace, code, name):
@@ -1744,11 +1742,11 @@ class TestExcelErrorCodeMatrix:
     def test_every_get_tool_propagates_error(self, mock_workspace, tool_cls):
         """每个 get 工具的失败分支都对错误码透传、不返回 content（覆盖全 get 家族失败路径）。"""
         tool = tool_cls(mock_workspace)
-        obs = OfficeObs(success=False, data={}, error="5002: RANGE_INVALID")
+        obs = OfficeObs(success=False, data={}, error="3009: RANGE_INVALID")
         result = tool.format_result(obs)
         assert result["success"] is False
         assert "content" not in result
-        assert "5002" in result["error"]
+        assert "3009" in result["error"]
 
 
 class TestGetToolFamilySummaryRobustness:

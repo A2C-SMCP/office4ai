@@ -8,7 +8,7 @@ wire 形态（AddIn table.ts 确认）:
   （name 由 Excel 自动命名 "TableN"）。hasHeaders=true 时 data 第一行为表头、覆盖整张表范围。
 
 双重验证：协议返回 + openpyxl ``table_names`` 读盘核对表已落盘（带 data 时再读首行/正文单元格）。
-含错误码用例：非法 address → 3000 DOCUMENT_ERROR。
+含错误码用例：非法 address → 3009 RANGE_INVALID（oasp#17 定案；Add-In 接线前 XFAIL）。
 
 运行方式:
     uv run python manual_tests/excel/table_e2e/test_insert_table.py --test all
@@ -119,12 +119,13 @@ TEST_CASES: list[ExcelCase] = [
         tags=["insert", "style"],
     ),
     ExcelCase(
-        name="错误码 3000 — 非法 address（DOCUMENT_ERROR）",
+        name="错误码 3009 — 非法 address（RANGE_INVALID）",
         fixture_name=TBL,
-        description="insert:table 传非法地址 → 3000",
+        description="insert:table 传非法地址 → 3009（oasp#17）",
         action="insert:table",
         params={"address": "ZZZZ99999999", "has_headers": True, "worksheet_name": "Raw"},
-        expect_error_code="3000",
+        expect_error_code="3009",
+        xfail_reason="待 Add-In 接线 office-editor4ai#80",
         tags=["error"],
     ),
 ]

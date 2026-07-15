@@ -20,9 +20,9 @@ format_e2e/
 ├── __init__.py                 # 包初始化
 ├── _fixtures.py                # 夹具构建器（fmt.xlsx：Data 数值网格 / Merge 标签行）
 ├── test_set_range_format.py    # set:rangeFormat（6 例：font/fill/numberFormat/alignment/borders/偏更新）
-├── test_get_range_format.py    # get:rangeFormat（4 例，含错误码 3000）
-├── test_conditional_format.py  # add/clear:conditionalFormat（4 例，含错误码 3000）
-├── test_merge_cells.py         # merge/unmerge:cells（4 例，含错误码 3000）
+├── test_get_range_format.py    # get:rangeFormat（4 例，含错误码 3009）
+├── test_conditional_format.py  # add/clear:conditionalFormat（4 例，含错误码 3009）
+├── test_merge_cells.py         # merge/unmerge:cells（4 例，含错误码 3009）
 └── README.md                   # 本文档
 ```
 
@@ -55,7 +55,7 @@ format_e2e/
 | 1 | 读默认格式结构 | RangeFormatInfo 字段完整，numberFormat 为 2D |
 | 2 | set 后 get 往返 | 先 set {bold,fill,numberFormat} → get 反映 |
 | 3 | 多格 numberFormat 2D 维度 | A1:C2 → numberFormat 为 2×3 |
-| 4 | 错误码 3000 | 非法 address → DOCUMENT_ERROR |
+| 4 | 错误码 3009 | 非法 address → RANGE_INVALID（oasp#17 定案；接线前 XFAIL） |
 
 ### 3. 条件格式 (`test_conditional_format.py`)
 
@@ -64,7 +64,7 @@ format_e2e/
 | 1 | add cellValue 规则 | B2:B4 `>150` 红底 → 协议成功 + best-effort CF 计数 |
 | 2 | add colorScale 规则 | B2:B4 colorScale → 协议成功 |
 | 3 | clear 条件格式 | 先 add → clear → 协议成功 |
-| 4 | 错误码 3000 | 非法 address → DOCUMENT_ERROR |
+| 4 | 错误码 3009 | 非法 address → RANGE_INVALID（oasp#17 定案；接线前 XFAIL） |
 
 > 条件格式以**协议成功**为主验证；openpyxl 对 CF 的反序列化差异较大，规则计数为
 > best-effort（读不到打印 ⚠️ 不判失败）。视觉验收见 `docs/manual_tests/excel_v0.3.0.md`。
@@ -76,7 +76,7 @@ format_e2e/
 | 1 | merge A1:C1 | `merged_ranges` 含 A1:C1，左上 'M1' 保留 |
 | 2 | unmerge 还原 | 先 merge → unmerge → merged_ranges 不含该区域 |
 | 3 | 合并清空非左上 | merge 后 B1/C1 为 None |
-| 4 | 错误码 3000 | 非法 address → DOCUMENT_ERROR |
+| 4 | 错误码 3009 | 非法 address → RANGE_INVALID（oasp#17 定案；接线前 XFAIL） |
 
 ## 运行方式
 
@@ -96,13 +96,14 @@ uv run python manual_tests/excel/format_e2e/test_merge_cells.py --list
 > 真机激活：首个用例弹出工作簿后，在 Excel「加载项」点选本地 TFEditor4Office 激活**一次**，
 > 后续用例自动重连。给手动激活留时间可设 `EXCEL_E2E_TIMEOUT=120`。
 
-## 错误码现实（非法 address → **3000**，3009 是 dead code）
+## 错误码（oasp#17 已定案：非法 address → **3009**、合并冲突 → **3014**）
 
-> ⚠️ 与 #30 同源：`error-codes.ts` 定义了 `3009 RANGE_INVALID` / `3014`(合并类) 等，但
-> **excel handler 0 引用 = dead code**。`excel-handlers.ts` 的 `excelErrorCode()` 仅把 Zod 失败
-> → `4000` VALIDATION_ERROR，其余 Office.js 运行期异常（含非法地址、合并冲突）→ `3000`
-> OFFICE_API_ERROR。故本套件错误码用例一律按 **3000** 断言。详见
-> `docs/manual_tests/excel_e2e_dev_plan.md`「错误码现实」与 `range_e2e/README.md`。
+> **协议裁决**（[oasp-protocol#17]，issue #82 跟进）：非法/畸形 address → `3009 RANGE_INVALID`、
+> 合并区域冲突 → `3014 ALREADY_MERGED`、受保护 → `3003 DOCUMENT_READ_ONLY`（规范层 MUST，
+> 不得降级 `3000`）。历史「3009/3014 dead code、真机 3000」观测正是该裁决要消解的实现缺口，
+> 接线归 office-editor4ai#80；接线前本套件错误码用例以 **XFAIL** 运行，接线后摘
+> `xfail_reason` 转正。详见 `docs/manual_tests/excel_e2e_dev_plan.md`「错误码」与
+> `range_e2e/README.md`。
 
 ## 常见问题
 

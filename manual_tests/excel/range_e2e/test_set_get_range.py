@@ -5,7 +5,8 @@ Excel Range E2E — set:range + get:range（范围读写往返）
 （2D values / rowCount/columnCount / includeFormat / 读已有数据）。写操作响应仅
 ``{address}``，故用 ``get:range`` 协议返回 + openpyxl 读盘双重核对写入结果。
 
-含错误码用例：非法 address → ``3009 RANGE_INVALID``（OASP 0.3.0 真实码，旧 DoD 5002 已过时）。
+含错误码用例：非法 address → ``3009 RANGE_INVALID``（oasp#17 定案权威码；Add-In 接线前
+（office-editor4ai#80）以 XFAIL 运行）。
 
 运行方式:
     uv run python manual_tests/excel/range_e2e/test_set_get_range.py --test all
@@ -172,17 +173,16 @@ TEST_CASES: list[ExcelCase] = [
         tags=["get", "format"],
     ),
     ExcelCase(
-        # 真机实测：非法 address → 3000 DOCUMENT_ERROR（OFFICE_API_ERROR）。
-        # error-codes.ts 虽定义 3009 RANGE_INVALID，但**无任何 handler 发射它**（dead code）：
-        # excel-handlers.ts excelErrorCode() 仅把 Zod 失败→4000 VALIDATION_ERROR，其余 Office.js
-        # 运行期异常（含 getRange 拒绝畸形地址）一律→3000 OFFICE_API_ERROR。畸形串能过 Zod，
-        # 故落到 3000。旧 DoD 写的 5002 与「3009」均不成立，详见 README「错误码现实」。
-        name="错误码 3000 — 非法 address（DOCUMENT_ERROR）",
+        # oasp#17 定案：非法/畸形 address → 3009 RANGE_INVALID（规范层 MUST，不得降级 3000）。
+        # 历史：Add-In excelErrorCode() 曾只有 Zod→4000 / 其余→3000 二值分类，3009 是
+        # dead code、真机实收 3000——该现实由 office-editor4ai#80 接线消解，接线前本用例 XFAIL。
+        name="错误码 3009 — 非法 address（RANGE_INVALID）",
         fixture_name=GRID,
-        description="get:range 传非法地址 → 3000（旧 DoD 5002 / 假设的 3009 均不成立，真机为 3000）",
+        description="get:range 传非法地址 → 3009（oasp#17 定案；旧 DoD 5002 已退役）",
         action="get:range",
         params={"address": "ZZZZ99999999", "worksheet_name": "Data"},
-        expect_error_code="3000",
+        expect_error_code="3009",
+        xfail_reason="待 Add-In 接线 office-editor4ai#80",
         tags=["error"],
     ),
 ]

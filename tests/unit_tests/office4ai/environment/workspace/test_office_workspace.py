@@ -9,10 +9,36 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from office4ai.environment.workspace.base import DocumentStatus, OfficeAction
-from office4ai.environment.workspace.office_workspace import OfficeWorkspace
+from office4ai.environment.workspace.office_workspace import OfficeWorkspace, format_wire_error
 from office4ai.environment.workspace.socketio.services.connection_manager import (
     connection_manager,
 )
+
+
+class TestFormatWireError:
+    """Test format_wire_error() — wire error dict 摊平（issue #82 / oasp#17）"""
+
+    def test_without_details(self) -> None:
+        assert format_wire_error({"code": "3009", "message": "Invalid range"}) == "3009: Invalid range"
+
+    def test_with_details(self) -> None:
+        result = format_wire_error(
+            {"code": "3010", "message": "Not found", "details": {"name": "GhostSheet", "kind": "worksheet"}}
+        )
+        # 键排序稳定（kind 在 name 前），供 e2e 侧反解析
+        assert result == '3010: Not found (details: {"kind": "worksheet", "name": "GhostSheet"})'
+
+    def test_details_chinese_not_escaped(self) -> None:
+        result = format_wire_error({"code": "3010", "message": "x", "details": {"kind": "worksheet", "name": "工作表1"}})
+        assert "工作表1" in result
+
+    def test_empty_details_omitted(self) -> None:
+        """details 为空 dict/None 时不追加后缀"""
+        assert format_wire_error({"code": "3009", "message": "x", "details": {}}) == "3009: x"
+        assert format_wire_error({"code": "3009", "message": "x", "details": None}) == "3009: x"
+
+    def test_missing_fields_fallback(self) -> None:
+        assert format_wire_error({}) == "Unknown: Unknown error"
 
 
 class TestOfficeWorkspace:
@@ -106,6 +132,72 @@ class TestOfficeWorkspace:
         assert call_args[0][0] == "word:get:selectedContent"  # event name
         assert "requestId" in call_args[0][1]  # wrapped data should have requestId
         assert call_args[0][1]["documentUri"] == "file:///test.docx"
+
+    @pytest.mark.asyncio
+    async def test_execute_error_includes_details(
+        self, office_workspace: OfficeWorkspace, connected_session: None
+    ) -> None:
+        """execute() 摊平 wire error 时 details 必须存活（issue #82 / oasp#17）。
+
+        协议规定 details 供双端对齐断言（如 3010 ELEMENT_NOT_FOUND 用
+        details.kind 区分 worksheet/table/chart/pivotTable）。若 execute()
+        只保留 "code: message"，e2e 无法断言 kind，MCP 工具层的 AI 消费者
+        也拿不到可行动的定位信息。
+        """
+        office_workspace.sio_server = MagicMock()
+        office_workspace.sio_server.call = AsyncMock(
+            return_value={
+                "requestId": "test_req_002",
+                "success": False,
+                "error": {
+                    "code": "3010",
+                    "message": "Worksheet not found",
+                    "details": {"kind": "worksheet", "name": "GhostSheet"},
+                },
+                "timestamp": 1234567890000,
+            }
+        )
+
+        action = OfficeAction(
+            category="excel",
+            action_name="get:worksheetInfo",
+            params={"document_uri": "file:///test.docx", "worksheet_name": "GhostSheet"},
+        )
+
+        result = await office_workspace.execute(action)
+
+        assert result.success is False
+        assert "3010" in result.error
+        assert "Worksheet not found" in result.error
+        # details 必须存活于错误字符串（kind 与回带的标识都可见）
+        assert "worksheet" in result.error
+        assert "GhostSheet" in result.error
+
+    @pytest.mark.asyncio
+    async def test_execute_error_without_details(
+        self, office_workspace: OfficeWorkspace, connected_session: None
+    ) -> None:
+        """无 details 的 wire error 保持 "code: message" 形态，不追加噪音。"""
+        office_workspace.sio_server = MagicMock()
+        office_workspace.sio_server.call = AsyncMock(
+            return_value={
+                "requestId": "test_req_003",
+                "success": False,
+                "error": {"code": "3009", "message": "Invalid range address"},
+                "timestamp": 1234567890000,
+            }
+        )
+
+        action = OfficeAction(
+            category="excel",
+            action_name="get:range",
+            params={"document_uri": "file:///test.docx", "address": "ZZZZ99999999"},
+        )
+
+        result = await office_workspace.execute(action)
+
+        assert result.success is False
+        assert result.error == "3009: Invalid range address"
 
     # ========================================================================
     # Test get_document_status() method

@@ -5,7 +5,8 @@ Excel Format E2E — merge:cells + unmerge:cells（合并/取消合并单元格�
 ``excel:unmerge:cells``（``range.unmerge()`` 还原）。openpyxl ``reader.merged_ranges(sheet)``
 读盘核对合并区域；``cell_value`` 核对左上保留 / 其余清空。
 
-含错误码用例：非法 address → 3000 DOCUMENT_ERROR。
+含错误码用例：非法 address → 3009 RANGE_INVALID（oasp#17 定案；Add-In 接线前
+（office-editor4ai#80）以 XFAIL 运行）。
 
 运行方式:
     uv run python manual_tests/excel/format_e2e/test_merge_cells.py --test all
@@ -103,12 +104,13 @@ TEST_CASES: list[ExcelCase] = [
         tags=["merge", "clear"],
     ),
     ExcelCase(
-        name="错误码 3000 — 非法 address（DOCUMENT_ERROR）",
+        name="错误码 3009 — 非法 address（RANGE_INVALID）",
         fixture_name=FMT,
-        description="merge:cells 传非法地址 → 3000（3009 为 dead code）",
+        description="merge:cells 传非法地址 → 3009（oasp#17 定案；合并冲突另属 3014）",
         action="merge:cells",
         params={"address": "ZZZZ99999999", "worksheet_name": "Merge"},
-        expect_error_code="3000",
+        expect_error_code="3009",
+        xfail_reason="待 Add-In 接线 office-editor4ai#80",
         tags=["error"],
     ),
 ]

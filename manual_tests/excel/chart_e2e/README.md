@@ -19,10 +19,10 @@ get:charts 回读**为主验证（openpyxl `chart_count` 仅 best-effort，原�
 
 | 文件 | 用例数 | 覆盖 |
 |------|-------|------|
-| `test_insert_chart.py` | 5 | ColumnClustered+title / Line / Pie / XYScatter+position / 错误码 3000 |
-| `test_get_charts.py` | 4 | 单图表回读(chartType/title/位置) / 多图表 / 空表空列表 / 错误码 3000 |
-| `test_update_chart.py` | 4 | flow: update title / chartType / position（回读核对）/ 错误码 3000 |
-| `test_delete_chart.py` | 3 | flow: 删其一保留其它 / 删唯一→空 / 错误码 3000 |
+| `test_insert_chart.py` | 5 | ColumnClustered+title / Line / Pie / XYScatter+position / 错误码 4002 |
+| `test_get_charts.py` | 4 | 单图表回读(chartType/title/位置) / 多图表 / 空表空列表 / 错误码 3010(kind:worksheet) |
+| `test_update_chart.py` | 4 | flow: update title / chartType / position（回读核对）/ 错误码 3010(kind:chart) |
+| `test_delete_chart.py` | 3 | flow: 删其一保留其它 / 删唯一→空 / 错误码 3010(kind:chart) |
 
 **合计 16 case。**
 
@@ -35,13 +35,16 @@ get:charts 回读**为主验证（openpyxl `chart_count` 仅 best-effort，原�
 
 ## 错误码现实
 
-| 触发 | 错误码 |
+| 触发 | 错误码（oasp#17 权威） |
 |------|-------|
-| 非法 chartType（非空但 Office.js 拒绝枚举）/ 图表不存在 / 不存在的 worksheet | **`3000`** DOCUMENT_ERROR |
+| 非法 chartType（非空但非法枚举） | **`4002`** INVALID_PARAM |
+| 图表不存在 | **`3010`** ELEMENT_NOT_FOUND（`details.kind:"chart"`） |
+| 不存在的 worksheet | **`3010`** ELEMENT_NOT_FOUND（`details.kind:"worksheet"`） |
 | chartType 空串（Zod `min(1)` 失败） | **`4000`** VALIDATION_ERROR（未单独建用例，与 #33 同理） |
 
-> 旧 DoD 的 `4002`（无效 chartType）/ `5007`（图表不存在）均为 dead code：`excelErrorCode()` 仅把
-> Zod 失败映射 `4000`，其余 Office.js 运行期异常（含非法图表类型枚举）→ `3000`。
+> oasp#17 已定案上述权威码（规范层 MUST，不得降级 `3000`；旧 5xxx 块整体退役）。
+> Add-In 接线（office-editor4ai#80）前 `excelErrorCode()` 仍是 Zod→`4000` / 其余→`3000`
+> 二值分类，e2e 用例以 **XFAIL** 运行，接线后摘 `xfail_reason` 转正。
 
 ## flow 机制（本片引入，复用于 #35）
 

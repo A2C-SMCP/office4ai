@@ -38,7 +38,7 @@ Defines data structures for Excel-specific Socket.IO events (``/excel`` namespac
   ``string`` 而非闭合枚举）构建，**不**复用 PPT 的内联 ``ChartData`` 判别联合，也无
   ``3015 INVALID_CHART_DATA``（issue/北极星文案「复用 ChartData / 3015」描述的是
   ``data-structures.md`` 标注的「未来 Excel」设想，events-excel.md 当前 4 个事件并未
-  采纳 → 从 spec type）。无效类型→AddIn 返回 4002，无效范围→5002，图表不存在→5007。
+  采纳 → 从 spec type）。无效类型→AddIn 返回 4002，无效范围→3009，图表不存在→3010(kind:chart)。
   ``insert`` 与 ``update`` 响应同为 ``{name}`` → 共用 ``ChartOperationResult``（同 #19
   ``RangeOperationResult`` 的「形态相同则共用」原则）；``ChartPosition`` 由 insert 与
   update 复用。
@@ -49,7 +49,7 @@ Defines data structures for Excel-specific Socket.IO events (``/excel`` namespac
   events-excel.md 当前 3 个事件并未采纳 → 从 spec type，避免发明协议外 surface）。
   ``insert`` 响应 ``{name}`` 与 ``get`` 条目 ``{name, id}`` 形态不同 → **不**强行共用单一
   ``PivotTableInfo``（同 #22 TableInfo / #23 ChartSummary 的「形态不同不共用」原则）。
-  无效范围→AddIn 返回 5002，透视表不存在→5008，平台不支持→5010。
+  无效范围→AddIn 返回 3009，透视表不存在→3010(kind:pivotTable)，平台不支持→3016。
 - #25 Find&Filter — 查找与筛选: ``excel:find:values`` / ``excel:set:autoFilter`` /
   ``excel:clear:autoFilter``。**按 spec type 实装**：``find:values`` 用 ``matchCase`` /
   ``matchEntireCell``（issue 文案「matchEntireContents」与 spec 字段名不符 → 从 spec），
@@ -57,7 +57,7 @@ Defines data structures for Excel-specific Socket.IO events (``/excel`` namespac
   为**开放字符串**（spec 类型 ``string``，注释 "Values, CellColor, FontColor 等"，
   issue 文案「枚举 / 按颜色 / 自定义条件」描述的闭合枚举与结构化颜色字段并未被 spec
   采纳 → 从 spec type，criterion 仅 ``{columnIndex, filterOn, values?}``，不发明协议外
-  surface）。无效范围→AddIn 返回 5002，工作表不存在→5001，列索引越界→4004。
+  surface）。无效范围→AddIn 返回 3009，工作表不存在→3010(kind:worksheet)，列索引越界→4004。
 """
 
 from typing import Any, ClassVar, Literal
@@ -399,8 +399,8 @@ class SortTableData(SocketIOBaseModel):
 #   get:charts    — {charts: [{name, chartType, title, top, left, width, height}]}
 #   delete:chart  — {deleted}
 # ChartPosition 由 insert 请求与 update properties 复用。
-# 错误码 4002 INVALID_PARAM / 5001 WORKSHEET_NOT_FOUND / 5002 RANGE_INVALID /
-# 5007 CHART_NOT_FOUND 均由 AddIn 产生，office4ai 透传 obs.error，不在此定义。
+# 错误码 4002 INVALID_PARAM / 3010 ELEMENT_NOT_FOUND(kind:worksheet|chart) /
+# 3009 RANGE_INVALID 均由 AddIn 产生，office4ai 透传 obs.error，不在此定义（oasp#17）。
 
 # Excel 常见图表类型（chartType 开放字符串的常见取值，与 Office.js Excel.ChartType 对齐）。
 # 注意：Excel 散点图为 'XYScatter'（≠ PPT ChartType 的 'Scatter'），故各命名空间枚举不同，
@@ -480,8 +480,8 @@ class DeleteChartData(SocketIOBaseModel):
 #   delete:pivotTable  — {deleted}
 # insert 响应 {name} 与 get 条目 {name, id} 形态不同 → 不强行共用单一 PivotTableInfo
 # （同 #22 TableInfo / #23 ChartSummary 的「形态不同不共用」原则）。
-# 错误码 5001 WORKSHEET_NOT_FOUND / 5002 RANGE_INVALID / 5008 PIVOT_NOT_FOUND /
-# 5010 NOT_SUPPORTED 均由 AddIn 产生，office4ai 透传 obs.error，不在此定义。
+# 错误码 3010 ELEMENT_NOT_FOUND(kind:worksheet|pivotTable) / 3009 RANGE_INVALID /
+# 3016 API_NOT_SUPPORTED 均由 AddIn 产生，office4ai 透传 obs.error，不在此定义（oasp#17）。
 
 
 class PivotTableOperationResult(SocketIOBaseModel):
@@ -517,8 +517,8 @@ class DeletePivotTableData(SocketIOBaseModel):
 #   find:values        — {matches: [{address, value}]}（value 为任意类型 unknown）
 #   set:autoFilter     — {address}
 #   clear:autoFilter   — {cleared}
-# 错误码 5001 WORKSHEET_NOT_FOUND / 5002 RANGE_INVALID / 4004 PARAM_OUT_OF_RANGE
-# 均由 AddIn 产生，office4ai 透传 obs.error，不在此定义。
+# 错误码 3010 ELEMENT_NOT_FOUND(kind:worksheet) / 3009 RANGE_INVALID / 4004 PARAM_OUT_OF_RANGE
+# 均由 AddIn 产生，office4ai 透传 obs.error，不在此定义（oasp#17）。
 
 
 class FindMatch(SocketIOBaseModel):
@@ -786,8 +786,8 @@ class ExcelActivateWorksheetRequest(BaseRequest):
 #   add:tableRow     — tableId + values 必填；worksheetName 可选
 #   delete:tableRow  — tableId + rowIndex 必填；worksheetName 可选
 #   sort:table       — tableId + sortFields 必填；worksheetName 可选
-# 错误码 5006 TABLE_NOT_FOUND / 5009 DATA_TYPE_MISMATCH / 4004 PARAM_OUT_OF_RANGE
-# 均由 AddIn 产生，office4ai 透传 obs.error，不在此定义。
+# 错误码 3010 ELEMENT_NOT_FOUND(kind:table) / 3018 DATA_TYPE_MISMATCH / 4004 PARAM_OUT_OF_RANGE
+# 均由 AddIn 产生，office4ai 透传 obs.error，不在此定义（oasp#17）。
 
 
 class SortField(SocketIOBaseModel):
@@ -925,8 +925,8 @@ class ExcelDeleteChartRequest(BaseRequest):
 #   get:pivotTables    — 仅 worksheetName 可选
 #   delete:pivotTable  — pivotTableName 必填；worksheetName 可选
 # spec 未定义 rows/columns/values/filters 与聚合枚举 → 不建相关字段，避免发明协议外
-# surface（参见 #18 namespace 越界教训）。无效范围→5002 / 透视表不存在→5008 /
-# 平台不支持→5010 由 AddIn 产生，office4ai 透传。
+# surface（参见 #18 namespace 越界教训）。无效范围→3009 / 透视表不存在→3010(kind:pivotTable) /
+# 平台不支持→3016 由 AddIn 产生，office4ai 透传（oasp#17）。
 
 
 class ExcelInsertPivotTableRequest(BaseRequest):
@@ -971,7 +971,7 @@ class ExcelDeletePivotTableRequest(BaseRequest):
 # criterion.filterOn 为开放字符串（spec type ``string``，常见取值 "Values" /
 # "CellColor" / "FontColor"）→ 不建闭合枚举、不建颜色/自定义条件字段，避免发明协议外
 # surface（参见 #18 namespace 越界教训 / #24 PivotTableInfo 教训）。
-# 工作表不存在→5001 / 无效范围→5002 / 列索引越界→4004 由 AddIn 产生，office4ai 透传。
+# 工作表不存在→3010(kind:worksheet) / 无效范围→3009 / 列索引越界→4004 由 AddIn 产生，office4ai 透传（oasp#17）。
 
 
 class AutoFilterCriterion(SocketIOBaseModel):

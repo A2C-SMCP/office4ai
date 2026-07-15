@@ -8,7 +8,8 @@ wire 形态（AddIn autoFilter.ts 确认）:
 - clear:autoFilter（worksheetName?）→ **void**（无 data）
 
 双重验证：openpyxl ``auto_filter_ref``——set 后 ref 落到筛选范围（如 'A1:C5'），clear 后 ref 清空。
-含错误码两路径：address 空串（Zod min(1)）→ 4000；非法 address → 3000。
+含错误码两路径：address 空串（Zod min(1)）→ 4000；非法 address → 3009 RANGE_INVALID
+（oasp#17 定案；Add-In 接线前（office-editor4ai#80）以 XFAIL 运行）。
 
 运行方式:
     uv run python manual_tests/excel/find_filter_e2e/test_auto_filter.py --test all
@@ -118,12 +119,13 @@ TEST_CASES: list[ExcelCase] = [
         tags=["error", "zod"],
     ),
     ExcelCase(
-        name="错误码 3000 — 非法 address（DOCUMENT_ERROR）",
+        name="错误码 3009 — 非法 address（RANGE_INVALID）",
         fixture_name=FILT,
-        description="set:autoFilter address='ZZZZ99999999' → 3000",
+        description="set:autoFilter address='ZZZZ99999999' → 3009（oasp#17）",
         action="set:autoFilter",
         params={"address": "ZZZZ99999999", "criteria": _CRIT_ONE, "worksheet_name": "Data"},
-        expect_error_code="3000",
+        expect_error_code="3009",
+        xfail_reason="待 Add-In 接线 office-editor4ai#80",
         tags=["error"],
     ),
 ]

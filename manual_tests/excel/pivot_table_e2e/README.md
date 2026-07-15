@@ -19,9 +19,9 @@
 
 | 文件 | 用例数 | 覆盖 |
 |------|-------|------|
-| `test_insert_pivot_table.py` | 4 | 指定 name / 默认 name / 非法 source 3000 / 空 source 4000 |
-| `test_get_pivot_tables.py` | 4 | 单透视表回读(name/id) / 多透视表 / 空表空列表 / 错误码 3000 |
-| `test_delete_pivot_table.py` | 3 | flow: 删其一保留其它 / 删唯一→空 / 错误码 3000 |
+| `test_insert_pivot_table.py` | 4 | 指定 name / 默认 name / 非法 source 3009 / 空 source 4000 |
+| `test_get_pivot_tables.py` | 4 | 单透视表回读(name/id) / 多透视表 / 空表空列表 / 错误码 3010(kind:worksheet) |
+| `test_delete_pivot_table.py` | 3 | flow: 删其一保留其它 / 删唯一→空 / 错误码 3010(kind:pivotTable) |
 
 **合计 11 case。**
 
@@ -34,13 +34,17 @@
 
 ## 错误码现实
 
-| 触发 | 错误码 |
+| 触发 | 错误码（oasp#17 权威） |
 |------|-------|
-| 非法 sourceAddress / 透视表不存在 / 不存在的 worksheet | **`3000`** DOCUMENT_ERROR |
+| 非法 sourceAddress | **`3009`** RANGE_INVALID |
+| 透视表不存在 | **`3010`** ELEMENT_NOT_FOUND（`details.kind:"pivotTable"`） |
+| 不存在的 worksheet | **`3010`** ELEMENT_NOT_FOUND（`details.kind:"worksheet"`） |
+| 平台不支持（如 Excel for web 限制） | **`3016`** API_NOT_SUPPORTED（`details.requiredApiSet`） |
 | sourceAddress·targetAddress·pivotTableName 空串（Zod `min(1)` 失败） | **`4000`** VALIDATION_ERROR |
 
-> 旧 DoD 的 `5008`（透视表不存在）/ `5010` / `5002` 均为 dead code。`excelErrorCode()` 仅把
-> Zod 失败映射 `4000`，其余 Office.js 运行期异常 → `3000`。
+> oasp#17 已定案上述权威码（规范层 MUST，不得降级 `3000`；旧 `5008`/`5010`/`5002` 退役为
+> `3010(kind:pivotTable)`/`3016`/`3009`）。Add-In 接线（office-editor4ai#80）前真机仍返
+> `3000` 兜底，e2e 用例以 **XFAIL** 运行，接线后摘 `xfail_reason` 转正。
 
 ## 运行
 

@@ -5,6 +5,7 @@ Office Workspace Implementation
 """
 
 import asyncio
+import json
 import logging
 import time
 from collections.abc import Callable
@@ -25,6 +26,22 @@ logger = logging.getLogger(__name__)
 # Tool names whose results populate the caches
 _VISIBLE_CONTENT_TOOLS = {"word_get_visible_content"}
 _STRUCTURE_TOOLS = {"word_get_document_structure"}
+
+
+def format_wire_error(error: dict[str, Any]) -> str:
+    """把 wire error dict（{code, message, details?}）摊平为单行字符串。
+
+    details 必须存活（issue #82 / oasp#17）：协议规定 details 供双端对齐断言
+    （如 3010 ELEMENT_NOT_FOUND 用 ``details.kind`` 区分 worksheet/table/chart/
+    pivotTable），MCP 工具层透传 obs.error 时 AI 消费者也依赖它定位问题对象。
+    渲染格式固定为 ``"{code}: {message} (details: {json})"``（json 按键排序、
+    不转义中文），e2e 断言侧按该格式反解析（见 manual_tests/excel/e2e_case.py）。
+    """
+    flattened = f"{error.get('code', 'Unknown')}: {error.get('message', 'Unknown error')}"
+    details = error.get("details")
+    if details:
+        flattened += f" (details: {json.dumps(details, ensure_ascii=False, sort_keys=True)})"
+    return flattened
 
 
 @dataclass
@@ -342,9 +359,10 @@ class OfficeWorkspace(BaseWorkspace):
             else:
                 # 失败：返回错误信息
                 error_msg = response.get("error", "Unknown error")
-                # 将 dict 类型的 error 转换为字符串（前端返回 {code, message} 格式）
+                # 将 dict 类型的 error 摊平为字符串（前端返回 {code, message, details?} 格式），
+                # details 必须存活——见 format_wire_error docstring（issue #82 / oasp#17）
                 if isinstance(error_msg, dict):
-                    error_msg = f"{error_msg.get('code', 'Unknown')}: {error_msg.get('message', 'Unknown error')}"
+                    error_msg = format_wire_error(error_msg)
                 logger.error(f"Action failed: {error_msg}")
                 return OfficeObs(success=False, data={}, error=error_msg)
         except Exception as e:

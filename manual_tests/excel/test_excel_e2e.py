@@ -20,7 +20,8 @@ Excel End-to-End Test (OASP /excel Draft 0.3.0, milestone #3 / issue #26)
 ────────────────────────────────────────────────────────────────────
 打开一个空工作簿，把 37 个事件编排成一条「构建销售报表」工作流逐个跑通，
 **continue-on-error**（单步失败不中断，最后汇总每个事件 ✅/❌），再用 openpyxl
-读盘双重验证 + 触发 5001/5002/5006/5007/5008 错误码。成功后保留工作副本供目测。
+读盘双重验证 + 触发权威错误码场景（3010+kind / 3009，oasp#17 定案；Add-In 接线前
+（office-editor4ai#80）以 XFAIL 运行）。成功后保留工作副本供目测。
 
     uv run python manual_tests/excel/test_excel_e2e.py --mode full
 
@@ -47,6 +48,7 @@ from manual_tests.excel.e2e_base import (  # noqa: E402
     WorkbookReader,
     ensure_empty_fixture,
 )
+from manual_tests.excel.e2e_case import evaluate_error_case  # noqa: E402
 from manual_tests.excel.test_helpers import excel_op  # noqa: E402
 
 # ============================================================================
@@ -276,20 +278,31 @@ async def run_full_workflow(workspace: Any, uri: str, rc: ResultCollector) -> No
 
 
 async def run_error_scenarios(workspace: Any, uri: str, rc: ResultCollector) -> None:
-    """错误码场景：每步**预期失败**，并校验返回特定错误码。"""
-    print("\n" + "─" * 70 + "\n错误码场景（预期失败 + 校验码）\n" + "─" * 70)
+    """错误码场景：每步**预期失败**，并校验权威错误码 + details.kind（oasp#17）。
 
-    async def expect_error(event: str, code: str, **params: Any) -> None:
+    Add-In 接线前（office-editor4ai#80）真机实收 3000 兜底 → 记 ⚠️ XFAIL（计通过
+    不红）；接线后严格命中 → ✅。XFAIL 仍要求响应必须失败，防掩盖回归。
+    """
+    print("\n" + "─" * 70 + "\n错误码场景（预期失败 + 校验权威码；Add-In 接线前 XFAIL）\n" + "─" * 70)
+
+    async def expect_error(event: str, code: str, details: dict[str, Any] | None = None, **params: Any) -> None:
         ok, _, err = await excel_op(workspace, uri, event, quiet=True, **params)
-        hit = (not ok) and code in (err or "")
-        rc.record(f"[err {code}] excel:{event}", hit, "" if hit else f"实际: ok={ok} err={err}")
-        print(f"   {'✅' if hit else '❌'} [{code}] excel:{event} → {err}")
+        expected = code + (f" details⊇{details}" if details else "")
+        if evaluate_error_case(ok, err, code, details):
+            rc.record(f"[err {code}] excel:{event}", True, "")
+            print(f"   ✅ [{expected}] excel:{event} → {err}")
+        elif not ok:
+            rc.record(f"[err {code}] excel:{event}", True, f"XFAIL 实际: {err}")
+            print(f"   ⚠️  XFAIL（待 Add-In 接线 office-editor4ai#80）[{expected}] excel:{event} → {err}")
+        else:
+            rc.record(f"[err {code}] excel:{event}", False, f"实际: ok={ok} err={err}")
+            print(f"   ❌ [{expected}] excel:{event} → ok={ok} err={err}")
 
-    await expect_error("get:worksheetInfo", "5001", worksheet_name="GhostSheet")
-    await expect_error("get:range", "5002", address="!!!bad!!!")
-    await expect_error("get:table", "5006", table_id="GhostTable")
-    await expect_error("delete:chart", "5007", chart_name="GhostChart")
-    await expect_error("delete:pivotTable", "5008", pivot_table_name="GhostPivot")
+    await expect_error("get:worksheetInfo", "3010", {"kind": "worksheet"}, worksheet_name="GhostSheet")
+    await expect_error("get:range", "3009", address="!!!bad!!!")
+    await expect_error("get:table", "3010", {"kind": "table"}, table_id="GhostTable")
+    await expect_error("delete:chart", "3010", {"kind": "chart"}, chart_name="GhostChart")
+    await expect_error("delete:pivotTable", "3010", {"kind": "pivotTable"}, pivot_table_name="GhostPivot")
 
 
 def verify_with_openpyxl(working_path: Path) -> tuple[bool, list[str]]:

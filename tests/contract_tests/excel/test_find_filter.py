@@ -149,11 +149,11 @@ async def test_set_auto_filter_column_out_of_range(excel_roundtrip):
 
 
 async def test_find_values_worksheet_not_found(excel_roundtrip):
-    """工作表不存在 → 5001 WORKSHEET_NOT_FOUND。"""
+    """工作表不存在 → 3010 ELEMENT_NOT_FOUND(kind:worksheet)（oasp#17）。"""
 
     def factory(request: dict) -> dict:
-        return _err(request, "5001", "Worksheet 'Ghost' not found")
+        return _err(request, "3010", "Worksheet 'Ghost' not found")
 
     result, _ = await excel_roundtrip("find:values", {"search_text": "x", "worksheet_name": "Ghost"}, factory)
     assert result.success is False
-    assert "5001" in (result.error or "")
+    assert "3010" in (result.error or "")

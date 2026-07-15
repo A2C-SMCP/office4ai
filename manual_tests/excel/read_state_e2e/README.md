@@ -15,7 +15,7 @@ read_state_e2e/
 ├── __init__.py               # 包初始化
 ├── _fixtures.py              # 夹具构建器（multi_sheet / hidden_sheet / prefilled）
 ├── test_workbook_info.py     # get:workbookInfo（4 个用例）
-├── test_worksheet_info.py    # get:worksheetInfo（6 个用例，含错误码 5001）
+├── test_worksheet_info.py    # get:worksheetInfo（6 个用例，含错误码 3010 kind:worksheet）
 ├── test_selected_range.py    # get:selectedRange（4 个用例，需手动选区）
 └── README.md                 # 本文档
 ```
@@ -55,7 +55,7 @@ uv run python manual_tests/excel/read_state_e2e/test_workbook_info.py --test all
 | 3 | usedRange 行列数 | `Data` | usedRange 4 行 × 3 列，与 openpyxl `max_row/max_column` 核对 |
 | 4 | tableCount/chartCount | `Data` | 两字段为整数（预填夹具应为 0/0） |
 | 5 | 空表 usedRange | `Report` | 空表 usedRange 极小（≤1×1） |
-| 6 | 错误码 3000 | `GhostSheet_xyz` | **预期失败**：DOCUMENT_ERROR（3000，资源不存在）。⚠️ Issue DoD 写的 5001 已过时——见下「错误码现实」 |
+| 6 | 错误码 3010 | `GhostSheet_xyz` | **预期失败**：ELEMENT_NOT_FOUND（3010 + `details.kind:"worksheet"`，oasp#17 定案）。Add-In 接线前 XFAIL——见下「错误码」 |
 
 ```bash
 uv run python manual_tests/excel/read_state_e2e/test_worksheet_info.py --test 3
@@ -84,21 +84,22 @@ uv run python manual_tests/excel/read_state_e2e/test_selected_range.py --test al
 >
 > `rowCount`/`columnCount` 与预期不符时打印 ⚠️（非失败）；结构不变量（2D / 行列与 values 维度一致）不满足才判失败。
 
-## 错误码现实（OASP 0.3.0：3xxx/4xxx，**非** 5xxx）
+## 错误码（oasp#17 已定案：5xxx 整体退役 → 通用 3xxx/4xxx）
 
-> ⚠️ **重要**：Issue #28–#36 的 DoD 与旧 DTO 注释里写的 `5001–5010` Excel 错误码**在实现里不存在**。
-> Add-In（`office-editor4ai/packages/shared/src/error-codes.ts`）按 OASP 0.3.0 error-handling 表用
-> `3xxx`/`4xxx`（#26 已修正历史漂移、删除 5xxx）。真机实测映射：
+> **协议裁决**（[oasp-protocol#17]，issue #82 跟进）：早期草案 `5001–5010` 专属块整体退役，
+> 逐码收敛回通用注册表（规范层 MUST，不得降级 `3000`）。权威映射：
 
-| 旧 DoD（过时） | 真实返回 | 含义 |
+| 旧 5xxx（退役） | 权威码（oasp#17） | 区分键 |
 |---------------|---------|------|
-| 5001 WORKSHEET_NOT_FOUND | **3000** DOCUMENT_ERROR | worksheet/资源不存在 |
-| 5002 RANGE_INVALID | 3009 RANGE_INVALID | 无效区域 |
-| 5006 TABLE_NOT_FOUND | 3010 / 3013 | 表/元素不存在 |
-| 5007 CHART_NOT_FOUND | 3015 等 | 图表相关 |
+| 5001 WORKSHEET_NOT_FOUND | **3010** ELEMENT_NOT_FOUND | `details.kind:"worksheet"` |
+| 5002 RANGE_INVALID | **3009** RANGE_INVALID | — |
+| 5006 TABLE_NOT_FOUND | **3010** ELEMENT_NOT_FOUND | `details.kind:"table"` |
+| 5007 CHART_NOT_FOUND | **3010** ELEMENT_NOT_FOUND | `details.kind:"chart"` |
+| 5005 / 5009 | **3017** FORMULA_ERROR / **3018** DATA_TYPE_MISMATCH | ⭐oasp#17 新增 |
 | 4002 / 4004 | 4002 / 4004 | 同（验证类一致） |
 
-本套件错误码用例按**真实码**断言。后续 #30–#36 同样以 3xxx/4xxx 为准；建议回头修订 Issue DoD 与
+本套件错误码用例按**权威码 + `details.kind`** 断言，Add-In 接线（office-editor4ai#80）前
+以 XFAIL 运行（真机仍返 `3000` 兜底），接线后摘 `xfail_reason` 转正。建议回头修订 Issue DoD 与
 `docs/manual_tests/excel_v0.3.0.md` B 节、`test_excel_e2e.py` foundation 冒烟里残留的 5xxx 口径。
 
 ## 通用参数
@@ -129,11 +130,11 @@ uv run python manual_tests/excel/read_state_e2e/test_selected_range.py --test al
 ✅ 测试 1 通过
 ```
 
-错误码用例（test 6）预期**失败但命中码**：
+错误码用例（test 6）预期**失败但命中权威码**（Add-In 接线前为 ⚠️ XFAIL，同样计通过）：
 
 ```
-🎯 预期错误码: 5001
-   ✅ 预期失败 [5001] → ok=False err=...WORKSHEET_NOT_FOUND...
+🎯 预期错误码: 3010
+   ⚠️  XFAIL（待 Add-In 接线 office-editor4ai#80）期望 [3010 details⊇{'kind': 'worksheet'}] 实收: err=3000: ...
 ✅ 测试 6 通过
 ```
 
