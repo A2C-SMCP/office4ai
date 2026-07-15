@@ -125,16 +125,17 @@ TEST_CASES: list[ExcelCase] = [
         tags=["clear"],
     ),
     ExcelCase(
-        name="错误码 3000 — 非法 address（DOCUMENT_ERROR）",
+        name="错误码 3009 — 非法 address（RANGE_INVALID）",
         fixture_name=FMT,
-        description="add:conditionalFormat 传非法地址 → 3000（3009 为 dead code）",
+        description="add:conditionalFormat 传非法地址 → 3009（oasp#17 定案）",
         action="add:conditionalFormat",
         params={
             "address": "ZZZZ99999999",
             "rule": {"type": "cellValue", "operator": "GreaterThan", "formula1": "1"},
             "worksheet_name": "Data",
         },
-        expect_error_code="3000",
+        expect_error_code="3009",
+        xfail_reason="待 Add-In 接线 office-editor4ai#80",
         tags=["error"],
     ),
 ]

@@ -12,7 +12,8 @@ wire 形态（AddIn worksheets.ts 确认）:
 - activate：因 handler 返回 void，无响应体可断言——改用 ``get:worksheets``（pre_op 先 activate）
   断言目标表 isActive，并 best-effort 用 openpyxl ``wb.active`` 佐证。
 
-含错误码用例：rename / activate 不存在的表 → 3000 DOCUMENT_ERROR。
+含错误码用例：rename / activate 不存在的表 → 3010 ELEMENT_NOT_FOUND(kind:worksheet)
+（oasp#17 定案；Add-In 接线前 XFAIL）。
 
 运行方式:
     uv run python manual_tests/excel/worksheet_e2e/test_rename_activate.py --test all
@@ -91,21 +92,25 @@ TEST_CASES: list[ExcelCase] = [
         tags=["activate"],
     ),
     ExcelCase(
-        name="错误码 3000 — rename 不存在的表（DOCUMENT_ERROR）",
+        name="错误码 3010 — rename 不存在的表（ELEMENT_NOT_FOUND kind:worksheet）",
         fixture_name=BOOK,
-        description="rename:worksheet currentName='NoSuch' → 3000",
+        description="rename:worksheet currentName='NoSuch' → 3010 + details.kind=worksheet（oasp#17）",
         action="rename:worksheet",
         params={"current_name": "NoSuchSheet", "new_name": "X"},
-        expect_error_code="3000",
+        expect_error_code="3010",
+        expect_error_details={"kind": "worksheet"},
+        xfail_reason="待 Add-In 接线 office-editor4ai#80",
         tags=["error"],
     ),
     ExcelCase(
-        name="错误码 3000 — activate 不存在的表（DOCUMENT_ERROR）",
+        name="错误码 3010 — activate 不存在的表（ELEMENT_NOT_FOUND kind:worksheet）",
         fixture_name=BOOK,
-        description="activate:worksheet worksheetName='NoSuch' → 3000",
+        description="activate:worksheet worksheetName='NoSuch' → 3010 + details.kind=worksheet（oasp#17）",
         action="activate:worksheet",
         params={"worksheet_name": "NoSuchSheet"},
-        expect_error_code="3000",
+        expect_error_code="3010",
+        expect_error_details={"kind": "worksheet"},
+        xfail_reason="待 Add-In 接线 office-editor4ai#80",
         tags=["error"],
     ),
 ]

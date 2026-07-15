@@ -10,7 +10,8 @@ wire 形态（AddIn worksheets.ts 确认）:
 双重验证以 openpyxl ``sheet_names`` 为唯一依据：删除后目标表消失、其它表保留、表数 -1。
 ``get:worksheets``（pre_op 先 delete）做协议层二次确认。
 
-含错误码用例：delete 不存在的表 → 3000 DOCUMENT_ERROR。
+含错误码用例：delete 不存在的表 → 3010 ELEMENT_NOT_FOUND(kind:worksheet)（oasp#17 定案；
+Add-In 接线前 XFAIL）。
 
 运行方式:
     uv run python manual_tests/excel/worksheet_e2e/test_delete_worksheet.py --test all
@@ -83,12 +84,14 @@ TEST_CASES: list[ExcelCase] = [
         tags=["delete", "get"],
     ),
     ExcelCase(
-        name="错误码 3000 — delete 不存在的表（DOCUMENT_ERROR）",
+        name="错误码 3010 — delete 不存在的表（ELEMENT_NOT_FOUND kind:worksheet）",
         fixture_name=BOOK,
-        description="delete:worksheet worksheetName='NoSuch' → 3000",
+        description="delete:worksheet worksheetName='NoSuch' → 3010 + details.kind=worksheet（oasp#17）",
         action="delete:worksheet",
         params={"worksheet_name": "NoSuchSheet"},
-        expect_error_code="3000",
+        expect_error_code="3010",
+        expect_error_details={"kind": "worksheet"},
+        xfail_reason="待 Add-In 接线 office-editor4ai#80",
         tags=["error"],
     ),
 ]

@@ -7,7 +7,8 @@ Excel Chart E2E — get:charts（列举图表）
 wire 形态（AddIn chart.ts 确认）:
 - get:charts（worksheetName?）→ ``{charts:[{name, chartType, title, top, left, width, height}]}``
 
-含错误码：不存在的 worksheet → 3000 DOCUMENT_ERROR。
+含错误码：不存在的 worksheet → 3010 ELEMENT_NOT_FOUND(kind:worksheet)（oasp#17 定案；
+Add-In 接线前（office-editor4ai#80）以 XFAIL 运行）。
 
 运行方式:
     uv run python manual_tests/excel/chart_e2e/test_get_charts.py --test all
@@ -113,12 +114,14 @@ TEST_CASES: list[ExcelCase] = [
         tags=["get", "empty"],
     ),
     ExcelCase(
-        name="错误码 3000 — 不存在的 worksheet（DOCUMENT_ERROR）",
+        name="错误码 3010 — 不存在的 worksheet（ELEMENT_NOT_FOUND kind:worksheet）",
         fixture_name=CHART,
-        description="get:charts worksheet_name='NoSuch' → 3000",
+        description="get:charts worksheet_name='NoSuch' → 3010 + details.kind=worksheet（oasp#17）",
         action="get:charts",
         params={"worksheet_name": "NoSuchSheet"},
-        expect_error_code="3000",
+        expect_error_code="3010",
+        expect_error_details={"kind": "worksheet"},
+        xfail_reason="待 Add-In 接线 office-editor4ai#80",
         tags=["error"],
     ),
 ]

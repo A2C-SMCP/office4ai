@@ -9,7 +9,8 @@ wire 形态（AddIn pivotTable.ts 确认）:
   （name 省略时默认 "PivotTable"）。source 与 target 须同一 worksheet。
 
 主验证：协议返回非空 name（透视表落地由 ``test_get_pivot_tables.py`` 协议回读核对）。
-含错误码两路径：非法 sourceAddress → 3000；sourceAddress 空串（Zod min(1)）→ 4000。
+含错误码两路径：非法 sourceAddress → 3009 RANGE_INVALID（oasp#17，接线前 XFAIL）；
+sourceAddress 空串（Zod min(1)）→ 4000。
 
 运行方式:
     uv run python manual_tests/excel/pivot_table_e2e/test_insert_pivot_table.py --test all
@@ -65,12 +66,13 @@ TEST_CASES: list[ExcelCase] = [
         tags=["insert", "default"],
     ),
     ExcelCase(
-        name="错误码 3000 — 非法 sourceAddress（DOCUMENT_ERROR）",
+        name="错误码 3009 — 非法 sourceAddress（RANGE_INVALID）",
         fixture_name=PIVOT,
-        description="insert:pivotTable sourceAddress='ZZZZ99999999' → 3000",
+        description="insert:pivotTable sourceAddress='ZZZZ99999999' → 3009（oasp#17）",
         action="insert:pivotTable",
         params={"source_address": "ZZZZ99999999", "target_address": "E1", "worksheet_name": "Data"},
-        expect_error_code="3000",
+        expect_error_code="3009",
+        xfail_reason="待 Add-In 接线 office-editor4ai#80",
         tags=["error"],
     ),
     ExcelCase(

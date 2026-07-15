@@ -8,7 +8,8 @@ wire 形态（AddIn table.ts 确认）:
   ``{name, id, address, rowCount, columnCount, columns:[{name,index}], styleName, showHeaders}``
 - get:tables（worksheetName?）→ ``{tables:[{name, id, address}]}``（每条仅 3 字段）
 
-读类事件，仅协议断言（夹具预置表已知形态）。含错误码：表不存在 → 3000 DOCUMENT_ERROR。
+读类事件，仅协议断言（夹具预置表已知形态）。含错误码：表不存在 → 3010
+ELEMENT_NOT_FOUND(kind:table)（oasp#17 定案；Add-In 接线前 XFAIL）。
 
 运行方式:
     uv run python manual_tests/excel/table_e2e/test_get_table.py --test all
@@ -115,12 +116,14 @@ TEST_CASES: list[ExcelCase] = [
         tags=["get"],
     ),
     ExcelCase(
-        name="错误码 3000 — 表不存在（DOCUMENT_ERROR）",
+        name="错误码 3010 — 表不存在（ELEMENT_NOT_FOUND kind:table）",
         fixture_name=TBL,
-        description="get:table tableId='NoSuchTable' → 3000（请求的表格不存在）",
+        description="get:table tableId='NoSuchTable' → 3010 + details.kind=table（oasp#17）",
         action="get:table",
         params={"table_id": "NoSuchTable", "worksheet_name": "Sales"},
-        expect_error_code="3000",
+        expect_error_code="3010",
+        expect_error_details={"kind": "table"},
+        xfail_reason="待 Add-In 接线 office-editor4ai#80",
         tags=["error"],
     ),
 ]

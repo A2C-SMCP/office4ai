@@ -11,7 +11,7 @@ wire 形态（AddIn table.ts 确认）:
 SalesTable 正文：Bob(85,30) / Alice(85,25) / Dave(78,35) / Carol(88,28)。
 列索引 0=Name 1=Score 2=Age；Age 唯一供单列排序，Score 含并列 85 供多级断 tie。
 
-含错误码：表不存在 → 3000 DOCUMENT_ERROR。
+含错误码：表不存在 → 3010 ELEMENT_NOT_FOUND(kind:table)（oasp#17 定案；Add-In 接线前 XFAIL）。
 
 运行方式:
     uv run python manual_tests/excel/table_e2e/test_sort_table.py --test all
@@ -99,12 +99,14 @@ TEST_CASES: list[ExcelCase] = [
         tags=["sort", "multi"],
     ),
     ExcelCase(
-        name="错误码 3000 — 表不存在（DOCUMENT_ERROR）",
+        name="错误码 3010 — 表不存在（ELEMENT_NOT_FOUND kind:table）",
         fixture_name=TBL,
-        description="sort:table tableId='NoSuchTable' → 3000（请求的表格不存在）",
+        description="sort:table tableId='NoSuchTable' → 3010 + details.kind=table（oasp#17）",
         action="sort:table",
         params={"table_id": "NoSuchTable", "sort_fields": [{"columnIndex": 0}], "worksheet_name": "Sales"},
-        expect_error_code="3000",
+        expect_error_code="3010",
+        expect_error_details={"kind": "table"},
+        xfail_reason="待 Add-In 接线 office-editor4ai#80",
         tags=["error"],
     ),
 ]

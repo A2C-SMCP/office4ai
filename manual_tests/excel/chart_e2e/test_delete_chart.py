@@ -7,7 +7,8 @@ Excel Chart E2E — delete:chart（删除图表）
 wire 形态（AddIn chart.ts 确认）:
 - delete:chart（chartName, worksheetName?）→ **void**（无 data）
 
-含错误码：delete 不存在的 chartName → 3000 DOCUMENT_ERROR。
+含错误码：delete 不存在的 chartName → 3010 ELEMENT_NOT_FOUND(kind:chart)（oasp#17 定案；
+Add-In 接线前（office-editor4ai#80）以 XFAIL 运行）。
 
 运行方式:
     uv run python manual_tests/excel/chart_e2e/test_delete_chart.py --test all
@@ -106,12 +107,14 @@ TEST_CASES: list[ExcelCase] = [
         tags=["delete", "empty"],
     ),
     ExcelCase(
-        name="错误码 3000 — delete 不存在的图表（DOCUMENT_ERROR）",
+        name="错误码 3010 — delete 不存在的图表（ELEMENT_NOT_FOUND kind:chart）",
         fixture_name=CHART,
-        description="delete:chart chartName='NoSuch' → 3000",
+        description="delete:chart chartName='NoSuch' → 3010 + details.kind=chart（oasp#17）",
         action="delete:chart",
         params={"chart_name": "NoSuchChart", "worksheet_name": "Data"},
-        expect_error_code="3000",
+        expect_error_code="3010",
+        expect_error_details={"kind": "chart"},
+        xfail_reason="待 Add-In 接线 office-editor4ai#80",
         tags=["error"],
     ),
 ]

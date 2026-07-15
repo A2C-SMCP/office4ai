@@ -3,7 +3,8 @@ Excel Read State E2E — get:worksheetInfo（工作表详细信息）
 
 覆盖 ``excel:get:worksheetInfo``（可选 ``worksheetName``，省略=活动表）。验证 usedRange
 行列数 / tableCount / chartCount，并用 openpyxl ``max_row``/``max_column`` 双重核对。
-含错误码 5001（ghost 表名）。
+含错误码用例：ghost 表名 → ``3010 ELEMENT_NOT_FOUND``（details.kind=worksheet，oasp#17
+定案；Add-In 接线前（office-editor4ai#80）以 XFAIL 运行）。
 
 运行方式:
     uv run python manual_tests/excel/read_state_e2e/test_worksheet_info.py --test all
@@ -128,15 +129,17 @@ TEST_CASES: list[ExcelCase] = [
         tags=["empty"],
     ),
     ExcelCase(
-        # 真机实测：Add-In 按 OASP 0.3.0 error-handling 表返回 3000 DOCUMENT_ERROR
-        # （error-codes.ts 无 5xxx 区段；Issue/旧 DTO 注释里的 5001 WORKSHEET_NOT_FOUND
-        # 为过时口径，详见 docs/manual_tests/excel_e2e_dev_plan.md「错误码现实」）。
-        name="错误码 3000 — ghost 表名（DOCUMENT_ERROR）",
+        # oasp#17 定案：工作表 not-found → 3010 ELEMENT_NOT_FOUND + details.kind=worksheet
+        # （5xxx 块退役、不得降级 3000；旧 5001 与「真机 3000」口径均已过时，
+        # 详见 docs/manual_tests/excel_e2e_dev_plan.md「错误码」）。
+        name="错误码 3010 — ghost 表名（ELEMENT_NOT_FOUND kind:worksheet）",
         fixture_name=MULTI,
-        description="worksheetName 传不存在的表名 → 3000（资源不存在；旧 DoD 写 5001 已过时）",
+        description="worksheetName 传不存在的表名 → 3010 + details.kind=worksheet（oasp#17）",
         action="get:worksheetInfo",
         params={"worksheet_name": "GhostSheet_xyz"},
-        expect_error_code="3000",
+        expect_error_code="3010",
+        expect_error_details={"kind": "worksheet"},
+        xfail_reason="待 Add-In 接线 office-editor4ai#80",
         tags=["error"],
     ),
 ]

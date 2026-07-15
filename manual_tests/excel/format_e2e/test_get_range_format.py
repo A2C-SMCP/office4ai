@@ -9,7 +9,8 @@ Excel Format E2E — get:rangeFormat（读取区域格式）
 既无 ``address`` 也无 ``format`` 包裹。本套件按真机实际形态（顶层扁平）断言。
 ``numberFormat`` 为 **2D 数组**（每格一个格式串）。
 
-含错误码用例：非法 address → 3000 DOCUMENT_ERROR（3009 为 dead code，详见 README）。
+含错误码用例：非法 address → 3009 RANGE_INVALID（oasp#17 定案；Add-In 接线前
+（office-editor4ai#80）以 XFAIL 运行）。
 
 运行方式:
     uv run python manual_tests/excel/format_e2e/test_get_range_format.py --test all
@@ -122,12 +123,13 @@ TEST_CASES: list[ExcelCase] = [
         tags=["2d"],
     ),
     ExcelCase(
-        name="错误码 3000 — 非法 address（DOCUMENT_ERROR）",
+        name="错误码 3009 — 非法 address（RANGE_INVALID）",
         fixture_name=FMT,
-        description="get:rangeFormat 传非法地址 → 3000（3009 为 dead code）",
+        description="get:rangeFormat 传非法地址 → 3009（oasp#17 定案）",
         action="get:rangeFormat",
         params={"address": "ZZZZ99999999", "worksheet_name": "Data"},
-        expect_error_code="3000",
+        expect_error_code="3009",
+        xfail_reason="待 Add-In 接线 office-editor4ai#80",
         tags=["error"],
     ),
 ]

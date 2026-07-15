@@ -9,7 +9,8 @@ wire 形态（AddIn chart.ts 确认）:
 
 图表为视觉对象：主验证为协议返回非空 ``name``；openpyxl ``chart_count`` 仅 best-effort
 （openpyxl 对 Excel 原生图表回读支持有限，读不到不判失败）。富属性回读见 ``test_get_charts.py``。
-含错误码：非法 chartType（非空但 Office.js 拒绝枚举）→ 3000 DOCUMENT_ERROR。
+含错误码：非法 chartType（非空但非法枚举）→ 4002 INVALID_PARAM（oasp#17 定案，
+events-excel.md insert:chart「可能的错误」表；Add-In 接线前（office-editor4ai#80）以 XFAIL 运行）。
 
 运行方式:
     uv run python manual_tests/excel/chart_e2e/test_insert_chart.py --test all
@@ -95,12 +96,13 @@ TEST_CASES: list[ExcelCase] = [
         tags=["insert", "scatter"],
     ),
     ExcelCase(
-        name="错误码 3000 — 非法 chartType（DOCUMENT_ERROR）",
+        name="错误码 4002 — 非法 chartType（INVALID_PARAM）",
         fixture_name=CHART,
-        description="insert:chart chartType='NotARealType'（非空但非法枚举）→ 3000",
+        description="insert:chart chartType='NotARealType'（非空但非法枚举）→ 4002（oasp#17）",
         action="insert:chart",
         params={"source_address": "A1:C4", "chart_type": "NotARealType", "worksheet_name": "Data"},
-        expect_error_code="3000",
+        expect_error_code="4002",
+        xfail_reason="待 Add-In 接线 office-editor4ai#80",
         tags=["error"],
     ),
 ]

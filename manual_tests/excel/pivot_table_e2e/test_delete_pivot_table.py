@@ -7,7 +7,8 @@ Excel PivotTable E2E — delete:pivotTable（删除透视表）
 wire 形态（AddIn pivotTable.ts 确认）:
 - delete:pivotTable（pivotTableName, worksheetName?）→ **void**（无 data）
 
-含错误码：delete 不存在的 pivotTableName → 3000 DOCUMENT_ERROR。
+含错误码：delete 不存在的 pivotTableName → 3010 ELEMENT_NOT_FOUND(kind:pivotTable)
+（oasp#17 定案；Add-In 接线前 XFAIL）。
 
 运行方式:
     uv run python manual_tests/excel/pivot_table_e2e/test_delete_pivot_table.py --test all
@@ -108,12 +109,14 @@ TEST_CASES: list[ExcelCase] = [
         tags=["delete", "empty"],
     ),
     ExcelCase(
-        name="错误码 3000 — delete 不存在的透视表（DOCUMENT_ERROR）",
+        name="错误码 3010 — delete 不存在的透视表（ELEMENT_NOT_FOUND kind:pivotTable）",
         fixture_name=PIVOT,
-        description="delete:pivotTable pivotTableName='NoSuch' → 3000",
+        description="delete:pivotTable pivotTableName='NoSuch' → 3010 + details.kind=pivotTable（oasp#17）",
         action="delete:pivotTable",
         params={"pivot_table_name": "NoSuchPivot", "worksheet_name": "Data"},
-        expect_error_code="3000",
+        expect_error_code="3010",
+        expect_error_details={"kind": "pivotTable"},
+        xfail_reason="待 Add-In 接线 office-editor4ai#80",
         tags=["error"],
     ),
 ]
