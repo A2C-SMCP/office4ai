@@ -381,6 +381,8 @@ class ErrorCode:
     ALREADY_MERGED = "3014"
     INVALID_CHART_DATA = "3015"
     API_NOT_SUPPORTED = "3016"  # OASP 0.3.0: required capability/requirement set unavailable on client/platform
+    FORMULA_ERROR = "3017"  # OASP oasp#17 (Unreleased): formula syntax error or invalid reference
+    DATA_TYPE_MISMATCH = "3018"  # OASP oasp#17 (Unreleased): apply-time value/type incompatible (≠ wire param type 4003)
     OFFICE_API_ERROR = "3999"
 
     # Validation errors (4xxx)

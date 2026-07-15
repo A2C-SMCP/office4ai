@@ -9,10 +9,36 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from office4ai.environment.workspace.base import DocumentStatus, OfficeAction
-from office4ai.environment.workspace.office_workspace import OfficeWorkspace
+from office4ai.environment.workspace.office_workspace import OfficeWorkspace, format_wire_error
 from office4ai.environment.workspace.socketio.services.connection_manager import (
     connection_manager,
 )
+
+
+class TestFormatWireError:
+    """Test format_wire_error() — wire error dict 摊平（issue #82 / oasp#17）"""
+
+    def test_without_details(self) -> None:
+        assert format_wire_error({"code": "3009", "message": "Invalid range"}) == "3009: Invalid range"
+
+    def test_with_details(self) -> None:
+        result = format_wire_error(
+            {"code": "3010", "message": "Not found", "details": {"name": "GhostSheet", "kind": "worksheet"}}
+        )
+        # 键排序稳定（kind 在 name 前），供 e2e 侧反解析
+        assert result == '3010: Not found (details: {"kind": "worksheet", "name": "GhostSheet"})'
+
+    def test_details_chinese_not_escaped(self) -> None:
+        result = format_wire_error({"code": "3010", "message": "x", "details": {"kind": "worksheet", "name": "工作表1"}})
+        assert "工作表1" in result
+
+    def test_empty_details_omitted(self) -> None:
+        """details 为空 dict/None 时不追加后缀"""
+        assert format_wire_error({"code": "3009", "message": "x", "details": {}}) == "3009: x"
+        assert format_wire_error({"code": "3009", "message": "x", "details": None}) == "3009: x"
+
+    def test_missing_fields_fallback(self) -> None:
+        assert format_wire_error({}) == "Unknown: Unknown error"
 
 
 class TestOfficeWorkspace:
