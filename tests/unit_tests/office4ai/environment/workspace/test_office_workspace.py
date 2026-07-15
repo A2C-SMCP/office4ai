@@ -29,7 +29,9 @@ class TestFormatWireError:
         assert result == '3010: Not found (details: {"kind": "worksheet", "name": "GhostSheet"})'
 
     def test_details_chinese_not_escaped(self) -> None:
-        result = format_wire_error({"code": "3010", "message": "x", "details": {"kind": "worksheet", "name": "工作表1"}})
+        result = format_wire_error(
+            {"code": "3010", "message": "x", "details": {"kind": "worksheet", "name": "工作表1"}}
+        )
         assert "工作表1" in result
 
     def test_empty_details_omitted(self) -> None:
