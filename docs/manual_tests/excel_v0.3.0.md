@@ -7,7 +7,7 @@
 本清单镜像 `word_table_v0.2.0.md` / `ppt_chart_v0.3.0.md`，划分为：
 
 - **A. 自动化部分**：跑 `test_excel_e2e.py`，脚本驱动 37 个事件 + openpyxl 双重验证；你目测视觉
-- **B. 错误码部分**：5001/5002/5006/5007/5008 随 `--mode full` 自动触发校验
+- **B. 错误码部分**：权威 3xxx（3010+kind / 3009，oasp#17 定案）随 `--mode full` 自动触发校验（Add-In 接线前 XFAIL）
 - **C. 需人工/视觉验证 + 跨仓注意**
 
 > ℹ️ 所有 37 个 Excel 事件均为 **Server → Add-In 请求-响应**（Office.js），不存在 Server 侧
@@ -33,7 +33,7 @@ pnpm start                       # 或 npm start
 
 确认：
 - [ ] office4ai 单元 + 契约测试全部通过（`poe test`）
-- [ ] office-editor4ai 的 Excel Add-In 已实装 37 事件 Handler + Zod 校验 + 错误码 5001–5010
+- [ ] office-editor4ai 的 Excel Add-In 已实装 37 事件 Handler + Zod 校验（错误码权威 3xxx 接线见 office-editor4ai#80，未接线前 B 部分为 XFAIL）
 - [ ] Add-In dev server 在跑
 - [ ] macOS + Excel 桌面版（Microsoft 365 / Office 2021+）
 
@@ -76,7 +76,7 @@ uv run python manual_tests/excel/test_excel_e2e.py --mode full
    - **#23 Chart**：`insert:chart`(柱形图) / `get:charts` / `update:chart`(改标题) / `delete:chart`
    - **#24 PivotTable**：`insert:pivotTable`(H1) / `get:pivotTables` / `delete:pivotTable`
    - **#25 Find&Filter**：`find:values`(East) / `set:autoFilter`(Region) / `clear:autoFilter`
-4. 触发 5001/5002/5006/5007/5008 错误码场景（见 B）
+4. 触发权威错误码场景 3010(kind:worksheet/table/chart/pivotTable)/3009（见 B）
 5. 触发 Excel 保存，用 openpyxl 读盘双重验证稳定不变量
 6. 打印「事件执行汇总 N/37 ✅」+ openpyxl 验证结果
 
@@ -113,26 +113,29 @@ uv run python manual_tests/excel/test_excel_e2e.py --mode full
 
 ## B. 错误码场景（随 `--mode full` 自动触发）
 
-脚本在工作流之后自动跑错误码场景，每步**预期失败**并校验返回码：
+脚本在工作流之后自动跑错误码场景，每步**预期失败**并校验权威码 + `details.kind`
+（oasp#17 定案；Add-In 接线（office-editor4ai#80）前实收 `3000` 兜底 → ⚠️ XFAIL 计通过，
+接线后 ✅ 严格命中）：
 
 ```
-错误码场景（预期失败 + 校验码）
-  ✅ [5001] excel:get:worksheetInfo → 5001 ...（GhostSheet 不存在）
-  ✅ [5002] excel:get:range → 5002 ...（无效区域地址）
-  ✅ [5006] excel:get:table → 5006 ...（GhostTable 不存在）
-  ✅ [5007] excel:delete:chart → 5007 ...（GhostChart 不存在）
-  ✅ [5008] excel:delete:pivotTable → 5008 ...（GhostPivot 不存在）
+错误码场景（预期失败 + 校验权威码；Add-In 接线前 XFAIL）
+  ✅ [3010 details⊇{'kind': 'worksheet'}] excel:get:worksheetInfo → ...（GhostSheet 不存在）
+  ✅ [3009] excel:get:range → ...（无效区域地址）
+  ✅ [3010 details⊇{'kind': 'table'}] excel:get:table → ...（GhostTable 不存在）
+  ✅ [3010 details⊇{'kind': 'chart'}] excel:delete:chart → ...（GhostChart 不存在）
+  ✅ [3010 details⊇{'kind': 'pivotTable'}] excel:delete:pivotTable → ...（GhostPivot 不存在）
 ```
 
-- [ ] **B.1** 5001 WORKSHEET_NOT_FOUND
-- [ ] **B.2** 5002 RANGE_INVALID
-- [ ] **B.3** 5006 TABLE_NOT_FOUND
-- [ ] **B.4** 5007 CHART_NOT_FOUND
-- [ ] **B.5** 5008 PIVOT_NOT_FOUND
+- [ ] **B.1** 3010 ELEMENT_NOT_FOUND（`kind:"worksheet"`，旧 5001 退役）
+- [ ] **B.2** 3009 RANGE_INVALID（旧 5002 退役）
+- [ ] **B.3** 3010 ELEMENT_NOT_FOUND（`kind:"table"`，旧 5006 退役）
+- [ ] **B.4** 3010 ELEMENT_NOT_FOUND（`kind:"chart"`，旧 5007 退役）
+- [ ] **B.5** 3010 ELEMENT_NOT_FOUND（`kind:"pivotTable"`，旧 5008 退役）
 
-> 其余错误码（5003 MERGE_CONFLICT / 5004 PROTECTED_SHEET / 5005 FORMULA_ERROR /
-> 5009 DATA_TYPE_MISMATCH / 5010 NOT_SUPPORTED）已在 `tests/contract_tests/excel/` +
-> 单测错误码全表矩阵中覆盖；真机触发需特定文档状态（受保护表/平台不支持等），可按需手工补验。
+> 其余权威码（3014 ALREADY_MERGED / 3003 DOCUMENT_READ_ONLY / 3017 FORMULA_ERROR /
+> 3018 DATA_TYPE_MISMATCH / 3016 API_NOT_SUPPORTED，对应退役的 5003/5004/5005/5009/5010）
+> 中，3017 已在 `range_e2e/test_set_formula.py` 建用例；真机触发需特定文档状态
+> （受保护表/平台不支持等）的按需手工补验；3018 挂账待 office-editor4ai#80 定义触发条件。
 
 ---
 
@@ -153,7 +156,7 @@ uv run python manual_tests/excel/test_excel_e2e.py --mode full
 ### D.1 Read/Foundation — `read_state_e2e/`（#29）
 
 目录：`manual_tests/excel/read_state_e2e/`（`test_workbook_info.py` 4 例 /
-`test_worksheet_info.py` 6 例含 5001 / `test_selected_range.py` 4 例需手动选区）。
+`test_worksheet_info.py` 6 例含 3010(kind:worksheet) / `test_selected_range.py` 4 例需手动选区）。
 
 ```bash
 uv run python manual_tests/excel/read_state_e2e/test_workbook_info.py --test all
@@ -164,12 +167,12 @@ uv run python manual_tests/excel/read_state_e2e/test_selected_range.py --test al
 - [ ] **D.1.1 workbookInfo**：多 sheet 列表完整；隐藏表 `isHidden=true`（openpyxl `sheet_state=hidden` 核对）；`activeSheet` 与 `isActive` 一致；`fileName` 为 `.xlsx`
 - [ ] **D.1.2 worksheetInfo**：默认活动表 / 指定 `worksheetName`；`usedRange` 4×3 与 openpyxl `max_row/max_column` 一致；空表 usedRange 极小；`tableCount/chartCount` 字段就绪
 - [x] **D.1.3 selectedRange**：单格 1×1；A1:C2 的 2D values（2 行 3 列，AppleScript 自动选区）；空选区 F10；A1:C1 混合类型——**真机实测 falsy `0`/`False`/`''` 已落 wire**：`[['Hello', 42, True], [0, False, '']]`
-- [x] **D.1.4 错误码 3000**：`get:worksheetInfo` 传 ghost 表名 → **3000 DOCUMENT_ERROR**（真机实测；旧 DoD 写的 5001 已过时，见下方 ⚠️）
+- [x] **D.1.4 错误码 3010**：`get:worksheetInfo` 传 ghost 表名 → **3010 ELEMENT_NOT_FOUND**（`details.kind:"worksheet"`，oasp#17 定案；当时真机实收 3000，Add-In 接线（office-editor4ai#80）前用例为 XFAIL）
 - [ ] **D.1.5 视觉**：底部三个标签页（Sheet1/Data/Report）；隐藏表夹具仅见 Visible 标签
 
 > ✅ **D.1 真机实测（2026-06-18）**：14/14 全过（workbook_info 4/4 · worksheet_info 6/6 · selectedRange 4/4），openpyxl 双重验证通过。
 >
-> ⚠️ **错误码现实修正（影响全 8 子问题 + B 节）**：Issue DoD / 旧注释里的 `5001–5010` Excel 错误码**实现里不存在**。Add-In 按 OASP 0.3.0 用 `3xxx`/`4xxx`（#26 已删 5xxx）。真机映射：5001→**3000** DOCUMENT_ERROR、5002→3009 RANGE_INVALID、5006→3010/3013、5007→3015、4002/4004 不变。**B 节与 `test_excel_e2e.py` foundation 冒烟里的 5xxx 断言需回头按真实码修订**。
+> ✅ **错误码已定案（oasp#17，issue #82 校准，影响全 8 子问题 + B 节）**：早期 `5001–5010` 草案块整体退役，权威映射见 `excel_e2e_dev_plan.md`「错误码」节（not-found→3010+`details.kind`、非法 address→3009、公式错→3017 等，规范层 MUST 不得降级 3000）。全部用例已收紧为权威码断言 + `xfail_reason`；Add-In 接线（office-editor4ai#80）前真机实收 3000 兜底 → XFAIL 计通过，接线后摘标转正。
 
 ### D.2 Range CRUD + 公式 — `range_e2e/`（#30）
 
@@ -192,18 +195,18 @@ uv run python manual_tests/excel/range_e2e/test_set_formula.py --test all
 - [x] **D.2.3 copy:range**：单行/数据块/单元格复制到空白区，目标=源且源不变
 - [x] **D.2.4 insert/delete:range**：`down`/`right` 让位、`up`/`left` 补位（Shift 自描述网格断言「谁落到哪」）
 - [x] **D.2.5 set:formula**：`=SUM(B2:C2)` / `=B3+C3` / `=B4*2` 公式串落盘（openpyxl `data_only=False` 读公式）
-- [x] **D.2.6 错误码 3000**：`get:range` / `set:formula` 传非法 address → **3000 DOCUMENT_ERROR**（真机实测；旧 DoD 5002 与「3009」均不成立，见下方 ⚠️）
+- [x] **D.2.6 错误码 3009/3017**：`get:range` / `set:formula` 传非法 address → **3009 RANGE_INVALID**；`set:formula` 畸形公式 → **3017 FORMULA_ERROR**（oasp#17 定案；当时真机实收 3000，接线前 XFAIL）
 - [ ] **D.2.7 视觉**：复制后目标区域可见数据；插入/删除后单元格位移正确
 
 > ✅ **D.2 真机实测（2026-06-18）**：21/21 全过（set_get 6/6 · clear 4/4 · copy 3/3 · shift 4/4 · formula 4/4），openpyxl 双重验证通过。
 >
-> ⚠️ **错误码再修正：非法 address → 3000，不是 3009**。`3009 RANGE_INVALID` 在 `error-codes.ts` 有定义但**全仓 0 个 handler 发射**（dead code）；`excel-handlers.ts` 的 `excelErrorCode()` 仅把 Zod 失败→`4000` VALIDATION_ERROR，其余 Office.js 运行期异常（含 `getRange` 拒绝畸形地址）→`3000` OFFICE_API_ERROR。即 D.1.4「5002→3009」推断需进一步修正为 **5002→3000**（与 5001→3000 同源）。仅 schema 违规才得 `4000`。
+> ✅ **「非法 address → 3009」已由 oasp#17 定案为规范层 MUST**。历史观测（`excelErrorCode()` 二值分类、3009 dead code、真机 3000）正是协议裁决要消解的实现缺口，接线归 office-editor4ai#80；接线前本清单相关用例以 XFAIL 运行。仅 schema 违规才得 `4000`。
 
 ### D.3 Format / 条件格式 / 合并 — `format_e2e/`（#31）
 
 目录：`manual_tests/excel/format_e2e/`（`test_set_range_format.py` 6 例 /
-`test_get_range_format.py` 4 例含 3000 / `test_conditional_format.py` 4 例含 3000 /
-`test_merge_cells.py` 4 例含 3000）。覆盖 #20 Format 切片 6 事件：`get/set:rangeFormat` ·
+`test_get_range_format.py` 4 例含 3009 / `test_conditional_format.py` 4 例含 3009 /
+`test_merge_cells.py` 4 例含 3009）。覆盖 #20 Format 切片 6 事件：`get/set:rangeFormat` ·
 `add/clear:conditionalFormat` · `merge/unmerge:cells`。夹具 `fmt.xlsx`（Data 数值网格 /
 Merge 标签行）。
 
@@ -218,7 +221,7 @@ uv run python manual_tests/excel/format_e2e/test_merge_cells.py --test all
 - [x] **D.3.2 get:rangeFormat**：RangeFormatInfo 字段完整（numberFormat 为 2D）；set→get 往返（bold + '0.00' 反映）；多格 2×3 维度
 - [x] **D.3.3 add/clear:conditionalFormat**：cellValue（>150 红底）/ colorScale 添加；clear 清除（协议成功，clear 后 openpyxl CF 计数=0）
 - [x] **D.3.4 merge/unmerge:cells**：合并保留左上 'M1' + B1/C1 清空；取消合并后 merged_ranges=[]（openpyxl 核对）
-- [x] **D.3.5 错误码 3000**：四类写/读传非法 address → **3000 DOCUMENT_ERROR**（3009 dead code）
+- [x] **D.3.5 错误码 3009**：四类写/读传非法 address → **3009 RANGE_INVALID**（oasp#17 定案；当时真机实收 3000，接线前 XFAIL）
 - [ ] **D.3.6 视觉**：A1:C1 红粗斜体表头；B 列条件格式高亮；Merge 表 A1:C1 合并居中
 
 > ✅ **D.3 真机实测（2026-06-18）**：18/18 全过（set 6/6 · get 4/4 · conditionalFormat 4/4 · merge 4/4），openpyxl 双重验证通过。
@@ -229,8 +232,8 @@ uv run python manual_tests/excel/format_e2e/test_merge_cells.py --test all
 
 ### D.4 Worksheet 管理 — `worksheet_e2e/`（#32）
 
-目录：`manual_tests/excel/worksheet_e2e/`（`test_add_worksheet.py` 5 例含 3000 /
-`test_rename_activate.py` 4 例含 2×3000 / `test_delete_worksheet.py` 3 例含 3000）。覆盖
+目录：`manual_tests/excel/worksheet_e2e/`（`test_add_worksheet.py` 5 例含 3004 /
+`test_rename_activate.py` 4 例含 2×3010 / `test_delete_worksheet.py` 3 例含 3010）。覆盖
 #21 Worksheet 切片 5 事件：`get:worksheets` · `add:worksheet` · `delete:worksheet` ·
 `rename:worksheet` · `activate:worksheet`。夹具 `book.xlsx`（4 张自描述表 Alpha[active]/Beta/Gamma/Delta）。
 
@@ -245,7 +248,7 @@ uv run python manual_tests/excel/worksheet_e2e/test_delete_worksheet.py --test a
 - [x] **D.4.3 rename:worksheet**：Beta → BetaRenamed（`{name}`）；旧名消失、隔离表 Delta 保留
 - [x] **D.4.4 activate:worksheet**：activate Gamma → `get:worksheets` 断言 Gamma isActive（openpyxl `wb.active` 佐证）
 - [x] **D.4.5 delete:worksheet**：删 Beta → `sheet_names` 不含 Beta、其余保留；`get:worksheets` 实时反映
-- [x] **D.4.6 错误码 3000**：add 重名 / rename·activate·delete 不存在的表 → **3000 DOCUMENT_ERROR**（5001 为旧 DoD 残留，dead code）
+- [x] **D.4.6 错误码 3004/3010**：add 重名 → **3004 OPERATION_FAILED**；rename·activate·delete 不存在的表 → **3010 ELEMENT_NOT_FOUND**（`kind:"worksheet"`，oasp#17 定案；当时真机实收 3000，接线前 XFAIL）
 
 > ✅ **D.4 真机实测（2026-06-18）**：12/12 全过（add 5/5 · rename_activate 4/4 · delete 3/3），openpyxl `sheet_names`/`wb.active` 双重验证通过。
 >
@@ -255,9 +258,9 @@ uv run python manual_tests/excel/worksheet_e2e/test_delete_worksheet.py --test a
 
 ### D.5 Table 操作 — `table_e2e/`（#33）
 
-目录：`manual_tests/excel/table_e2e/`（`test_insert_table.py` 4 例含 3000 /
-`test_get_table.py` 4 例含 3000 / `test_table_rows.py` 6 例含 3000+4000 /
-`test_sort_table.py` 4 例含 3000）。覆盖 #22 Table 切片 6 事件：`insert:table` ·
+目录：`manual_tests/excel/table_e2e/`（`test_insert_table.py` 4 例含 3009 /
+`test_get_table.py` 4 例含 3010 / `test_table_rows.py` 6 例含 3010+4004+4000 /
+`test_sort_table.py` 4 例含 3010）。覆盖 #22 Table 切片 6 事件：`insert:table` ·
 `get:table` · `get:tables` · `add:tableRow` · `delete:tableRow` · `sort:table`。夹具
 `tbl.xlsx`（Raw 纯数据 / Blank 空 / Sales[SalesTable A1:C5] / Roster[RosterTable A1:B4]，
 后两者由 openpyxl 预置 Excel 表，Office.js 识别带 GUID id）。
@@ -275,12 +278,12 @@ uv run python manual_tests/excel/table_e2e/test_sort_table.py --test all
 - [x] **D.5.4 add:tableRow**：末尾追加 `['R3row',40]`（→`{tableId}`）；openpyxl 读正文核对
 - [x] **D.5.5 delete:tableRow**：`rowIndex=0`（falsy 首行）· 中间行——返回 void，openpyxl 读「谁上移」核对
 - [x] **D.5.6 sort:table**：单列升/降（Age 唯一）· 多级 Score↑→Age↑（断 tie）——openpyxl 读 Name 列核对行序
-- [x] **D.5.7 错误码 3000/4000**：表不存在 / 索引越界 → **3000**；rowIndex 负数（Zod nonnegative）→ **4000**（非旧 DoD 的 4004/5006/5009）
+- [x] **D.5.7 错误码 3010/4004/4000**：表不存在 → **3010**（`kind:"table"`）；rowIndex 越界 → **4004**；rowIndex 负数（Zod nonnegative）→ **4000**（oasp#17 定案；当时真机前两类实收 3000，接线前 XFAIL）
 - [ ] **D.5.8 视觉**：Raw/Blank 新表带表格样式；Sales 排序后行序；Roster 增删行后表范围
 
 > ✅ **D.5 真机实测（2026-06-18）**：18/18 全过（insert 4/4 · get 4/4 · rows 6/6 · sort 4/4），openpyxl `table_names`/单元格读盘双重验证通过。
 >
-> ⚠️ **错误码现实**：表不存在→`3000`「请求的表格不存在」；rowIndex 越界（合法非负但 Office.js 拒绝）→`3000`；rowIndex 负数（Zod `nonnegative()` 失败）→`4000`「Too small: expected >=0」。旧 DoD 的 `5006/5009/4004` 均为 dead code。
+> ✅ **错误码已定案（oasp#17）**：表不存在→`3010`（`kind:"table"`）；rowIndex 越界→`4004`；Zod `nonnegative()` 失败→`4000`「Too small: expected >=0」。旧 `5006/5009` 退役为 `3010/3018`；接线（office-editor4ai#80）前真机实收 `3000` → XFAIL。
 >
 > ⚠️ **DTO-vs-wire（delete:tableRow 返回 void）**：真机响应 `data={}`，靠 openpyxl 读盘验证，不断言响应体。
 
@@ -288,9 +291,9 @@ uv run python manual_tests/excel/table_e2e/test_sort_table.py --test all
 
 ### D.6 Chart 操作 — `chart_e2e/`（#34）
 
-目录：`manual_tests/excel/chart_e2e/`（`test_insert_chart.py` 5 例含 3000 /
-`test_get_charts.py` 4 例含 3000 / `test_update_chart.py` 4 例含 3000 /
-`test_delete_chart.py` 3 例含 3000）。覆盖 #23 Chart 切片 4 事件：`insert:chart` ·
+目录：`manual_tests/excel/chart_e2e/`（`test_insert_chart.py` 5 例含 4002 /
+`test_get_charts.py` 4 例含 3010 / `test_update_chart.py` 4 例含 3010 /
+`test_delete_chart.py` 3 例含 3010）。覆盖 #23 Chart 切片 4 事件：`insert:chart` ·
 `get:charts` · `update:chart` · `delete:chart`。夹具 `chart.xlsx`（Data A1:C4 数值网格 /
 Blank 空表）。图表为视觉对象，以**协议层 get:charts 回读**为主验证（openpyxl chart_count best-effort）。
 
@@ -305,7 +308,7 @@ uv run python manual_tests/excel/chart_e2e/test_delete_chart.py --test all
 - [x] **D.6.2 get:charts**：回读 `[{name,chartType,title,top,left,width,height}]`；单图/多图/空表空列表
 - [x] **D.6.3 update:chart**：title · chartType（Column→Line）· position（回读核对生效）
 - [x] **D.6.4 delete:chart**：删其一保留其它 · 删唯一→空（返回 void）
-- [x] **D.6.5 错误码 3000**：非法 chartType（非空非法枚举）/ 图表不存在 / 不存在 worksheet → **3000 DOCUMENT_ERROR**（旧 DoD 4002/5007 dead code）
+- [x] **D.6.5 错误码 4002/3010**：非法 chartType（非空非法枚举）→ **4002 INVALID_PARAM**；图表不存在 → **3010**（`kind:"chart"`）；不存在 worksheet → **3010**（`kind:"worksheet"`）（oasp#17 定案；当时真机实收 3000，接线前 XFAIL）
 - [ ] **D.6.6 视觉**：Data 表各类型图表就位；update 后类型/标题/位置变化；双击为原生可编辑图表
 
 > ✅ **D.6 真机实测（2026-06-18）**：16/16 全过（insert 5/5 · get 4/4 · update 4/4 · delete 3/3），协议 get:charts 回读双重验证通过（openpyxl chart_count 旁证读到图表）。
@@ -318,8 +321,8 @@ uv run python manual_tests/excel/chart_e2e/test_delete_chart.py --test all
 
 ### D.7 PivotTable 操作 — `pivot_table_e2e/`（#35）
 
-目录：`manual_tests/excel/pivot_table_e2e/`（`test_insert_pivot_table.py` 4 例含 3000+4000 /
-`test_get_pivot_tables.py` 4 例含 3000 / `test_delete_pivot_table.py` 3 例含 3000）。覆盖
+目录：`manual_tests/excel/pivot_table_e2e/`（`test_insert_pivot_table.py` 4 例含 3009+4000 /
+`test_get_pivot_tables.py` 4 例含 3010 / `test_delete_pivot_table.py` 3 例含 3010）。覆盖
 #24 PivotTable 切片 3 事件：`insert:pivotTable` · `get:pivotTables` · `delete:pivotTable`。
 夹具 `pivot.xlsx`（Data A1:C5 数据源 Region/Product/Amount / Blank 空表）。仅用
 sourceAddress + targetAddress 创建**空透视表骨架**，不构造 rows/columns/values/filters。
@@ -333,7 +336,7 @@ uv run python manual_tests/excel/pivot_table_e2e/test_delete_pivot_table.py --te
 - [x] **D.7.1 insert:pivotTable**：指定 name 'SalesPivot' / 默认 name 'PivotTable' → `{name}`（source 与 target 须同一 worksheet，target 用源表空白落点 E1/E20）
 - [x] **D.7.2 get:pivotTables**：回读 `[{name, id}]`（每条仅 2 字段）；单/多透视表/空表空列表
 - [x] **D.7.3 delete:pivotTable**：flow 删其一保留其它 / 删唯一→空（返回 void，get:pivotTables 回读核对）
-- [x] **D.7.4 错误码 3000/4000**：非法 source / 透视表不存在 / 不存在 worksheet → **3000**；source 空串（Zod min(1)）→ **4000**（旧 DoD 5008/5010/5002 dead code）
+- [x] **D.7.4 错误码 3009/3010/4000**：非法 source → **3009**；透视表不存在 → **3010**（`kind:"pivotTable"`）；不存在 worksheet → **3010**（`kind:"worksheet"`）；source 空串（Zod min(1)）→ **4000**（oasp#17 定案；当时真机前三类实收 3000，接线前 XFAIL）
 - [ ] **D.7.5 视觉**：Data!E1 透视表骨架就位（空 PivotTable 占位框）
 
 > ✅ **D.7 真机实测（2026-06-18）**：11/11 全过（insert 4/4 · get 4/4 · delete 3/3），协议 get:pivotTables 回读双重验证通过。
@@ -358,7 +361,7 @@ uv run python manual_tests/excel/find_filter_e2e/test_auto_filter.py --test all
 - [x] **D.8.2 find:values 无命中**：matchEntireCell=true 'App'→`matches=[]`（整单元格匹配排除子串）
 - [x] **D.8.3 set:autoFilter**：单列 Region=East / 多列 Region=East & Product∈{Apple,Banana} → `{address}` + openpyxl `auto_filter_ref='A1:C5'`
 - [x] **D.8.4 clear:autoFilter**：先 set → clear → `auto_filter_ref=None`（返回 void）
-- [x] **D.8.5 错误码 4000/3000**：searchText/address 空串（Zod min(1)）→ **4000**；非法 address → **3000**（旧 DoD 4004/5001/5002 dead code）
+- [x] **D.8.5 错误码 4000/3009**：searchText/address 空串（Zod min(1)）→ **4000**；非法 address → **3009 RANGE_INVALID**（oasp#17 定案；当时真机实收 3000，接线前 XFAIL）
 
 > ✅ **D.8 真机实测（2026-06-18）**：10/10 全过（find 5/5 · filter 5/5），openpyxl `auto_filter_ref` 双重验证通过。
 >
@@ -380,10 +383,11 @@ uv run python manual_tests/excel/find_filter_e2e/test_auto_filter.py --test all
 | #36 | Find & Filter | 10 | ✅ 10/10 |
 | **合计** | **#18–#25 全 37 事件** | **120** | **✅ 120/120** |
 
-> 错误码统一现实（全片真机确认）：**资源不存在/索引越界/非法 address/非法枚举 → `3000`**；
-> **Zod 校验失败（空串 min(1) / 负数 nonnegative）→ `4000`**。旧 DoD 的 `5xxx`/`4004`/`3009`/`3010`
-> /`3013`/`3015` 等细分码**全部 dead code**（`excelErrorCode()` 只发 4000/3000）。详见
-> `excel_e2e_dev_plan.md` 错误码表。
+> 错误码（oasp#17 已定案，issue #82 校准）：**not-found → `3010`+`details.kind`、非法 address →
+> `3009`、非法枚举 → `4002`、越界 → `4004`、重名 → `3004`、公式错 → `3017`**（规范层 MUST，
+> 不得降级 `3000`）；**Zod 校验失败（空串 min(1) / 负数 nonnegative）→ `4000`** 不变。
+> 历史全片真机确认时 Add-In 只发 4000/3000 二值——该缺口由 office-editor4ai#80 接线消解，
+> 接线前错误码用例以 XFAIL 运行。详见 `excel_e2e_dev_plan.md`「错误码」节权威映射表。
 
 ---
 

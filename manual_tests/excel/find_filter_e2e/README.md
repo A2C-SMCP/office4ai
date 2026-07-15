@@ -18,7 +18,7 @@
 | 文件 | 用例数 | 覆盖 |
 |------|-------|------|
 | `test_find_values.py` | 5 | 默认子串 / matchCase / matchEntireCell 无命中 / 限定 address / 错误码 4000 |
-| `test_auto_filter.py` | 5 | set 单列 / set 多列 / clear（ref 清空）/ 错误码 4000 / 错误码 3000 |
+| `test_auto_filter.py` | 5 | set 单列 / set 多列 / clear（ref 清空）/ 错误码 4000 / 错误码 3009 |
 
 **合计 10 case。**
 
@@ -42,13 +42,15 @@ South    apple    400
 
 ## 错误码现实
 
-| 触发 | 错误码 |
+| 触发 | 错误码（oasp#17 权威） |
 |------|-------|
-| 非法 address | **`3000`** DOCUMENT_ERROR |
+| 非法 address | **`3009`** RANGE_INVALID |
+| 不存在的 worksheet | **`3010`** ELEMENT_NOT_FOUND（`details.kind:"worksheet"`） |
 | searchText / address 空串（Zod `min(1)` 失败） | **`4000`** VALIDATION_ERROR |
 
-> 旧 DoD 的 `4004`/`5001`/`5002` 均为 dead code：`excelErrorCode()` 仅把 Zod 失败映射 `4000`，
-> 其余 Office.js 运行期异常 → `3000`。
+> oasp#17 已定案上述权威码（规范层 MUST，不得降级 `3000`；旧 5xxx 块整体退役）。
+> Add-In 接线（office-editor4ai#80）前真机仍返 `3000` 兜底，e2e 用例以 **XFAIL** 运行，
+> 接线后摘 `xfail_reason` 转正。
 
 ## 运行
 
