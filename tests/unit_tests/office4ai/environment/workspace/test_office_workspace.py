@@ -107,6 +107,72 @@ class TestOfficeWorkspace:
         assert "requestId" in call_args[0][1]  # wrapped data should have requestId
         assert call_args[0][1]["documentUri"] == "file:///test.docx"
 
+    @pytest.mark.asyncio
+    async def test_execute_error_includes_details(
+        self, office_workspace: OfficeWorkspace, connected_session: None
+    ) -> None:
+        """execute() 摊平 wire error 时 details 必须存活（issue #82 / oasp#17）。
+
+        协议规定 details 供双端对齐断言（如 3010 ELEMENT_NOT_FOUND 用
+        details.kind 区分 worksheet/table/chart/pivotTable）。若 execute()
+        只保留 "code: message"，e2e 无法断言 kind，MCP 工具层的 AI 消费者
+        也拿不到可行动的定位信息。
+        """
+        office_workspace.sio_server = MagicMock()
+        office_workspace.sio_server.call = AsyncMock(
+            return_value={
+                "requestId": "test_req_002",
+                "success": False,
+                "error": {
+                    "code": "3010",
+                    "message": "Worksheet not found",
+                    "details": {"kind": "worksheet", "name": "GhostSheet"},
+                },
+                "timestamp": 1234567890000,
+            }
+        )
+
+        action = OfficeAction(
+            category="excel",
+            action_name="get:worksheetInfo",
+            params={"document_uri": "file:///test.docx", "worksheet_name": "GhostSheet"},
+        )
+
+        result = await office_workspace.execute(action)
+
+        assert result.success is False
+        assert "3010" in result.error
+        assert "Worksheet not found" in result.error
+        # details 必须存活于错误字符串（kind 与回带的标识都可见）
+        assert "worksheet" in result.error
+        assert "GhostSheet" in result.error
+
+    @pytest.mark.asyncio
+    async def test_execute_error_without_details(
+        self, office_workspace: OfficeWorkspace, connected_session: None
+    ) -> None:
+        """无 details 的 wire error 保持 "code: message" 形态，不追加噪音。"""
+        office_workspace.sio_server = MagicMock()
+        office_workspace.sio_server.call = AsyncMock(
+            return_value={
+                "requestId": "test_req_003",
+                "success": False,
+                "error": {"code": "3009", "message": "Invalid range address"},
+                "timestamp": 1234567890000,
+            }
+        )
+
+        action = OfficeAction(
+            category="excel",
+            action_name="get:range",
+            params={"document_uri": "file:///test.docx", "address": "ZZZZ99999999"},
+        )
+
+        result = await office_workspace.execute(action)
+
+        assert result.success is False
+        assert result.error == "3009: Invalid range address"
+
     # ========================================================================
     # Test get_document_status() method
     # ========================================================================
