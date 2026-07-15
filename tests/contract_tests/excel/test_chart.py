@@ -132,11 +132,11 @@ async def test_insert_chart_invalid_type(excel_roundtrip):
 
 
 async def test_update_chart_not_found(excel_roundtrip):
-    """图表不存在 → 5007 CHART_NOT_FOUND。"""
+    """图表不存在 → 3010 ELEMENT_NOT_FOUND(kind:chart)（oasp#17）。"""
 
     def factory(request: dict) -> dict:
-        return _err(request, "5007", "Chart 'Ghost' not found")
+        return _err(request, "3010", "Chart 'Ghost' not found")
 
     result, _ = await excel_roundtrip("update:chart", {"chart_name": "Ghost", "properties": {"title": "x"}}, factory)
     assert result.success is False
-    assert "5007" in (result.error or "")
+    assert "3010" in (result.error or "")

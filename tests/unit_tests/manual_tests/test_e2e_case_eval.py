@@ -31,6 +31,15 @@ class TestParseErrorDetails:
         assert parsed is not None
         assert parsed["name"] == "工作表1"
 
+    def test_message_containing_details_literal(self) -> None:
+        """对抗用例：wire message 自身含 '(details: {...})' 字面量 → 仍解析尾部真 details"""
+        wire = {
+            "code": "3010",
+            "message": 'weird (details: {"fake": 1}) in message',
+            "details": {"kind": "chart"},
+        }
+        assert parse_error_details(format_wire_error(wire)) == {"kind": "chart"}
+
 
 class TestEvaluateErrorCase:
     """evaluate_error_case() — 错误码路径严格判定"""

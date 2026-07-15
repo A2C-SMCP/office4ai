@@ -152,22 +152,22 @@ async def test_sort_table_nested_sort_fields(excel_roundtrip, excel_factory):
 
 
 async def test_get_table_not_found(excel_roundtrip):
-    """表格不存在 → 5006 TABLE_NOT_FOUND。"""
+    """表格不存在 → 3010 ELEMENT_NOT_FOUND(kind:table)（oasp#17）。"""
 
     def factory(request: dict) -> dict:
-        return _err(request, "5006", "Table 'Ghost' not found")
+        return _err(request, "3010", "Table 'Ghost' not found")
 
     result, _ = await excel_roundtrip("get:table", {"table_id": "Ghost"}, factory)
     assert result.success is False
-    assert "5006" in (result.error or "")
+    assert "3010" in (result.error or "")
 
 
 async def test_add_table_row_type_mismatch(excel_roundtrip):
-    """写入值类型不匹配 → 5009 DATA_TYPE_MISMATCH。"""
+    """写入值类型不匹配 → 3018 DATA_TYPE_MISMATCH（oasp#17 新增，apply-time ≠ 4003）。"""
 
     def factory(request: dict) -> dict:
-        return _err(request, "5009", "Data type mismatch in column 2")
+        return _err(request, "3018", "Data type mismatch in column 2")
 
     result, _ = await excel_roundtrip("add:tableRow", {"table_id": "Table1", "values": ["x", "not-a-number"]}, factory)
     assert result.success is False
-    assert "5009" in (result.error or "")
+    assert "3018" in (result.error or "")

@@ -116,11 +116,11 @@ async def test_activate_worksheet_success(excel_roundtrip, excel_factory):
 
 
 async def test_delete_worksheet_not_found(excel_roundtrip):
-    """删除不存在的工作表 → 5001 WORKSHEET_NOT_FOUND。"""
+    """删除不存在的工作表 → 3010 ELEMENT_NOT_FOUND(kind:worksheet)（oasp#17）。"""
 
     def factory(request: dict) -> dict:
-        return _err(request, "5001", "Worksheet 'Ghost' not found")
+        return _err(request, "3010", "Worksheet 'Ghost' not found")
 
     result, _ = await excel_roundtrip("delete:worksheet", {"worksheet_name": "Ghost"}, factory)
     assert result.success is False
-    assert "5001" in (result.error or "")
+    assert "3010" in (result.error or "")

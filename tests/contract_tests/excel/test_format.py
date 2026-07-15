@@ -141,11 +141,11 @@ async def test_unmerge_cells_success(excel_roundtrip, excel_factory):
 
 
 async def test_merge_cells_conflict(excel_roundtrip):
-    """合并与现有合并区域冲突 → 5003 MERGE_CONFLICT。"""
+    """合并与现有合并区域冲突 → 3014 ALREADY_MERGED（oasp#17）。"""
 
     def factory(request: dict) -> dict:
-        return _err(request, "5003", "Merge conflicts with existing merged region")
+        return _err(request, "3014", "Merge conflicts with existing merged region")
 
     result, _ = await excel_roundtrip("merge:cells", {"address": "A1:C1"}, factory)
     assert result.success is False
-    assert "5003" in (result.error or "")
+    assert "3014" in (result.error or "")

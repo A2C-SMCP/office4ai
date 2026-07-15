@@ -88,17 +88,21 @@ async def test_get_selected_range_success(excel_roundtrip, excel_factory):
 
 
 async def test_get_worksheet_info_worksheet_not_found(excel_roundtrip, excel_factory):
-    """worksheet 不存在 → AddIn 返回 5001，execute() 透传为 'code: message' 字符串。"""
+    """worksheet 不存在 → AddIn 返回 3010 + details.kind（oasp#17），execute() 摊平后 details 存活。"""
 
     def factory(request: dict) -> dict:
         return {
             "requestId": request["requestId"],
             "success": False,
-            "error": excel_factory.error("5001", "Worksheet 'Ghost' not found"),
+            "error": excel_factory.error(
+                "3010", "Worksheet 'Ghost' not found", details={"kind": "worksheet", "name": "Ghost"}
+            ),
             "timestamp": int(asyncio.get_event_loop().time() * 1000),
         }
 
     result, _ = await excel_roundtrip("get:worksheetInfo", {"worksheet_name": "Ghost"}, factory)
 
     assert result.success is False
-    assert "5001" in (result.error or "")
+    assert "3010" in (result.error or "")
+    # details 经 format_wire_error 存活于错误字符串（issue #82），供 e2e/AI 消费者定位对象类型
+    assert "worksheet" in (result.error or "")
