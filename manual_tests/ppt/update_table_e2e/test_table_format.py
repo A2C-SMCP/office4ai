@@ -63,8 +63,8 @@ async def _workflow_cell_format(workspace: Any, doc_uri: str) -> bool:
                 "rowIndex": 0,
                 "columnIndex": 0,
                 "backgroundColor": "#FF0000",
-                "fontSize": 16,
-                "bold": True,
+                # OASP 0.4.0: 字体收敛到嵌套 font（PptFont）
+                "font": {"size": 16, "bold": True},
             }
         ],
     )
@@ -84,7 +84,7 @@ async def _workflow_row_format(workspace: Any, doc_uri: str) -> bool:
         workspace,
         doc_uri,
         element_id,
-        row_formats=[{"rowIndex": 0, "backgroundColor": "#00FF00", "fontSize": 14}],
+        row_formats=[{"rowIndex": 0, "backgroundColor": "#00FF00", "font": {"size": 14}}],
     )
     if not success:
         print(f"   ❌ 行格式更新失败: {error}")
@@ -102,7 +102,7 @@ async def _workflow_column_format(workspace: Any, doc_uri: str) -> bool:
         workspace,
         doc_uri,
         element_id,
-        column_formats=[{"columnIndex": 0, "backgroundColor": "#0000FF", "fontSize": 12}],
+        column_formats=[{"columnIndex": 0, "backgroundColor": "#0000FF", "font": {"size": 12}}],
     )
     if not success:
         print(f"   ❌ 列格式更新失败: {error}")
@@ -181,7 +181,7 @@ def main() -> None:
     test_indices = list(range(1, len(TEST_CASES) + 1)) if args.test == "all" else [int(args.test)]
     try:
         success = asyncio.run(
-            run_tests(test_indices, auto_open=not args.no_auto_open, cleanup_on_success=not args.always_cleanup or True)
+            run_tests(test_indices, auto_open=not args.no_auto_open, cleanup_on_success=not args.always_cleanup)
         )
         sys.exit(0 if success else 1)
     except KeyboardInterrupt:

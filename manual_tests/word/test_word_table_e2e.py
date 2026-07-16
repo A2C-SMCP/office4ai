@@ -174,17 +174,17 @@ def verify_table_state_after_pipeline(reader: DocumentReader) -> tuple[bool, lis
 # ============================================================================
 
 
+# OASP 0.4.0: Word 单元格字体收敛到 font（WordFont，fontColor→color）；对齐/背景色仍在顶层
 HEADER_FORMAT: dict[str, Any] = {
     "horizontalAlignment": "Centered",
     "verticalAlignment": "Center",
     "backgroundColor": "#1F4E79",
-    "fontColor": "#FFFFFF",
-    "bold": True,
+    "font": {"color": "#FFFFFF", "bold": True},
 }
 
 LABEL_FORMAT: dict[str, Any] = {
     "backgroundColor": "#EEEEEE",
-    "bold": True,
+    "font": {"bold": True},
 }
 
 
@@ -438,7 +438,7 @@ async def run_omitted_table_id_smoke(workspace: Any, document_uri: str) -> tuple
             {
                 "rowIndex": 0,
                 "columnIndex": 0,
-                "format": {"bold": True},
+                "format": {"font": {"bold": True}},  # OASP 0.4.0: 嵌套 font（WordFont）
             }
         ],
     )

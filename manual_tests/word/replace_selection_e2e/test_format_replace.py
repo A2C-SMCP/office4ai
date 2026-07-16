@@ -139,15 +139,16 @@ TEST_CASES: list[TestCase] = [
 ]
 
 # 每个测试用例的替换内容（含 format）
+# OASP 0.4.0: 字体属性收敛到嵌套 font（WordFont）；扁平 bold/fontSize/fontName/color/underline 须写 format.font.*
 _REPLACE_CONTENTS: list[dict[str, Any]] = [
     # Test 1: bold
-    {"text": "Bold Text", "format": {"bold": True}},
+    {"text": "Bold Text", "format": {"font": {"bold": True}}},
     # Test 2: italic
-    {"text": "Italic Text", "format": {"italic": True}},
-    # Test 3: fontName + fontSize + bold
-    {"text": "Formatted Text", "format": {"fontName": "Arial", "fontSize": 16, "bold": True}},
+    {"text": "Italic Text", "format": {"font": {"italic": True}}},
+    # Test 3: name + size + bold
+    {"text": "Formatted Text", "format": {"font": {"name": "Arial", "size": 16, "bold": True}}},
     # Test 4: color + underline + bold
-    {"text": "Colorful Underlined Text", "format": {"color": "#FF0000", "underline": "Single", "bold": True}},
+    {"text": "Colorful Underlined Text", "format": {"font": {"color": "#FF0000", "underline": "Single", "bold": True}}},
 ]
 
 
@@ -330,7 +331,7 @@ def main() -> None:
             run_tests(
                 test_indices=test_indices,
                 auto_open=not args.no_auto_open,
-                cleanup_on_success=not args.always_cleanup or True,
+                cleanup_on_success=not args.always_cleanup,
             )
         )
         sys.exit(0 if success else 1)

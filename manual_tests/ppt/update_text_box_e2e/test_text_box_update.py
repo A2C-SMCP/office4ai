@@ -93,7 +93,8 @@ async def _workflow_update_font_style(workspace: Any, doc_uri: str) -> bool:
     if not element_id:
         return False
 
-    success, _, error = await ppt_update_text_box(workspace, doc_uri, element_id, {"bold": True, "italic": True})
+    # OASP 0.4.0: 字体收敛到嵌套 font（PptFont）
+    success, _, error = await ppt_update_text_box(workspace, doc_uri, element_id, {"font": {"bold": True, "italic": True}})
     if not success:
         print(f"   ❌ 更新字体样式失败: {error}")
         return False
@@ -115,7 +116,8 @@ async def _workflow_update_font_size(workspace: Any, doc_uri: str) -> bool:
     if not element_id:
         return False
 
-    success, _, error = await ppt_update_text_box(workspace, doc_uri, element_id, {"fontSize": 28, "fontName": "Arial"})
+    # OASP 0.4.0: 字体收敛到嵌套 font（PptFont）
+    success, _, error = await ppt_update_text_box(workspace, doc_uri, element_id, {"font": {"size": 28, "name": "Arial"}})
     if not success:
         print(f"   ❌ 更新字号失败: {error}")
         return False
@@ -137,8 +139,9 @@ async def _workflow_update_color(workspace: Any, doc_uri: str) -> bool:
     if not element_id:
         return False
 
+    # OASP 0.4.0: 字体色收敛到嵌套 font（PptFont）；fillColor（文本框填充）仍在顶层
     success, _, error = await ppt_update_text_box(
-        workspace, doc_uri, element_id, {"color": "#FF0000", "fillColor": "#FFFF00"}
+        workspace, doc_uri, element_id, {"font": {"color": "#FF0000"}, "fillColor": "#FFFF00"}
     )
     if not success:
         print(f"   ❌ 更新颜色失败: {error}")
@@ -232,7 +235,7 @@ def main() -> None:
     test_indices = list(range(1, len(TEST_CASES) + 1)) if args.test == "all" else [int(args.test)]
     try:
         success = asyncio.run(
-            run_tests(test_indices, auto_open=not args.no_auto_open, cleanup_on_success=not args.always_cleanup or True)
+            run_tests(test_indices, auto_open=not args.no_auto_open, cleanup_on_success=not args.always_cleanup)
         )
         sys.exit(0 if success else 1)
     except KeyboardInterrupt:

@@ -229,18 +229,39 @@ class DocumentReader:
         """
         from docx.shared import Pt
 
+        # 注意: Word 常把一段文本（尤其含 CJK）拆成多个 run（如 '组' + '合格式文本'），
+        # 故不能在单个 run 里找全串。改为在段落全文里定位 text，再取覆盖该区间的所有 run 逐个校验格式。
         for paragraph in self.doc.paragraphs:
+            full = paragraph.text
+            idx = full.find(text)
+            if idx < 0:
+                continue
+            end = idx + len(text)
+            pos = 0
+            covered = []
             for run in paragraph.runs:
-                if text in run.text:
-                    if bold is not None and run.bold != bold:
-                        continue
-                    if italic is not None and run.italic != italic:
-                        continue
-                    if font_name is not None and run.font.name != font_name:
-                        continue
-                    if font_size is not None and run.font.size != Pt(font_size):
-                        continue
-                    return True
+                r_start, r_end = pos, pos + len(run.text)
+                if r_start < end and r_end > idx:  # run 与匹配区间有重叠
+                    covered.append(run)
+                pos = r_end
+            if not covered:
+                continue
+            ok = True
+            for run in covered:
+                if bold is not None and run.bold != bold:
+                    ok = False
+                    break
+                if italic is not None and run.italic != italic:
+                    ok = False
+                    break
+                if font_name is not None and run.font.name != font_name:
+                    ok = False
+                    break
+                if font_size is not None and run.font.size != Pt(font_size):
+                    ok = False
+                    break
+            if ok:
+                return True
         return False
 
 

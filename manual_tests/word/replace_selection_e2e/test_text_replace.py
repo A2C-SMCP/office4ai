@@ -322,7 +322,7 @@ def main() -> None:
             run_tests(
                 test_indices=test_indices,
                 auto_open=not args.no_auto_open,
-                cleanup_on_success=not args.always_cleanup or True,
+                cleanup_on_success=not args.always_cleanup,
             )
         )
         sys.exit(0 if success else 1)

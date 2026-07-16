@@ -32,6 +32,33 @@ argument-hint: <可选：phase(registration|functional|all) 或 场景名(word-t
 
 如未满足对应阶段前置，**停止该阶段**并引导用户准备。
 
+### Phase 2 执行模型：auto_open 语义（关键，勿误判「不可执行」）
+
+**多数 `manual_tests` 用例 agent 可非交互直接跑——PPT 也是。** 常见误判：见脚本含 `input()` 就断定「需人工、跑不了」。**错。** 机制：
+
+```python
+if auto_open:                 # auto_open 默认 True
+    await asyncio.sleep(2.0)   # 自动续跑，非交互
+else:
+    input("按回车继续...")       # 仅 --no-auto-open 才走这里
+```
+
+- 「按回车继续…」类 `input()` 是**节奏暂停**，受 `auto_open`（默认 True）门控 → 默认 **sleep 2s、不 input**。故 `--test all` 默认可由 agent 非交互执行（Word/PPT/Excel 同理）。
+- agent 的 Bash **无 TTY**：只有**真正 GUI 动作型** `input()`（非 pacing）才会 `EOF when reading a line`——那是「需真人操作」的信号，不是脚本 bug。
+- **判定可跑与否，看 `input()` 是否 pacing（auto_open 门控），不是看有没有 `input()`。** 反例教训：曾据「PPT 23 文件含 input()」错误结论「PPT 不可自动跑」，实际 PPT full 绝大多数自动通过（update_text_box 4/4、update_table 3/3…）。
+
+### Manual-Only 用例协议（真人 GUI 动作，agent 不可代跑）
+
+少数用例的 `input()` 是**真·GUI 动作屏障**——需真人在 Office 里手动操作，且 **agent 即便有 TTY 也做不了**（无法操作 Word/PPT GUI）。已知清单：
+- **word `get_selection`**（手动选中文本）、**cursor-placement**（如 insert_text location「光标位插入」）、**visual color-confirm**（颜色需肉眼确认）。
+- 判据：提示语是「完成操作后按 Enter」（要求先做 GUI 动作）且**不受 auto_open 门控**。
+
+**处理协议（强制）**——对 Manual-Only 用例，agent **必须**：
+1. **单列**：报告设「🙋 Manual-Only 待人工验收」区块，不混入自动结果；
+2. **记录确切命令 + 需人工做的动作**（每条给可复制的 `uv run python …` + 一句「你要做什么」）；
+3. **交给用户在自己 TTY 终端跑**（Claude Code 里用 `!<cmd>` 前缀，或本地 shell），跑完贴回结果由 agent 汇总；
+4. **不得**把未验的 Manual-Only 标 pass/fail——一律标「⏳ 未验（待人工）」；**更不得**因 agent 跑不了就当通过。
+
 ### 执行协议
 
 **逐平台推进**（word / ppt / excel），每个平台一次连接同时覆盖两阶段：
@@ -78,6 +105,15 @@ argument-hint: <可选：phase(registration|functional|all) 或 场景名(word-t
 | health | 事件接线 | ✅ |
 | smoke | ... | N/N ✅ |
 | full | ...（可选） | ✅ |
+
+### 🙋 Manual-Only 待人工验收（agent 不可代跑，请在你的终端跑后贴回）
+| 用例 | 需你做的动作 | 执行命令 |
+|---|---|---|
+| word get_selection | 提示时在 Word 中选中一段文本 | `uv run python manual_tests/word/get_selection_e2e/test_selection.py --test all` |
+| word insert_text 光标位插入 | 提示时把光标放到目标位置 | `uv run python manual_tests/word/insert_text_e2e/test_location_insert.py --test 3` |
+| （其余 color-confirm 等按需补） | 肉眼确认颜色/样式 | … |
+
+> 这些用例标「⏳ 未验（待人工）」，用户跑完贴回结果后才更新为 ✅/❌。
 
 ### 失败项详情
 #### [项目名称]
