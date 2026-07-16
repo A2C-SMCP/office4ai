@@ -119,44 +119,48 @@ def validate_combined_insert(data: dict[str, Any], reader: DocumentReader) -> bo
 # 测试数据
 # ==============================================================================
 
+# OASP 0.4.0: 字体属性收敛到嵌套 font（WordFont）；扁平 bold/fontSize/fontName/color 已删，
+# 须写 format.font.{bold/size/name/color/...}，否则被 DTO extra=ignore 静默丢弃。
 _FORMAT_CONFIGS: list[dict[str, Any]] = [
     # Test 1: bold
-    {"text": "这是粗体文本", "format": {"bold": True}},
+    {"text": "这是粗体文本", "format": {"font": {"bold": True}}},
     # Test 2: italic
-    {"text": "这是斜体文本", "format": {"italic": True}},
+    {"text": "这是斜体文本", "format": {"font": {"italic": True}}},
     # Test 3: fontSize (multiple inserts)
     {
         "multi": [
-            {"text": "小号文本 (12pt)\n", "format": {"fontSize": 12}},
-            {"text": "中号文本 (16pt)\n", "format": {"fontSize": 16}},
-            {"text": "大号文本 (24pt)\n", "format": {"fontSize": 24}},
+            {"text": "小号文本 (12pt)\n", "format": {"font": {"size": 12}}},
+            {"text": "中号文本 (16pt)\n", "format": {"font": {"size": 16}}},
+            {"text": "大号文本 (24pt)\n", "format": {"font": {"size": 24}}},
         ]
     },
     # Test 4: fontName (multiple inserts)
     {
         "multi": [
-            {"text": "Arial 字体\n", "format": {"fontName": "Arial"}},
-            {"text": "Times New Roman 字体\n", "format": {"fontName": "Times New Roman"}},
-            {"text": "Courier New 字体\n", "format": {"fontName": "Courier New"}},
+            {"text": "Arial 字体\n", "format": {"font": {"name": "Arial"}}},
+            {"text": "Times New Roman 字体\n", "format": {"font": {"name": "Times New Roman"}}},
+            {"text": "Courier New 字体\n", "format": {"font": {"name": "Courier New"}}},
         ]
     },
     # Test 5: color (multiple inserts)
     {
         "multi": [
-            {"text": "红色文本\n", "format": {"color": "#FF0000"}},
-            {"text": "绿色文本\n", "format": {"color": "#00FF00"}},
-            {"text": "蓝色文本\n", "format": {"color": "#0000FF"}},
+            {"text": "红色文本\n", "format": {"font": {"color": "#FF0000"}}},
+            {"text": "绿色文本\n", "format": {"font": {"color": "#00FF00"}}},
+            {"text": "蓝色文本\n", "format": {"font": {"color": "#0000FF"}}},
         ]
     },
     # Test 6: combined
     {
         "text": "组合格式文本",
         "format": {
-            "bold": True,
-            "italic": True,
-            "fontSize": 18,
-            "fontName": "Arial",
-            "color": "#FF0000",
+            "font": {
+                "bold": True,
+                "italic": True,
+                "size": 18,
+                "name": "Arial",
+                "color": "#FF0000",
+            },
         },
     },
 ]
@@ -391,7 +395,7 @@ def main() -> None:
             run_tests(
                 test_indices=test_indices,
                 auto_open=not args.no_auto_open,
-                cleanup_on_success=not args.always_cleanup or True,
+                cleanup_on_success=not args.always_cleanup,
             )
         )
         sys.exit(0 if success else 1)

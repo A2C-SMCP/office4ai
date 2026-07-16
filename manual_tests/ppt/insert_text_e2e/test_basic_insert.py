@@ -105,7 +105,7 @@ TEST_CASES: list[PptTestCase] = [
 _INSERT_PARAMS: list[tuple[str, dict[str, Any] | None]] = [
     ("Hello PPT", None),
     ("定位文本", {"left": 100, "top": 100, "width": 300, "height": 50}),
-    ("字体测试", {"fontSize": 24, "fontName": "Arial"}),
+    ("字体测试", {"font": {"size": 24, "name": "Arial"}}),  # OASP 0.4.0: 嵌套 font（PptFont）
     ("第二页文本", {"slideIndex": 1}),
 ]
 
@@ -193,7 +193,7 @@ def main() -> None:
     test_indices = list(range(1, len(TEST_CASES) + 1)) if args.test == "all" else [int(args.test)]
     try:
         success = asyncio.run(
-            run_tests(test_indices, auto_open=not args.no_auto_open, cleanup_on_success=not args.always_cleanup or True)
+            run_tests(test_indices, auto_open=not args.no_auto_open, cleanup_on_success=not args.always_cleanup)
         )
         sys.exit(0 if success else 1)
     except KeyboardInterrupt:

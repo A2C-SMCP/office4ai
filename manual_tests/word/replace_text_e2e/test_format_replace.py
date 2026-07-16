@@ -143,21 +143,21 @@ _FORMAT_REPLACE_CONFIGS: list[dict[str, Any]] = [
     {
         "searchText": "important",
         "replaceText": "important",
-        "format": {"bold": True},
+        "format": {"font": {"bold": True}},  # OASP 0.4.0: 嵌套 font（WordFont）
         "options": {"replaceAll": True},
     },
     # Test 2: italic format (same text)
     {
         "searchText": "emphasis",
         "replaceText": "emphasis",
-        "format": {"italic": True},
+        "format": {"font": {"italic": True}},
         "options": {"replaceAll": True},
     },
     # Test 3: color format (same text)
     {
         "searchText": "alert",
         "replaceText": "alert",
-        "format": {"color": "#FF0000"},
+        "format": {"font": {"color": "#FF0000"}},
         "options": {"replaceAll": True},
     },
     # Test 4: styleName format (same text)
@@ -172,10 +172,12 @@ _FORMAT_REPLACE_CONFIGS: list[dict[str, Any]] = [
         "searchText": "Critical",
         "replaceText": "Critical",
         "format": {
-            "bold": True,
-            "italic": True,
-            "color": "#FF0000",
-            "fontSize": 16,
+            "font": {
+                "bold": True,
+                "italic": True,
+                "color": "#FF0000",
+                "size": 16,
+            },
         },
         "options": {"replaceAll": True},
     },
@@ -183,7 +185,7 @@ _FORMAT_REPLACE_CONFIGS: list[dict[str, Any]] = [
     {
         "searchText": "alert",
         "replaceText": "WARNING",
-        "format": {"bold": True, "color": "#FF0000"},
+        "format": {"font": {"bold": True, "color": "#FF0000"}},
         "options": {"replaceAll": True},
     },
 ]
