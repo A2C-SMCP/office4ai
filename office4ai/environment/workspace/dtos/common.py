@@ -385,7 +385,7 @@ class ErrorCode:
     DATA_TYPE_MISMATCH = (
         "3018"  # OASP oasp#17 (Unreleased): apply-time value/type incompatible (≠ wire param type 4003)
     )
-    OFFICE_API_ERROR = "3999"
+    # OFFICE_API_ERROR("3999") 已退役 (oasp#20)：非注册码且点名实现技术，语义并入 3000 DOCUMENT_ERROR，勿再引入
 
     # Validation errors (4xxx)
     VALIDATION_ERROR = "4000"

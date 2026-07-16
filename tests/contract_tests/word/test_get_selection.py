@@ -244,7 +244,7 @@ async def test_get_selection_error(
             "success": False,
             "error": {
                 "code": "3000",
-                "message": "OFFICE_API_ERROR - Failed to get selection",
+                "message": "DOCUMENT_ERROR - Failed to get selection",
             },
             "timestamp": int(asyncio.get_event_loop().time() * 1000),
         }

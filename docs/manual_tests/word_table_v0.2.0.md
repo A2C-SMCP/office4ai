@@ -119,15 +119,19 @@ uv run python manual_tests/word/test_word_table_e2e.py --mode tables
 `--mode tables` 在 OOXML 验证之后会自动跑 B.2 + B.3，输出形如：
 
 ```
-🚨 错误码场景（B.2 + B.3 自动触发）...
+🚨 B.2 错误码 + B.3 混合列宽 merge 回归（自动触发）...
   --- B.2 不存在的 tableId → 3010 ELEMENT_NOT_FOUND ---
     ✅ B.2 错误码包含 3010: ...
-  --- B.3 合并冲突 → 3014 ALREADY_MERGED ---
-    ✅ B.3 错误码包含 3014: ...
+  --- B.3 混合列宽表相交合并 → 成功（editor4ai#85 回归） ---
+    ✅ B.3 混合列宽表 merge 成功（.merge() 路径可用）
 ```
 
 - [ ] **B.2** 不存在的 `tableId` → 3010 ELEMENT_NOT_FOUND（Issue #8 项 8）
-- [ ] **B.3** 已合并区域上再次合并 → 3014 ALREADY_MERGED（Issue #8 项 9）
+- [ ] **B.3** 混合列宽表（首行已合并）上相交合并 → **成功**（office-editor4ai#85 修复回归：
+  mergeCells 不再访问 `table.columns`；修复前此场景抛裸 3000）。
+  注意：B.3 成功后表格前两行会合并为更大区域，目测 A.1~A.5 请以 B.3 之前的状态为准
+  （或忽略前两行形变）。3014 真·合并冲突场景需真实冲突报文，中文本地化报文待采样
+  （editor4ai#85 残留），暂无自动化负例。
 
 ### B.1 缺省 tableId + 光标不在表格内 → 3013 (Issue #8 项 7)
 
