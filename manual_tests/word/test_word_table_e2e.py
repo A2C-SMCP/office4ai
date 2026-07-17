@@ -15,8 +15,8 @@ Word Table Operations End-to-End Test (OASP /word Draft, v0.2.0)
 需要人工验证（保留在 docs/manual_tests/word_table_v0.2.0.md 清单中）：
 - ❌ 3013 NO_TABLE_AT_CURSOR（需手工把光标移到普通段落）
 - ❌ 3010 ELEMENT_NOT_FOUND（需手工用超界 tableId）
-- ❌ 3014 ALREADY_MERGED（需真·合并冲突；混合列宽相交合并经 office-editor4ai#85 修复后
-  已转为 B.3 正向自动场景，中文本地化冲突报文待采样）
+- ❌ 3014 ALREADY_MERGED（相交合并真·冲突已自动化为 B.3a，中文冲突报文已采样；
+  实收 3014 依赖 Add-In 接线 editor4ai#88，接线前 B.3a 暂容忍 3000）
 - ❌ AI 业务闭环（合同表头场景，需对接真实 LLM 工具调用）
 
 运行方式：
@@ -325,8 +325,9 @@ async def run_error_code_scenarios(workspace: Any, document_uri: str) -> tuple[b
 
     自动场景：
     - B.2: 不存在的 tableId → 3010 ELEMENT_NOT_FOUND
-    - B.3: 混合列宽表相交合并 → 成功（office-editor4ai#85 修复回归：
-      mergeCells 不再访问 table.columns，混合列宽表上合并直接成功）
+    - B.3a: 相交合并（真·冲突）→ 失败，应 3014（Add-In 接线前暂容忍 3000，editor4ai#88）
+    - B.3b: 混合列宽表不相交合并 → 成功（office-editor4ai#85 修复回归：
+      mergeCells 不再访问 table.columns，合法矩形合并直接成功）
 
     手工场景（仍需在 Word 中点击表格外的段落）：
     - B.1: 缺省 tableId + 光标不在表格内 → 3013 NO_TABLE_AT_CURSOR
@@ -352,11 +353,13 @@ async def run_error_code_scenarios(workspace: Any, document_uri: str) -> tuple[b
         log.append(f"  ⚠️  B.2 失败但错误码不是 3010: {err}")
         all_ok = False
 
-    # B.3: 混合列宽表相交合并 → 成功（office-editor4ai#85 回归）
-    # 当前状态：首行 (0,0)-(0,3) 已合并 → 表格列宽混合；再发一个相交合并 (0,0)-(1,2)。
-    # editor4ai#85 修复前：mergeCells 在执行前访问 table.columns（混合列宽表上 Word.js 禁止），
-    # 抛裸 3000；修复后不再触碰列集合，startCell.merge(endCell) 应直接成功。
-    log.append("--- B.3 混合列宽表相交合并 → 成功（editor4ai#85 回归） ---")
+    # B.3a: 真·合并冲突（相交合并）→ 失败
+    # 当前状态：首行 (0,0)-(0,3) 已合并；再发相交合并 (0,0)-(1,2)，Word 语义拒绝
+    # （真机实收中文报文「此方法或属性无效，因为 尚未选定要合并的多个单元格」，
+    #   officeCode=GeneralException, errorLocation=TableCell.merge）。
+    # OASP 归宿是 3014 ALREADY_MERGED；Add-In 中文/信号接线由 editor4ai#88 跟踪，
+    # 接线后删除对 3000 的容忍、收紧为仅 3014。
+    log.append("--- B.3a 相交合并（真·冲突）→ 失败：3014（暂容忍 3000，editor4ai#88） ---")
     ok, _, err = await merge_cells(
         workspace,
         document_uri,
@@ -368,9 +371,35 @@ async def run_error_code_scenarios(workspace: Any, document_uri: str) -> tuple[b
         wait_seconds=1,
     )
     if ok:
-        log.append("  ✅ B.3 混合列宽表 merge 成功（.merge() 路径可用）")
+        log.append("  ❌ B.3a 预期失败但成功了")
+        all_ok = False
+    elif err and "3014" in err:
+        log.append(f"  ✅ B.3a 错误码 3014: {err[:80]}")
+    elif err and "3000" in err:
+        log.append(f"  ⚠️  B.3a 实收 3000（已知缺口 editor4ai#88 接线后应 3014）: {err[:80]}")
     else:
-        log.append(f"  ❌ B.3 预期成功但失败: {err}")
+        log.append(f"  ❌ B.3a 失败但错误码非 3014/3000: {err}")
+        all_ok = False
+
+    # B.3b: 混合列宽表不相交合并 → 成功（editor4ai#85 回归）
+    # 第 2 行 (1,0)-(1,2)，与已合并首行无交集。editor4ai#85 修复前：mergeCells 在执行前
+    # 访问 table.columns（混合列宽表上 Word.js 禁止）抛裸 3000；修复后不再触碰列集合，
+    # startCell.merge(endCell) 对合法矩形应直接成功。
+    log.append("--- B.3b 混合列宽表不相交合并 (1,0)-(1,2) → 成功（editor4ai#85 回归） ---")
+    ok, _, err = await merge_cells(
+        workspace,
+        document_uri,
+        table_id="table-0",
+        start_row_index=1,
+        start_column_index=0,
+        end_row_index=1,
+        end_column_index=2,
+        wait_seconds=1,
+    )
+    if ok:
+        log.append("  ✅ B.3b 混合列宽表 merge 成功（.merge() 路径可用）")
+    else:
+        log.append(f"  ❌ B.3b 预期成功但失败: {err}")
         all_ok = False
 
     log.append("--- B.1 (3013 NO_TABLE_AT_CURSOR) 需在 Word 中手工触发 ---")
@@ -536,8 +565,8 @@ async def test_word_table_e2e() -> bool:
             for msg in messages:
                 print(f"  {msg}")
 
-            # Phase 4: B.2 错误码 + B.3 混合列宽 merge 回归（B.1 因依赖光标位置另起 --mode b1）
-            print("\n🚨 B.2 错误码 + B.3 混合列宽 merge 回归（自动触发）...")
+            # Phase 4: B.2 错误码 + B.3a 冲突负例 + B.3b merge 回归（B.1 因依赖光标位置另起 --mode b1）
+            print("\n🚨 B.2 错误码 + B.3a 冲突负例 + B.3b 混合列宽 merge 回归（自动触发）...")
             err_ok, err_log = await run_error_code_scenarios(workspace, fixture.document_uri)
             for line in err_log:
                 print(f"  {line}")
@@ -545,7 +574,7 @@ async def test_word_table_e2e() -> bool:
             all_ok = verified and err_ok
             print("\n" + "=" * 70)
             if all_ok:
-                print("✅ E2E 表格流水线 + B.2 错误码 + B.3 merge 回归全部通过；请打开下面文件目测视觉效果：")
+                print("✅ E2E 表格流水线 + B.2 错误码 + B.3a/B.3b merge 场景全部通过；请打开下面文件目测视觉效果：")
             else:
                 print("❌ 部分检查未通过；保留工作副本供调试：")
             print(f"   {fixture.working_path}")
@@ -574,7 +603,7 @@ def main() -> None:
         default="health",
         help=(
             "health: 快速校验 4 个事件已注册；"
-            "tables: 完整端到端表格流水线 (含 B.2 错误码 + B.3 混合列宽 merge 回归，需要 Add-In + Word)；"
+            "tables: 完整端到端表格流水线 (含 B.2 错误码 + B.3a 冲突负例 + B.3b merge 回归，需要 Add-In + Word)；"
             "b1: B.1 单独场景 (光标不在表格内 → 3013，需先在 Word 中点击表格外段落)"
         ),
     )

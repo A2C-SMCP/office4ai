@@ -116,22 +116,28 @@ uv run python manual_tests/word/test_word_table_e2e.py --mode tables
 
 ### B.2 + B.3：已自动化 (随 `--mode tables` 一起跑)
 
-`--mode tables` 在 OOXML 验证之后会自动跑 B.2 + B.3，输出形如：
+`--mode tables` 在 OOXML 验证之后会自动跑 B.2 + B.3a + B.3b，输出形如：
 
 ```
-🚨 B.2 错误码 + B.3 混合列宽 merge 回归（自动触发）...
+🚨 B.2 错误码 + B.3a 冲突负例 + B.3b 混合列宽 merge 回归（自动触发）...
   --- B.2 不存在的 tableId → 3010 ELEMENT_NOT_FOUND ---
     ✅ B.2 错误码包含 3010: ...
-  --- B.3 混合列宽表相交合并 → 成功（editor4ai#85 回归） ---
-    ✅ B.3 混合列宽表 merge 成功（.merge() 路径可用）
+  --- B.3a 相交合并（真·冲突）→ 失败：3014（暂容忍 3000，editor4ai#88） ---
+    ⚠️  B.3a 实收 3000（已知缺口 editor4ai#88 接线后应 3014）: ...
+  --- B.3b 混合列宽表不相交合并 (1,0)-(1,2) → 成功（editor4ai#85 回归） ---
+    ✅ B.3b 混合列宽表 merge 成功（.merge() 路径可用）
 ```
 
 - [ ] **B.2** 不存在的 `tableId` → 3010 ELEMENT_NOT_FOUND（Issue #8 项 8）
-- [ ] **B.3** 混合列宽表（首行已合并）上相交合并 → **成功**（office-editor4ai#85 修复回归：
-  mergeCells 不再访问 `table.columns`；修复前此场景抛裸 3000）。
-  注意：B.3 成功后表格前两行会合并为更大区域，目测 A.1~A.5 请以 B.3 之前的状态为准
-  （或忽略前两行形变）。3014 真·合并冲突场景需真实冲突报文，中文本地化报文待采样
-  （editor4ai#85 残留），暂无自动化负例。
+- [ ] **B.3a** 相交合并（首行已合并 + 再发 (0,0)-(1,2)）→ **失败**＝真·合并冲突
+  （Word 拒绝：中文报文「尚未选定要合并的多个单元格」，officeCode=GeneralException）。
+  OASP 归宿 3014 ALREADY_MERGED；Add-In 接线由 editor4ai#88 跟踪，接线前暂容忍 3000
+  （⚠️ 输出计通过），接线后收紧为仅 3014（Issue #8 项 9 的现实版）
+- [ ] **B.3b** 混合列宽表（首行已合并）上**不相交**合并 (1,0)-(1,2) → **成功**
+  （office-editor4ai#85 修复回归：mergeCells 不再访问 `table.columns`；修复前此场景
+  在执行前即抛裸 3000「混合的单元格宽度」）。
+  注意：B.3b 成功后第 2 行前三格会合并（「甲方 ACME Corp」并入一格），目测 A.1~A.5
+  请以 B.3b 之前的状态为准（或忽略第 2 行形变）。
 
 ### B.1 缺省 tableId + 光标不在表格内 → 3013 (Issue #8 项 7)
 
