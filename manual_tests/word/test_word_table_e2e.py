@@ -336,26 +336,32 @@ async def run_error_code_scenarios(workspace: Any, document_uri: str) -> tuple[b
     all_ok = True
 
     def note(line: str) -> None:
-        """实时打印场景标题/判定，避免负例的 ❌ 原始日志先于解释出现（读者会误判为真失败）。"""
+        """实时打印场景标题/判定，让负例的原始日志始终紧跟其场景说明出现。
+
+        符号约定（✅/❌/⚠️ 表达用例判定，不表达正负向）：
+        ✅ 用例通过（负例按预期失败且错误码正确也是 ✅）；❌ 用例未通过；
+        ⚠️ 部分通过、有异常但可容忍（须显式挂账跟踪 issue）。
+        """
         print(f"  {line}")
         log.append(line)
 
     # B.2: tableId not found → 3010
-    note("--- B.2 不存在的 tableId → 3010 ELEMENT_NOT_FOUND（负例，下方 ❌ 为预期） ---")
+    note("--- B.2 不存在的 tableId → 3010 ELEMENT_NOT_FOUND（负例） ---")
     ok, _, err = await update_table_cell(
         workspace,
         document_uri,
         table_id="table-99",
         cells=[{"rowIndex": 0, "columnIndex": 0, "text": "x"}],
         wait_seconds=1,
+        expect_failure=True,
     )
     if ok:
         note("  ❌ B.2 预期失败但成功了")
         all_ok = False
     elif err and "3010" in err:
-        note(f"  ✅ B.2 错误码包含 3010: {err[:80]}")
+        note(f"  ✅ B.2 负例通过，错误码 3010: {err[:80]}")
     else:
-        note(f"  ⚠️  B.2 失败但错误码不是 3010: {err}")
+        note(f"  ❌ B.2 失败但错误码不是 3010: {err}")
         all_ok = False
 
     # B.3a: 真·合并冲突（相交合并）→ 失败
@@ -364,7 +370,7 @@ async def run_error_code_scenarios(workspace: Any, document_uri: str) -> tuple[b
     #   officeCode=GeneralException, errorLocation=TableCell.merge）。
     # OASP 归宿是 3014 ALREADY_MERGED；Add-In 中文/信号接线由 editor4ai#88 跟踪，
     # 接线后删除对 3000 的容忍、收紧为仅 3014。
-    note("--- B.3a 相交合并（真·冲突，负例，下方 ❌ 为预期）→ 3014（暂容忍 3000，editor4ai#88） ---")
+    note("--- B.3a 相交合并（真·冲突，负例）→ 3014（暂容忍 3000，editor4ai#88） ---")
     ok, _, err = await merge_cells(
         workspace,
         document_uri,
@@ -374,12 +380,13 @@ async def run_error_code_scenarios(workspace: Any, document_uri: str) -> tuple[b
         end_row_index=1,
         end_column_index=2,
         wait_seconds=1,
+        expect_failure=True,
     )
     if ok:
         note("  ❌ B.3a 预期失败但成功了")
         all_ok = False
     elif err and "3014" in err:
-        note(f"  ✅ B.3a 错误码 3014: {err[:80]}")
+        note(f"  ✅ B.3a 负例通过，错误码 3014: {err[:80]}")
     elif err and "3000" in err:
         note(f"  ⚠️  B.3a 实收 3000（已知缺口 editor4ai#88 接线后应 3014）: {err[:80]}")
     else:
@@ -439,14 +446,15 @@ async def test_b1_cursor_outside_table() -> bool:
                 end_row_index=0,
                 end_column_index=2,
                 wait_seconds=1,
+                expect_failure=True,
             )
             if ok:
                 print("\n❌ B.1 预期失败但成功了 — 光标可能仍在表格内")
                 return False
             if err and "3013" in err:
-                print(f"\n✅ B.1 错误码包含 3013: {err[:120]}")
+                print(f"\n✅ B.1 负例通过，错误码 3013: {err[:120]}")
                 return True
-            print(f"\n⚠️  B.1 失败但错误码不是 3013: {err}")
+            print(f"\n❌ B.1 失败但错误码不是 3013: {err}")
             return False
     except Exception as exc:
         print(f"\n❌ B.1 测试中断: {exc}")

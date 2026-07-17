@@ -372,8 +372,13 @@ async def merge_cells(
     end_column_index: int,
     table_id: str | None = None,
     wait_seconds: int = 2,
+    expect_failure: bool = False,
 ) -> tuple[bool, dict | None, str | None]:
-    """合并表格单元格 (OASP /word Draft, v0.2.0)。"""
+    """合并表格单元格 (OASP /word Draft, v0.2.0)。
+
+    expect_failure=True 表示负例语境：原始操作失败为预期，实时日志不打 ❌
+    （✅/❌/⚠️ 保留给用例判定层，不表达正负向——由场景判定行裁决）。
+    """
     print(
         f"\n📝 合并单元格: tableId={table_id} "
         f"({start_row_index},{start_column_index}) → ({end_row_index},{end_column_index})"
@@ -394,7 +399,12 @@ async def merge_cells(
         params=params,
     )
     result = await workspace.execute(action)
-    if result.success:
+    if expect_failure:
+        if result.success:
+            print(f"📋 合并成功（负例预期外，由场景判定裁决）: {result.data}")
+        else:
+            print(f"📋 合并失败（负例预期内）: {result.error}")
+    elif result.success:
         print(f"✅ 合并成功: {result.data}")
     else:
         print(f"❌ 合并失败: {result.error}")
@@ -410,8 +420,12 @@ async def update_table_cell(
     cells: list[dict],
     table_id: str | None = None,
     wait_seconds: int = 2,
+    expect_failure: bool = False,
 ) -> tuple[bool, dict | None, str | None]:
-    """更新表格单元格的文本和/或格式 (OASP /word Draft, v0.2.0)。"""
+    """更新表格单元格的文本和/或格式 (OASP /word Draft, v0.2.0)。
+
+    expect_failure 语义同 merge_cells：负例语境下原始操作日志不打 ❌。
+    """
     print(f"\n📝 更新单元格: tableId={table_id}, cells={len(cells)}")
     params: dict[str, Any] = {"document_uri": document_uri, "cells": cells}
     if table_id is not None:
@@ -423,7 +437,12 @@ async def update_table_cell(
         params=params,
     )
     result = await workspace.execute(action)
-    if result.success:
+    if expect_failure:
+        if result.success:
+            print(f"📋 更新单元格成功（负例预期外，由场景判定裁决）: {result.data}")
+        else:
+            print(f"📋 更新单元格失败（负例预期内）: {result.error}")
+    elif result.success:
         print(f"✅ 更新单元格成功: {result.data}")
     else:
         print(f"❌ 更新单元格失败: {result.error}")
