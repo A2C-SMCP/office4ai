@@ -23,11 +23,16 @@ class OfficeAction(BaseModel):
         category: Office 应用类型 (word/excel/ppt)
         action_name: 操作名称 (如 "insert:text")
         params: 操作参数
+        server_timeout_ms: 可选的 Server 侧 ack 超时覆写（毫秒）。为 None 时 workspace 用
+            全局默认 ``request_timeout``。长脚本类事件（``{ns}:run:script``，issue #87）据此
+            派生 ``(timeoutMs ?? 60000) + GRACE`` 覆写，避免全局 30s 先于脚本超时挂断、
+            在 Server 层重演幽灵副作用。语义：脚本时长执法者是 Add-In，Server 超时仅失联兜底。
     """
 
     category: Literal["word", "excel", "ppt"]
     action_name: str
     params: dict[str, Any]
+    server_timeout_ms: int | None = None
 
 
 class OfficeObs(BaseModel):

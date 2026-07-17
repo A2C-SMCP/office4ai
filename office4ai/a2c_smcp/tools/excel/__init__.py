@@ -30,6 +30,7 @@ from office4ai.a2c_smcp.tools.excel.insert_range import ExcelInsertRangeTool
 from office4ai.a2c_smcp.tools.excel.insert_table import ExcelInsertTableTool
 from office4ai.a2c_smcp.tools.excel.merge_cells import ExcelMergeCellsTool
 from office4ai.a2c_smcp.tools.excel.rename_worksheet import ExcelRenameWorksheetTool
+from office4ai.a2c_smcp.tools.excel.run_script import ExcelRunScriptTool
 from office4ai.a2c_smcp.tools.excel.set_auto_filter import ExcelSetAutoFilterTool
 from office4ai.a2c_smcp.tools.excel.set_formula import ExcelSetFormulaTool
 from office4ai.a2c_smcp.tools.excel.set_range import ExcelSetRangeTool
@@ -84,4 +85,6 @@ __all__ = [
     "ExcelFindValuesTool",
     "ExcelSetAutoFilterTool",
     "ExcelClearAutoFilterTool",
+    # Online script escape hatch (OASP {ns}:run:script, issue #87)
+    "ExcelRunScriptTool",
 ]

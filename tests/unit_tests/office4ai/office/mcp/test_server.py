@@ -38,12 +38,11 @@ class TestOfficeMCPServer:
             config = MCPServerConfig()
             server = OfficeMCPServer(config)
 
-            # 25 Word (21 + 4 OASP v0.2.0 table tools) + 24 PPT (21 + 3 OASP v0.2.0 chart tools)
-            # + 37 Excel (OASP 0.3.0 Draft: #18 read slice 3 + #19 Range CRUD/公式 7
-            #   + #20 Format/条件格式/合并 6 + #21 Worksheet 管理 5 + #22 Table 操作 6
-            #   + #23 Chart 操作 4 + #24 PivotTable 操作 3 + #25 Find&Filter 操作 3) = 86
-            # + 1 authoring standalone (milestone #4 · S1: office_run_script) = 87
-            assert len(server.tools) == 87
+            # 26 Word (21 + 4 OASP v0.2.0 table tools + 1 run:script) + 25 PPT (21 + 3 chart + 1 run:script)
+            # + 38 Excel (37 OASP 0.3.0 Draft #18–25 + 1 run:script) = 89
+            # + 1 authoring standalone (milestone #4 · S1: office_run_script) = 90
+            # +3 online run:script escape hatches (OASP {ns}:run:script, issue #87)
+            assert len(server.tools) == 90
 
             expected_tools = [
                 # Word Get tools
@@ -77,6 +76,8 @@ class TestOfficeMCPServer:
                 "word_delete_comment",
                 "word_reply_comment",
                 "word_resolve_comment",
+                # Word online script escape hatch (OASP word:run:script, issue #87)
+                "word_run_script",
                 # PPT Content retrieval tools
                 "ppt_get_current_slide_elements",
                 "ppt_get_slide_elements",
@@ -107,6 +108,8 @@ class TestOfficeMCPServer:
                 "ppt_delete_slide",
                 "ppt_move_slide",
                 "ppt_goto_slide",
+                # PPT online script escape hatch (OASP ppt:run:script, issue #87)
+                "ppt_run_script",
                 # Excel state-awareness read tools (OASP /excel Draft 0.3.0, #18 Foundation)
                 "excel_get_workbook_info",
                 "excel_get_worksheet_info",
@@ -152,6 +155,8 @@ class TestOfficeMCPServer:
                 "excel_find_values",
                 "excel_set_auto_filter",
                 "excel_clear_auto_filter",
+                # Excel online script escape hatch (OASP excel:run:script, issue #87)
+                "excel_run_script",
                 # authoring standalone tool (milestone #4 · S1)
                 "office_run_script",
             ]
@@ -253,6 +258,35 @@ class TestW4aToolConvergence:
         assert server._is_tool_available(tools["word_insert_text"]) is False  # 无连接
         clean_cm.register_client("s3", "c3", "file:///a/x.docx", "/word")
         assert server._is_tool_available(tools["word_insert_text"]) is True
+
+
+class TestListToolsAnnotations:
+    """守护 list_tools() 把 tool.annotations 接线进 Tool()（issue #87）。
+
+    单测已覆盖工具本身的 annotations 属性；本类走**真实 list_tools handler**，防止
+    server.py 里 `annotations=tool.annotations` 那行被误删而 CI 静默全绿
+    （destructiveHint/openWorldHint 是「向上层披露风险面」的语义载体）。
+    """
+
+    @staticmethod
+    async def _list_tools(server: OfficeMCPServer):
+        import mcp.types as types
+
+        handler = server.server.request_handlers[types.ListToolsRequest]
+        result = await handler(types.ListToolsRequest(method="tools/list"))
+        return {t.name: t for t in result.root.tools}
+
+    @pytest.mark.asyncio
+    async def test_run_script_tool_carries_annotations_on_wire(self, server: OfficeMCPServer, clean_cm) -> None:
+        clean_cm.register_client("sa1", "ca1", "file:///a/x.docx", "/word")
+        by_name = await self._list_tools(server)
+
+        wr = by_name["word_run_script"]
+        assert wr.annotations is not None
+        assert wr.annotations.destructiveHint is True
+        assert wr.annotations.openWorldHint is True
+        # 对照：typed 工具无注解，证明接线是逐工具透传而非全局硬编码
+        assert by_name["word_insert_text"].annotations is None
 
 
 class TestW4bDynamicWindows:

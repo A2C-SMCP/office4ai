@@ -113,6 +113,9 @@ async def workspace(contract_test_server: AsyncServer) -> OfficeWorkspace:
     workspace._last_activity = None
     workspace._content_cache = {}
     workspace._structure_cache = {}
+    # W4b-2 (#65): update_last_activity() reads this on every successful tool.execute();
+    # tool-level contract tests (e.g. run:script) go through BaseTool.execute → 需此属性存在。
+    workspace._activity_callback = None
 
     yield workspace
 

@@ -17,6 +17,7 @@ from office4ai.a2c_smcp.tools.ppt.insert_table import PptInsertTableTool
 from office4ai.a2c_smcp.tools.ppt.insert_text import PptInsertTextTool
 from office4ai.a2c_smcp.tools.ppt.move_slide import PptMoveSlideTool
 from office4ai.a2c_smcp.tools.ppt.reorder_element import PptReorderElementTool
+from office4ai.a2c_smcp.tools.ppt.run_script import PptRunScriptTool
 from office4ai.a2c_smcp.tools.ppt.update_chart import PptUpdateChartTool
 from office4ai.a2c_smcp.tools.ppt.update_element import PptUpdateElementTool
 from office4ai.a2c_smcp.tools.ppt.update_image import PptUpdateImageTool
@@ -56,4 +57,6 @@ __all__ = [
     "PptDeleteSlideTool",
     "PptMoveSlideTool",
     "PptGotoSlideTool",
+    # Online script escape hatch (OASP {ns}:run:script, issue #87)
+    "PptRunScriptTool",
 ]

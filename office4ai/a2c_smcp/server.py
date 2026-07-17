@@ -17,7 +17,14 @@ from mcp.server.lowlevel.helper_types import ReadResourceContents
 from mcp.server.sse import SseServerTransport
 from mcp.server.stdio import stdio_server
 from mcp.server.streamable_http_manager import StreamableHTTPSessionManager
-from mcp.types import Resource, ResourcesCapability, ServerCapabilities, SubscribeRequest, Tool, UnsubscribeRequest
+from mcp.types import (
+    Resource,
+    ResourcesCapability,
+    ServerCapabilities,
+    SubscribeRequest,
+    Tool,
+    UnsubscribeRequest,
+)
 from pydantic import AnyUrl
 from starlette.applications import Starlette
 from starlette.requests import Request
@@ -168,6 +175,7 @@ class BaseMCPServer(ABC):
                     name=tool.name,
                     description=tool.description,
                     inputSchema=tool.input_schema,
+                    annotations=tool.annotations,
                 )
                 for tool in self._visible_tools()
             ]

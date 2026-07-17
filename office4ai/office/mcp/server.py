@@ -95,6 +95,7 @@ class OfficeMCPServer(BaseMCPServer):
             WordReplaceTextTool,
             WordReplyCommentTool,
             WordResolveCommentTool,
+            WordRunScriptTool,
             WordSelectTextTool,
             WordUpdateTableCellTool,
             WordUpdateTableFormatTool,
@@ -133,6 +134,8 @@ class OfficeMCPServer(BaseMCPServer):
             WordDeleteCommentTool(self.workspace),
             WordReplyCommentTool(self.workspace),
             WordResolveCommentTool(self.workspace),
+            # Online script escape hatch (OASP word:run:script, issue #87)
+            WordRunScriptTool(self.workspace),
         ]
 
         for tool in word_tools:
@@ -158,6 +161,7 @@ class OfficeMCPServer(BaseMCPServer):
             PptInsertTextTool,
             PptMoveSlideTool,
             PptReorderElementTool,
+            PptRunScriptTool,
             PptUpdateChartTool,
             PptUpdateElementTool,
             PptUpdateImageTool,
@@ -198,6 +202,8 @@ class OfficeMCPServer(BaseMCPServer):
             PptDeleteSlideTool(self.workspace),
             PptMoveSlideTool(self.workspace),
             PptGotoSlideTool(self.workspace),
+            # Online script escape hatch (OASP ppt:run:script, issue #87)
+            PptRunScriptTool(self.workspace),
         ]
 
         for tool in ppt_tools:
@@ -236,6 +242,7 @@ class OfficeMCPServer(BaseMCPServer):
             ExcelInsertTableTool,
             ExcelMergeCellsTool,
             ExcelRenameWorksheetTool,
+            ExcelRunScriptTool,
             ExcelSetAutoFilterTool,
             ExcelSetFormulaTool,
             ExcelSetRangeFormatTool,
@@ -291,6 +298,8 @@ class OfficeMCPServer(BaseMCPServer):
             ExcelFindValuesTool(self.workspace),
             ExcelSetAutoFilterTool(self.workspace),
             ExcelClearAutoFilterTool(self.workspace),
+            # Online script escape hatch (OASP excel:run:script, issue #87)
+            ExcelRunScriptTool(self.workspace),
         ]
 
         for tool in excel_tools:

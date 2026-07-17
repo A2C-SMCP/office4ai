@@ -10,6 +10,7 @@ from abc import ABC, abstractmethod
 from typing import Any, Literal, TypeVar, cast
 
 from loguru import logger
+from mcp.types import ToolAnnotations
 from pydantic import BaseModel
 
 from office4ai.environment.workspace.base import OfficeAction, OfficeObs
@@ -88,6 +89,29 @@ class BaseTool(ABC):
         """
         return self.category != "authoring"
 
+    # ── MCP 工具注解 | MCP tool annotations（issue #87）──
+
+    @property
+    def annotations(self) -> ToolAnnotations | None:
+        """MCP ``ToolAnnotations``（行为提示，供 client/Agent UI 决策）。默认无。
+
+        逃生舱类工具（``{ns}_run_script``）override 返回
+        ``ToolAnnotations(destructiveHint=True, openWorldHint=True)``——脚本非沙箱、
+        可写文档且可 ``fetch`` 任意第三方，须向上层显式披露风险面。
+        """
+        return None
+
+    # ── Server 侧 ack 超时派生 | Server-side ack timeout derivation（issue #87）──
+
+    def derive_server_timeout_ms(self, params: dict[str, Any]) -> int | None:
+        """据业务参数派生 Server 侧 ack 超时覆写（毫秒）。默认 None → 用全局默认。
+
+        ``params`` 是**已剔除 document_uri** 的业务参数（snake_case）。长脚本类工具
+        （``{ns}_run_script``）override 本钩子据 ``timeout_ms`` 派生
+        ``(timeout_ms ?? 60000) + GRACE``，使 Server ack 略长于 Add-In 自身脚本超时。
+        """
+        return None
+
     # ── 通用执行逻辑 | Generic execution logic ──
 
     async def execute(self, arguments: dict[str, Any]) -> dict[str, Any]:
@@ -127,6 +151,7 @@ class BaseTool(ABC):
             category=cast(Literal["word", "ppt", "excel"], self.category),
             action_name=self.event_name,
             params={"document_uri": document_uri, **params},
+            server_timeout_ms=self.derive_server_timeout_ms(params),
         )
 
         # 4. 执行

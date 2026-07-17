@@ -21,6 +21,7 @@ from office4ai.a2c_smcp.tools.word.replace_selection import WordReplaceSelection
 from office4ai.a2c_smcp.tools.word.replace_text import WordReplaceTextTool
 from office4ai.a2c_smcp.tools.word.reply_comment import WordReplyCommentTool
 from office4ai.a2c_smcp.tools.word.resolve_comment import WordResolveCommentTool
+from office4ai.a2c_smcp.tools.word.run_script import WordRunScriptTool
 from office4ai.a2c_smcp.tools.word.select_text import WordSelectTextTool
 from office4ai.a2c_smcp.tools.word.update_table_cell import WordUpdateTableCellTool
 from office4ai.a2c_smcp.tools.word.update_table_format import WordUpdateTableFormatTool
@@ -40,6 +41,8 @@ __all__ = [
     "WordReplaceTextTool",
     "WordReplaceSelectionTool",
     "WordSelectTextTool",
+    # Online script escape hatch (OASP {ns}:run:script, issue #87)
+    "WordRunScriptTool",
     # Multimedia tools
     "WordInsertImageTool",
     "WordInsertTableTool",

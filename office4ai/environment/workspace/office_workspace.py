@@ -341,8 +341,12 @@ class OfficeWorkspace(BaseWorkspace):
         event = f"{action.category}:{action.action_name}"
 
         # 发送 Socket.IO 事件
+        #   长脚本类事件（{ns}:run:script）在工具层派生 action.server_timeout_ms 覆写 ack 超时；
+        #   其余事件为 None → emit_to_document 用全局默认 request_timeout。
         try:
-            response = await self.emit_to_document(document_uri, event, action.params)
+            response = await self.emit_to_document(
+                document_uri, event, action.params, timeout_ms=action.server_timeout_ms
+            )
 
             # 从响应中提取业务数据（response["data"]）
             # 响应格式: {requestId, success, data, timestamp, duration}
@@ -383,7 +387,13 @@ class OfficeWorkspace(BaseWorkspace):
             return DocumentStatus.CONNECTED
         return DocumentStatus.DISCONNECTED
 
-    async def emit_to_document(self, document_uri: str, event: str, data: dict[str, Any]) -> dict[str, Any]:
+    async def emit_to_document(
+        self,
+        document_uri: str,
+        event: str,
+        data: dict[str, Any],
+        timeout_ms: int | None = None,
+    ) -> dict[str, Any]:
         """
         向指定文档发送 Socket.IO 事件
 
@@ -391,6 +401,9 @@ class OfficeWorkspace(BaseWorkspace):
             document_uri: 目标文档 URI
             event: 事件名称
             data: 事件数据
+            timeout_ms: 可选的 ack 超时覆写（毫秒）。为 None 时用全局默认
+                ``config.request_timeout``。长脚本类事件（``{ns}:run:script``，issue #87）
+                据 ``(timeoutMs ?? 60000) + GRACE`` 覆写，避免全局 30s 先于脚本超时挂断。
 
         Returns:
             dict: Add-In 返回的响应数据
@@ -436,13 +449,16 @@ class OfficeWorkspace(BaseWorkspace):
             raise ValueError(f"Request wrapping failed: {e}") from e
 
         # 使用 Socket.IO 的 .call() 方法（自动处理 callback）
+        #   ack 超时优先取 per-call 覆写（长脚本类事件），否则用全局默认 request_timeout。
+        #   下限保护 1s，避免亚秒覆写被整除成 0（python-socketio 的 0 语义为无限等待）。
+        timeout_seconds = max(1, (timeout_ms if timeout_ms is not None else self.config.request_timeout) // 1000)
         try:
             response: dict[str, Any] = await self.sio_server.call(
                 event,
                 wrapped_data,
                 to=socket_id,
                 namespace=client_info.namespace,
-                timeout=self.config.request_timeout // 1000,
+                timeout=timeout_seconds,
             )
             logger.info(f"Received response from {socket_id}")
             return response

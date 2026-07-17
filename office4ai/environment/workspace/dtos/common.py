@@ -395,5 +395,105 @@ class ErrorCode:
     PARAM_OUT_OF_RANGE = "4004"
 
 
+# ---------------------------------------------------------------------------
+# Script execution envelope —— {excel,word,ppt}:run:script（OASP oasp#18，0.5.0 起，issue #87）
+#
+# 「封装层逃生舱」的宿主无关执行信封：承载「一段 JS 源码 + 其产出」。宿主差异（Excel /
+# Word / PowerPoint 各自的对象模型）全部落在脚本内部注入的 ``context`` 上、不进入信封，
+# 故三命名空间**共享同一结构**（与 WordFont ≠ PptFont 的有意零映射方向相反、各自适用）。
+# 因此这两个结构与 BaseRequest / BaseResponse 同属**传输层**，定义在 common.py。
+# 规范：oasp data-structures §脚本执行 / conventions §run-script。
+# ---------------------------------------------------------------------------
+
+
+class ScriptResult(SocketIOBaseModel):
+    """``{ns}:run:script`` 成功响应的 ``data`` 结构（三命名空间共享）。
+
+    office4ai 为**纯中转**：成功响应的 ``data`` 原样透传给上层 Agent，本结构提供 wire
+    契约的**类型锚点**（与 TS ``ScriptResult`` 严格同步），供消费者/测试按需解析校验，
+    而非在中转链上强制反序列化（沿用写操作「最小/透传返回」约定）。
+
+    注意：与 ``office4ai.office.authoring.runtime.ScriptResult``（离线沙箱 5 键契约）
+    同名但**不同结构**——本结构是**在线** Office.js 执行的 wire 响应，那个是**离线**
+    Python 沙箱的落盘结果，两通道独立、勿混淆（见 ``office_run_script`` vs
+    ``{ns}_run_script`` 工具描述互指）。
+
+    大小限制（UTF-8 字节，超限由 Add-In 侧执法）：``result`` ≤ 512KB、``logs`` ≤ 100KB
+    （超限置 ``logs_truncated=True``）——见 conventions §run-script。
+    """
+
+    result: Any = Field(
+        default=None,
+        alias="result",
+        description="脚本 return 的值，已序列化为纯 JSON；无返回值时为 null",
+    )
+    logs: list[str] = Field(
+        default_factory=list,
+        alias="logs",
+        description="脚本内 console.* 的输出，按调用顺序",
+    )
+    duration_ms: int = Field(
+        ...,
+        alias="durationMs",
+        description="脚本执行耗时（毫秒）",
+    )
+    logs_truncated: bool = Field(
+        default=False,
+        alias="logsTruncated",
+        description="日志是否因超限（logs ≤ 100KB）被截断",
+    )
+
+
+class RunScriptRequest(BaseRequest):
+    """``{ns}:run:script`` 请求信封基类（宿主无关，抽象——不自注册）。
+
+    三命名空间的请求结构**完全相同**，仅 ``event_name`` 不同。子类
+    （``ExcelRunScriptRequest`` / ``WordRunScriptRequest`` / ``PptRunScriptRequest``）
+    各声明自己的 ``event_name`` ClassVar，经 ``BaseRequest.__init_subclass__`` 自动注册。
+
+    ``args`` / ``result`` 不做深度校验（纯 JSON 由调用链结构性保证）。
+    ``timeout_ms`` 是**脚本执行**超时（由 Add-In 执法，超时回 ``1002``）；Server 侧的
+    ack 超时另按 ``server_timeout = (timeoutMs ?? 60000) + GRACE`` 派生（见工具层），
+    使 Add-In 成为超时执法者、Server 超时仅失联兜底。
+    """
+
+    # 抽象基类：event_name 留空 → 不自注册（仅三个具体子类注册）
+    event_name: ClassVar[str] = ""
+
+    script: str = Field(
+        ...,
+        alias="script",
+        description="待执行 JS 源码；以 async 函数体语义执行，可用 return 返回结果",
+    )
+    args: dict[str, Any] | None = Field(
+        default=None,
+        alias="args",
+        description="注入脚本的参数，脚本内经全局 `args` 读取；必须可 JSON 序列化",
+    )
+    timeout_ms: int | None = Field(
+        default=None,
+        alias="timeoutMs",
+        description="脚本执行超时（毫秒）；缺省取「脚本执行」档默认值（60000），无硬上限",
+    )
+
+
+class ExcelRunScriptRequest(RunScriptRequest):
+    """``excel:run:script`` —— Excel Add-In 注入 ``Excel.RequestContext`` 执行 JS。"""
+
+    event_name: ClassVar[str] = "excel:run:script"
+
+
+class WordRunScriptRequest(RunScriptRequest):
+    """``word:run:script`` —— Word Add-In 注入 ``Word.RequestContext`` 执行 JS。"""
+
+    event_name: ClassVar[str] = "word:run:script"
+
+
+class PptRunScriptRequest(RunScriptRequest):
+    """``ppt:run:script`` —— PowerPoint Add-In 注入 ``PowerPoint.RequestContext`` 执行 JS。"""
+
+    event_name: ClassVar[str] = "ppt:run:script"
+
+
 # Forward reference resolution
 BaseResponse.model_rebuild()

@@ -69,7 +69,12 @@ class OfficeRunScriptTool(BaseTool):
             "network is disabled, disallowed imports are rejected, and runaway scripts are killed on timeout. "
             "Returns {ok, path, summary, logs, stderr}: ok=whether the script ran successfully, "
             "path=the working directory (list it to find products), summary=manifest of files created/modified, "
-            "logs=captured stdout, stderr=captured stderr (sandbox-block reasons and tracebacks appear here)."
+            "logs=captured stdout, stderr=captured stderr (sandbox-block reasons and tracebacks appear here). "
+            "Do NOT confuse this with the ONLINE escape hatches `word_run_script` / `ppt_run_script` / "
+            "`excel_run_script`: those relay raw Office.js JavaScript into a LIVE Add-In to act on the "
+            "currently-open document. THIS tool is the OFFLINE channel — it runs Python on disk and needs no "
+            "Add-In. If a document is open in a connected Add-In and you want to edit that live document, use "
+            "the matching online `*_run_script` tool for that host instead."
         )
 
     @property

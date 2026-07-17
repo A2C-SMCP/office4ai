@@ -42,6 +42,21 @@ class TestFormatWireError:
     def test_missing_fields_fallback(self) -> None:
         assert format_wire_error({}) == "Unknown: Unknown error"
 
+    def test_run_script_rich_details_survive_intact(self) -> None:
+        """run:script 错误的 details（phase/fault/officeCode/stack/logs）整体 JSON 无损透传（issue #87）。"""
+        details = {
+            "phase": "execute",
+            "fault": "GeneralException",
+            "officeCode": "GeneralException",
+            "stack": "Error: boom\n  at eval",
+            "logs": ["step1", "step2"],
+        }
+        result = format_wire_error({"code": "3004", "message": "Script failed", "details": details})
+        # 前缀 code: message + 完整 details JSON（键排序稳定），逐字段可反解析、零裁剪
+        assert result.startswith("3004: Script failed (details: ")
+        for token in ("phase", "execute", "officeCode", "GeneralException", "step1", "step2"):
+            assert token in result
+
 
 class TestOfficeWorkspace:
     """Test OfficeWorkspace class"""
@@ -336,3 +351,77 @@ class TestOfficeWorkspace:
         """Test wait_for_addin_connection() returns True when already connected"""
         result = await office_workspace.wait_for_addin_connection(timeout=0.5)
         assert result is True
+
+
+class TestServerTimeoutOverride:
+    """per-call ack 超时覆写（issue #87）：长脚本类事件不用全局 30s，用派生的 server_timeout。"""
+
+    @pytest.fixture
+    def office_workspace(self) -> OfficeWorkspace:
+        return OfficeWorkspace(host="127.0.0.1", port=3000, use_https=False)
+
+    @pytest.fixture
+    def connected_word(self, office_workspace: OfficeWorkspace) -> None:
+        connection_manager.register_client(
+            socket_id="ts_run_script",
+            client_id="c_run",
+            document_uri="file:///rs.docx",
+            namespace="/word",
+        )
+        yield
+        connection_manager.unregister_client("ts_run_script")
+
+    @pytest.mark.asyncio
+    async def test_emit_default_timeout_uses_config(
+        self, office_workspace: OfficeWorkspace, connected_word: None
+    ) -> None:
+        """未传 timeout_ms → 用全局默认 request_timeout（30000ms → 30s）。"""
+        office_workspace.sio_server = MagicMock()
+        office_workspace.sio_server.call = AsyncMock(return_value={"success": True})
+
+        await office_workspace.emit_to_document("file:///rs.docx", "word:get:selectedContent", {"options": {}})
+        assert office_workspace.sio_server.call.call_args[1]["timeout"] == 30
+
+    @pytest.mark.asyncio
+    async def test_emit_override_applied_to_sio_call(
+        self, office_workspace: OfficeWorkspace, connected_word: None
+    ) -> None:
+        """传 timeout_ms（毫秒）→ sio.call 的 ack 超时按秒覆写。"""
+        office_workspace.sio_server = MagicMock()
+        office_workspace.sio_server.call = AsyncMock(return_value={"success": True})
+
+        await office_workspace.emit_to_document(
+            "file:///rs.docx",
+            "word:run:script",
+            {"script": "return 1;"},
+            timeout_ms=130000,
+        )
+        assert office_workspace.sio_server.call.call_args[1]["timeout"] == 130
+
+    @pytest.mark.asyncio
+    async def test_execute_threads_action_server_timeout(
+        self, office_workspace: OfficeWorkspace, connected_word: None
+    ) -> None:
+        """execute() 把 OfficeAction.server_timeout_ms 透到 emit_to_document → sio.call。"""
+        office_workspace.sio_server = MagicMock()
+        office_workspace.sio_server.call = AsyncMock(return_value={"success": True, "data": {}})
+
+        action = OfficeAction(
+            category="word",
+            action_name="run:script",
+            params={"document_uri": "file:///rs.docx", "script": "return 1;"},
+            server_timeout_ms=70000,
+        )
+        await office_workspace.execute(action)
+        assert office_workspace.sio_server.call.call_args[1]["timeout"] == 70
+
+    @pytest.mark.asyncio
+    async def test_sub_second_override_floored_to_one(
+        self, office_workspace: OfficeWorkspace, connected_word: None
+    ) -> None:
+        """亚秒覆写下限保护为 1s（避免整除成 0 被 socketio 解读为无限等待）。"""
+        office_workspace.sio_server = MagicMock()
+        office_workspace.sio_server.call = AsyncMock(return_value={"success": True})
+
+        await office_workspace.emit_to_document("file:///rs.docx", "word:run:script", {"script": "s"}, timeout_ms=500)
+        assert office_workspace.sio_server.call.call_args[1]["timeout"] == 1
