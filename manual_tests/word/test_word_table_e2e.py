@@ -335,8 +335,13 @@ async def run_error_code_scenarios(workspace: Any, document_uri: str) -> tuple[b
     log: list[str] = []
     all_ok = True
 
+    def note(line: str) -> None:
+        """实时打印场景标题/判定，避免负例的 ❌ 原始日志先于解释出现（读者会误判为真失败）。"""
+        print(f"  {line}")
+        log.append(line)
+
     # B.2: tableId not found → 3010
-    log.append("--- B.2 不存在的 tableId → 3010 ELEMENT_NOT_FOUND ---")
+    note("--- B.2 不存在的 tableId → 3010 ELEMENT_NOT_FOUND（负例，下方 ❌ 为预期） ---")
     ok, _, err = await update_table_cell(
         workspace,
         document_uri,
@@ -345,12 +350,12 @@ async def run_error_code_scenarios(workspace: Any, document_uri: str) -> tuple[b
         wait_seconds=1,
     )
     if ok:
-        log.append("  ❌ B.2 预期失败但成功了")
+        note("  ❌ B.2 预期失败但成功了")
         all_ok = False
     elif err and "3010" in err:
-        log.append(f"  ✅ B.2 错误码包含 3010: {err[:80]}")
+        note(f"  ✅ B.2 错误码包含 3010: {err[:80]}")
     else:
-        log.append(f"  ⚠️  B.2 失败但错误码不是 3010: {err}")
+        note(f"  ⚠️  B.2 失败但错误码不是 3010: {err}")
         all_ok = False
 
     # B.3a: 真·合并冲突（相交合并）→ 失败
@@ -359,7 +364,7 @@ async def run_error_code_scenarios(workspace: Any, document_uri: str) -> tuple[b
     #   officeCode=GeneralException, errorLocation=TableCell.merge）。
     # OASP 归宿是 3014 ALREADY_MERGED；Add-In 中文/信号接线由 editor4ai#88 跟踪，
     # 接线后删除对 3000 的容忍、收紧为仅 3014。
-    log.append("--- B.3a 相交合并（真·冲突）→ 失败：3014（暂容忍 3000，editor4ai#88） ---")
+    note("--- B.3a 相交合并（真·冲突，负例，下方 ❌ 为预期）→ 3014（暂容忍 3000，editor4ai#88） ---")
     ok, _, err = await merge_cells(
         workspace,
         document_uri,
@@ -371,21 +376,21 @@ async def run_error_code_scenarios(workspace: Any, document_uri: str) -> tuple[b
         wait_seconds=1,
     )
     if ok:
-        log.append("  ❌ B.3a 预期失败但成功了")
+        note("  ❌ B.3a 预期失败但成功了")
         all_ok = False
     elif err and "3014" in err:
-        log.append(f"  ✅ B.3a 错误码 3014: {err[:80]}")
+        note(f"  ✅ B.3a 错误码 3014: {err[:80]}")
     elif err and "3000" in err:
-        log.append(f"  ⚠️  B.3a 实收 3000（已知缺口 editor4ai#88 接线后应 3014）: {err[:80]}")
+        note(f"  ⚠️  B.3a 实收 3000（已知缺口 editor4ai#88 接线后应 3014）: {err[:80]}")
     else:
-        log.append(f"  ❌ B.3a 失败但错误码非 3014/3000: {err}")
+        note(f"  ❌ B.3a 失败但错误码非 3014/3000: {err}")
         all_ok = False
 
     # B.3b: 混合列宽表不相交合并 → 成功（editor4ai#85 回归）
     # 第 2 行 (1,0)-(1,2)，与已合并首行无交集。editor4ai#85 修复前：mergeCells 在执行前
     # 访问 table.columns（混合列宽表上 Word.js 禁止）抛裸 3000；修复后不再触碰列集合，
     # startCell.merge(endCell) 对合法矩形应直接成功。
-    log.append("--- B.3b 混合列宽表不相交合并 (1,0)-(1,2) → 成功（editor4ai#85 回归） ---")
+    note("--- B.3b 混合列宽表不相交合并 (1,0)-(1,2) → 成功（editor4ai#85 回归） ---")
     ok, _, err = await merge_cells(
         workspace,
         document_uri,
@@ -397,16 +402,16 @@ async def run_error_code_scenarios(workspace: Any, document_uri: str) -> tuple[b
         wait_seconds=1,
     )
     if ok:
-        log.append("  ✅ B.3b 混合列宽表 merge 成功（.merge() 路径可用）")
+        note("  ✅ B.3b 混合列宽表 merge 成功（.merge() 路径可用）")
     else:
-        log.append(f"  ❌ B.3b 预期成功但失败: {err}")
+        note(f"  ❌ B.3b 预期成功但失败: {err}")
         all_ok = False
 
-    log.append("--- B.1 (3013 NO_TABLE_AT_CURSOR) 需在 Word 中手工触发 ---")
-    log.append("  手工步骤：")
-    log.append("    1) 在 Word 中点击表格之外的某个段落，让光标离开表格")
-    log.append("    2) 重跑：uv run python manual_tests/word/test_word_table_e2e.py --mode b1")
-    log.append("    3) 预期：错误码包含 3013")
+    note("--- B.1 (3013 NO_TABLE_AT_CURSOR) 需在 Word 中手工触发 ---")
+    note("  手工步骤：")
+    note("    1) 在 Word 中点击表格之外的某个段落，让光标离开表格")
+    note("    2) 重跑：uv run python manual_tests/word/test_word_table_e2e.py --mode b1")
+    note("    3) 预期：错误码包含 3013")
 
     return all_ok, log
 
@@ -567,9 +572,7 @@ async def test_word_table_e2e() -> bool:
 
             # Phase 4: B.2 错误码 + B.3a 冲突负例 + B.3b merge 回归（B.1 因依赖光标位置另起 --mode b1）
             print("\n🚨 B.2 错误码 + B.3a 冲突负例 + B.3b 混合列宽 merge 回归（自动触发）...")
-            err_ok, err_log = await run_error_code_scenarios(workspace, fixture.document_uri)
-            for line in err_log:
-                print(f"  {line}")
+            err_ok, _ = await run_error_code_scenarios(workspace, fixture.document_uri)
 
             all_ok = verified and err_ok
             print("\n" + "=" * 70)
