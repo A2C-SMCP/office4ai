@@ -22,9 +22,8 @@ from pathlib import Path
 from typing import Any
 
 from manual_tests.ppt.e2e_base import (
-    ExpectedSlideInfo,
-    PPTTestRunner,
     PptTestCase,
+    PPTTestRunner,
     PresentationReader,
     _call_ppt_validator,
     ensure_ppt_fixtures,

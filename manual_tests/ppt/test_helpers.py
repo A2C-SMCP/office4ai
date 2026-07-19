@@ -38,6 +38,23 @@ PptResult = tuple[bool, dict[str, Any] | None, str | None]
 
 
 # ==============================================================================
+# 共享图片载荷
+# ==============================================================================
+
+#: 最小合法 1x1 灰度 TIFF (base64)——**可解码但 Office.js 不受支持**的格式，用于
+#: `3007 FORMAT_NOT_SUPPORTED` 用例（issue #90 / oasp#23）。
+#:
+#: 关键：它必须是**真正合法的图片**（PIL 可解码），否则 Add-In 会先在 base64/解码层判
+#: `4002 INVALID_PARAM`，就测不到 3007「解得开、只是这一格式不吃」这条判法了——两码的
+#: 分界正是「载荷在线缆层是否合法」。放这里供 insert:image / update:image 共用，勿各抄一份。
+TIFF_UNSUPPORTED = (
+    "SUkqAAgAAAAIAAABAwABAAAAAQAAAAEBAwABAAAAAQAAAAIBAwABAAAACAAA"
+    "AAMBAwABAAAAAQAAAAYBAwABAAAAAQAAABEBBAABAAAAbgAAABYBAwABAAAA"
+    "AQAAABcBBAABAAAAAQAAAAAAAACA"
+)
+
+
+# ==============================================================================
 # Content Retrieval
 # ==============================================================================
 

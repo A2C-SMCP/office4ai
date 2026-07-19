@@ -27,6 +27,8 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 from urllib.parse import quote
 
+from manual_tests.error_case import ErrorCaseFields
+
 if TYPE_CHECKING:
     from docx.document import Document as DocxDocument
 
@@ -393,7 +395,7 @@ def _call_validator(
 
 
 @dataclass
-class TestCase:
+class TestCase(ErrorCaseFields):
     """
     测试用例定义
 
@@ -407,6 +409,10 @@ class TestCase:
             - ContentValidator: (data, reader) -> bool - 双重验证（协议 + 文档内容）
         expect_failure: 预期失败（哨兵测试）— 操作失败时判定为通过，
             若意外成功则提示能力可能已更新，需人工确认
+
+    错误码路径三件套（``expect_error_code`` / ``expect_error_details`` / ``xfail_reason``）
+    继承自 :class:`manual_tests.error_case.ErrorCaseFields`，语义见其 docstring；判定统一走
+    ``judge_error_case``（Word / PPT / Excel 同一套三态）。
     """
 
     name: str

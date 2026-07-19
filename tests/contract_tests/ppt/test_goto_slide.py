@@ -11,7 +11,7 @@ import asyncio
 import pytest
 
 from office4ai.environment.workspace.base import OfficeAction
-from office4ai.environment.workspace.office_workspace import OfficeWorkspace
+from office4ai.environment.workspace.office_workspace import OfficeWorkspace, parse_error_details
 
 
 @pytest.mark.asyncio
@@ -64,17 +64,26 @@ async def test_goto_slide_success(
 
 @pytest.mark.asyncio
 @pytest.mark.contract
-async def test_goto_slide_error(
+async def test_goto_slide_index_out_of_range_3008(
     workspace: OfficeWorkspace,
     mock_word_client_factory,
 ):
-    """测试错误处理。"""
+    """slideIndex 越界 → 3008 POSITION_INVALID + details（oasp#23 / issue #90）。
+
+    与 ``ppt:delete:slide`` 同判法：线缆层合法、仅相对当前文档状态无效，恢复靠「重读后重试」。
+    oasp#23 仅取 /ppt 这两个事件作样板验证判法，全量清扫见 oasp#24——**断言不得扩大化**到
+    其他序号越界事件，其余沿用各自事件表内现码。
+    """
 
     def error_response(request: dict) -> dict:
         return {
             "requestId": request["requestId"],
             "success": False,
-            "error": {"code": "3001", "message": "Slide index out of range"},
+            "error": {
+                "code": "3008",
+                "message": "Slide index out of range",
+                "details": {"index": 999, "total": 10, "kind": "slide"},
+            },
             "timestamp": int(asyncio.get_event_loop().time() * 1000),
         }
 
@@ -97,6 +106,9 @@ async def test_goto_slide_error(
         result = await workspace.execute(action)
 
         assert result.success is False
+        assert "3008" in (result.error or "")
+        details = parse_error_details(result.error or "")
+        assert details == {"index": 999, "total": 10, "kind": "slide"}
     finally:
         await client.disconnect()
 

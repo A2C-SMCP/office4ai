@@ -6,6 +6,7 @@ PPT Update Image E2E Tests
 测试场景:
 1. 替换图片 — 用新图片替换已有图片
 2. keepDimensions — 替换图片时保持原尺寸
+3. 错误码 3007 — 替换为可解码但不受支持的 TIFF（oasp#23，Add-In 接线前为 XFAIL）
 
 运行方式:
     uv run python manual_tests/ppt/update_image_e2e/test_image_update.py --test all
@@ -17,12 +18,14 @@ import time
 from pathlib import Path
 from typing import Any
 
+from manual_tests.error_case import PENDING_ADDIN_92, judge_error_case
 from manual_tests.ppt.e2e_base import (
-    PPTTestRunner,
     PptTestCase,
+    PPTTestRunner,
     ensure_ppt_fixtures,
 )
 from manual_tests.ppt.test_helpers import (
+    TIFF_UNSUPPORTED,
     ppt_get_current_slide_elements,
     ppt_insert_image,
     ppt_update_image,
@@ -107,7 +110,36 @@ async def _workflow_keep_dimensions(workspace: Any, doc_uri: str) -> bool:
     return True
 
 
-_WORKFLOW_FUNCS = [_workflow_replace_image, _workflow_keep_dimensions]
+async def _workflow_format_not_supported(workspace: Any, doc_uri: str) -> bool:
+    """替换为可解码但不受支持的 TIFF → 3007 FORMAT_NOT_SUPPORTED（oasp#23 / issue #90）。
+
+    先插一张合法 PNG 拿到 elementId（保证走到「元素找得到、只是新载荷格式不吃」这一步，
+    否则会先撞 3010 ELEMENT_NOT_FOUND，测不到 3007）。
+    """
+    print("\n   📝 Step 1: 插入 PNG 作为替换目标...")
+    success, _, error = await ppt_insert_image(workspace, doc_uri, {"base64": PNG_RED})
+    if not success:
+        print(f"   ❌ 插入失败: {error}")
+        return False
+
+    print("   📝 Step 2: 获取 elementId...")
+    success, data, _ = await ppt_get_current_slide_elements(workspace, doc_uri)
+    if not success:
+        return False
+    element_id = _extract_image_element_id((data or {}).get("elements", []))
+    if not element_id:
+        print("   ❌ 未找到图片元素 ID")
+        return False
+
+    print(f"   📝 Step 3: 用 TIFF 替换 (elementId={element_id})...")
+    ok, _, err = await ppt_update_image(workspace, doc_uri, element_id, {"base64": TIFF_UNSUPPORTED})
+
+    verdict, message = judge_error_case(ok, err, expect_code="3007", xfail_reason=PENDING_ADDIN_92)
+    print(message)
+    return verdict.passed
+
+
+_WORKFLOW_FUNCS = [_workflow_replace_image, _workflow_keep_dimensions, _workflow_format_not_supported]
 
 TEST_CASES: list[PptTestCase] = [
     PptTestCase(name="替换图片", fixture_name="empty.pptx", description="插入红色 PNG 后替换为蓝色 PNG", tags=["crud"]),
@@ -117,7 +149,17 @@ TEST_CASES: list[PptTestCase] = [
         description="替换图片时保持原始尺寸",
         tags=["crud"],
     ),
+    PptTestCase(
+        name="错误码 3007 — 格式不受支持",
+        fixture_name="empty.pptx",
+        description="替换为合法但不受支持的 TIFF → 3007 FORMAT_NOT_SUPPORTED（oasp#23，区别于 4002 不可解码）",
+        expect_error_code="3007",
+        xfail_reason=PENDING_ADDIN_92,
+        tags=["error"],
+    ),
 ]
+if len(_WORKFLOW_FUNCS) != len(TEST_CASES):  # 结构约束，非调试断言（python -O 会剥离 assert）
+    raise RuntimeError(f"TEST_CASES({len(TEST_CASES)}) 与 _WORKFLOW_FUNCS({len(_WORKFLOW_FUNCS)}) 必须一一对应")
 
 
 async def run_single_test(runner: PPTTestRunner, test_case: PptTestCase, test_number: int) -> bool:

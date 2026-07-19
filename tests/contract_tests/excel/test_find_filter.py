@@ -52,6 +52,26 @@ async def test_find_values_minimal(excel_roundtrip, excel_factory):
     assert result.data["matches"][0]["address"] == "Sheet1!A2"
 
 
+async def test_find_values_no_match_is_success_not_3012(excel_roundtrip, excel_factory):
+    """零匹配 → ``matches: []`` + ``success: true``，**不得**判 3012（oasp#23 规范层 / issue #90）。
+
+    ⚠️ **规范层反例守护，勿改成错误用例**：空列表是**良定义的零元结果**——「没找到」是一个
+    有效答案，报成 ``3012 SEARCH_NO_MATCH`` 会迫使调用方从错误处理路径消费正常结果。
+    3012 只归属「零匹配使操作无法产生所请求效果」的场景（唯一事件：``word:insert:comment``
+    的 searchText 模式）。
+    """
+
+    def factory(request: dict) -> dict:
+        assert request["searchText"] == "不存在的内容"
+        return _ok(request, excel_factory.find_values_response(matches=[]))
+
+    result, _ = await excel_roundtrip("find:values", {"search_text": "不存在的内容"}, factory)
+
+    assert result.success is True
+    assert result.error is None
+    assert result.data["matches"] == []
+
+
 async def test_find_values_keeps_false_flags(excel_roundtrip, excel_factory):
     """match_case / match_entire_cell = False 必须存活到 wire（falsy 非 None）。"""
 

@@ -119,6 +119,25 @@ class TestErrorCode:
         assert ErrorCode.FORMULA_ERROR == "3017"
         assert ErrorCode.DATA_TYPE_MISMATCH == "3018"
 
+    def test_orphan_code_adjudication_wired(self) -> None:
+        """oasp#23 四孤儿码裁决：3007/3008/3012 接线后须在表内且值正确（issue #90）。
+
+        三码本仓**零引用**属正常——office4ai 对文档类错误码是纯透传方，码由 Add-In 发出、
+        Server 原样转交（见 format_wire_error）。表在此的作用是协议保真，不是调用词表。
+        """
+        assert ErrorCode.FORMAT_NOT_SUPPORTED == "3007"
+        assert ErrorCode.POSITION_INVALID == "3008"
+        assert ErrorCode.SEARCH_NO_MATCH == "3012"
+
+    def test_retired_codes_absent(self) -> None:
+        """已退役码不得留在表内，**不留别名**（oasp#20 退役 3999、oasp#23 退役 3005）。
+
+        3005 RESOURCE_NOT_ACCESSIBLE 退役依据：全协议无任何请求参数引用可拉取的外部资源
+        （documentUri 已由 3001/3003 覆盖，图片等载荷一律 inline base64）。
+        """
+        assert not hasattr(ErrorCode, "RESOURCE_NOT_ACCESSIBLE")
+        assert not hasattr(ErrorCode, "OFFICE_API_ERROR")
+
     def test_validation_errors(self) -> None:
         """Test validation error codes (4xxx)"""
         assert ErrorCode.VALIDATION_ERROR == "4000"

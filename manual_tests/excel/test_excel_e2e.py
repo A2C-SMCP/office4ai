@@ -43,12 +43,12 @@ _PROJECT_ROOT = Path(__file__).resolve().parents[2]
 if str(_PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(_PROJECT_ROOT))
 
+from manual_tests.error_case import PENDING_ADDIN_80, judge_error_case, verdict_note  # noqa: E402
 from manual_tests.excel.e2e_base import (  # noqa: E402
     ExcelTestRunner,
     WorkbookReader,
     ensure_empty_fixture,
 )
-from manual_tests.excel.e2e_case import evaluate_error_case  # noqa: E402
 from manual_tests.excel.test_helpers import excel_op  # noqa: E402
 
 # ============================================================================
@@ -299,16 +299,13 @@ async def run_error_scenarios(workspace: Any, uri: str, rc: ResultCollector) -> 
 
     async def expect_error(event: str, code: str, details: dict[str, Any] | None = None, **params: Any) -> None:
         ok, _, err = await excel_op(workspace, uri, event, quiet=True, **params)
-        expected = code + (f" details⊇{details}" if details else "")
-        if evaluate_error_case(ok, err, code, details):
-            rc.record(f"[err {code}] excel:{event}", True, "")
-            print(f"   ✅ [{expected}] excel:{event} → {err}")
-        elif not ok:
-            rc.record(f"[err {code}] excel:{event}", True, f"XFAIL 实际: {err}")
-            print(f"   ⚠️  XFAIL（待 Add-In 接线 office-editor4ai#80）[{expected}] excel:{event} → {err}")
-        else:
-            rc.record(f"[err {code}] excel:{event}", False, f"实际: ok={ok} err={err}")
-            print(f"   ❌ [{expected}] excel:{event} → ok={ok} err={err}")
+        # 三态判定统一走 judge_error_case（#90 上提），勿在此重抄分支——否则摘 xfail 标时会漏
+        verdict, message = judge_error_case(ok, err, code, details, PENDING_ADDIN_80)
+        print(f"{message}  (excel:{event})")
+        # note 一律由 verdict 派生，**不要**去 match message 里的 emoji：本调用点恒传
+        # xfail_reason，严格命中时返回的是 🎉 XPASS（不含 ✅），据文案反推会把 XPASS 误记成
+        # XFAIL，摘标信号就在汇总表里丢了。
+        rc.record(f"[err {code}] excel:{event}", verdict.passed, verdict_note(verdict, ok, err))
 
     await expect_error("get:worksheetInfo", "3010", {"kind": "worksheet"}, worksheet_name="GhostSheet")
     await expect_error("get:range", "3009", address="!!!bad!!!")

@@ -22,7 +22,7 @@ from typing import Any
 
 from manual_tests.excel.chart_e2e._fixtures import ensure_fixtures
 from manual_tests.excel.e2e_base import WorkbookReader
-from manual_tests.excel.e2e_case import ExcelCase, run_main
+from manual_tests.excel.e2e_case import PENDING_ADDIN_80, ExcelCase, run_main
 
 CHART = "chart_e2e/chart.xlsx"
 
@@ -102,7 +102,7 @@ TEST_CASES: list[ExcelCase] = [
         action="insert:chart",
         params={"source_address": "A1:C4", "chart_type": "NotARealType", "worksheet_name": "Data"},
         expect_error_code="4002",
-        xfail_reason="待 Add-In 接线 office-editor4ai#80",
+        xfail_reason=PENDING_ADDIN_80,
         tags=["error"],
     ),
 ]

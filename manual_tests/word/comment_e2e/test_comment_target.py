@@ -25,6 +25,7 @@ from manual_tests.e2e_base import (
     TestCase,
     ensure_fixtures,
 )
+from manual_tests.error_case import PENDING_ADDIN_92, judge_error_case
 from office4ai.environment.workspace.base import OfficeAction
 
 # ==============================================================================
@@ -49,8 +50,10 @@ TEST_CASES: list[TestCase] = [
     TestCase(
         name="搜索不存在文本",
         fixture_name="simple.docx",
-        description="搜索不存在的文本定位批注，预期失败或无关联文本",
-        tags=["target", "edge_case"],
+        description="searchText 零匹配 → 3012 SEARCH_NO_MATCH（oasp#23 规范层 MUST）",
+        expect_error_code="3012",
+        xfail_reason=PENDING_ADDIN_92,
+        tags=["target", "error"],
     ),
 ]
 
@@ -63,6 +66,7 @@ TEST_CASES: list[TestCase] = [
 async def _test_default_target(
     workspace: Any,
     document_uri: str,
+    test_case: TestCase,
 ) -> bool:
     """测试默认选区批注"""
     comment_text = "E2E test - default target"
@@ -107,6 +111,7 @@ async def _test_default_target(
 async def _test_search_text_target(
     workspace: Any,
     document_uri: str,
+    test_case: TestCase,
 ) -> bool:
     """测试搜索文本定位批注"""
     comment_text = "E2E test - search text target"
@@ -169,8 +174,19 @@ async def _test_search_text_target(
 async def _test_nonexistent_text_target(
     workspace: Any,
     document_uri: str,
+    test_case: TestCase,
 ) -> bool:
-    """测试搜索不存在文本"""
+    """测试搜索不存在文本 → 权威码 3012 SEARCH_NO_MATCH（oasp#23 规范层 / issue #90）。
+
+    判定收紧（原实现两个分支都 ``return True``，等于对结果完全不设防）：
+
+    * 返回 ``3012``           → 🎉 XPASS，Add-In 已接线，可摘 xfail_reason 转正
+    * 返回其他错误码（如 3000）→ ⚠️ XFAIL，Add-In 未接线的过渡期兜底，套件不红
+    * **插入却成功**          → ❌ FAIL
+
+    最后一条是本次收紧的重点：原实现把「降级到当前选区」当作可接受结果放行，但那正是
+    规范层禁止的——批注附到了**用户没有请求的位置**上，调用方还以为成功了。
+    """
     comment_text = "E2E test - nonexistent target"
     search_text = "不存在的文本内容XYZ123"
 
@@ -190,30 +206,37 @@ async def _test_nonexistent_text_target(
     )
     insert_result = await workspace.execute(insert_action)
 
-    if not insert_result.success:
-        print(f"   ✅ 预期失败: {insert_result.error}")
-        return True
+    # 期望单一来源于 TEST_CASES；缺失即配置错误，快速失败优于沉默兜底一个字面量
+    expect_code = test_case.expect_error_code
+    assert expect_code, "该用例必须在 TEST_CASES 中声明 expect_error_code"
 
-    # 如果意外成功，检查是否有关联文本
-    print("   ⚠️  插入意外成功，检查关联文本...")
-    get_action = OfficeAction(
-        category="word",
-        action_name="get:comments",
-        params={
-            "document_uri": document_uri,
-            "options": {"include_associated_text": True},
-        },
+    verdict, message = judge_error_case(
+        insert_result.success,
+        insert_result.error,
+        expect_code=expect_code,
+        expect_details=test_case.expect_error_details,
+        xfail_reason=test_case.xfail_reason,
     )
-    get_result = await workspace.execute(get_action)
-    if get_result.success:
-        comments = (get_result.data or {}).get("comments", [])
-        for c in comments:
-            if c.get("content") == comment_text:
-                associated = c.get("associatedText", "")
-                print(f"   ℹ️  associatedText='{associated}'")
-                break
-    print("   ⚠️  搜索不存在文本仍插入成功（实现可能降级到当前选区）")
-    return True
+    print(message)
+
+    # 意外成功时补打关联文本，便于判断是否降级到了当前选区（诊断信息，不影响判定）
+    if insert_result.success:
+        get_action = OfficeAction(
+            category="word",
+            action_name="get:comments",
+            params={
+                "document_uri": document_uri,
+                "options": {"include_associated_text": True},
+            },
+        )
+        get_result = await workspace.execute(get_action)
+        if get_result.success:
+            for c in (get_result.data or {}).get("comments", []):
+                if c.get("content") == comment_text:
+                    print(f"   📋 associatedText='{c.get('associatedText', '')}'（疑似降级到当前选区）")
+                    break
+
+    return verdict.passed
 
 
 _WORKFLOW_FUNCS = [
@@ -249,7 +272,7 @@ async def run_single_test(
             fixture,
         ):
             start_time = time.time()
-            passed = await workflow_func(workspace, fixture.document_uri)
+            passed = await workflow_func(workspace, fixture.document_uri, test_case)
             elapsed_ms = (time.time() - start_time) * 1000
 
             print(f"\n⏱️  总执行时间: {elapsed_ms:.1f}ms")

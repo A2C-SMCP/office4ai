@@ -30,10 +30,8 @@ if TYPE_CHECKING:
 from manual_tests.e2e_base import (
     DocumentFixture,
     E2ETestRunner,
-    TestCase,
-    open_document,
-    path_to_file_uri,
 )
+from manual_tests.error_case import ErrorCaseFields
 from office4ai.environment.workspace.office_workspace import OfficeWorkspace
 
 # ==============================================================================
@@ -239,7 +237,7 @@ class ExpectedSlideInfo:
 
 
 @dataclass
-class PptTestCase:
+class PptTestCase(ErrorCaseFields):
     """
     PPT 测试用例定义
 
@@ -250,6 +248,9 @@ class PptTestCase:
         expected: 预期的幻灯片信息（可选）
         validator: 自定义验证函数（可选）
         tags: 标签列表
+
+    错误码路径三件套继承自 :class:`manual_tests.error_case.ErrorCaseFields`，语义见其
+    docstring；判定统一走 ``judge_error_case``（三命名空间共享，#90）。
     """
 
     name: str

@@ -20,7 +20,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from manual_tests.excel.e2e_case import ExcelCase, run_main
+from manual_tests.excel.e2e_case import PENDING_ADDIN_80, ExcelCase, run_main
 from manual_tests.excel.pivot_table_e2e._fixtures import ensure_fixtures
 
 PIVOT = "pivot_table_e2e/pivot.xlsx"
@@ -72,7 +72,7 @@ TEST_CASES: list[ExcelCase] = [
         action="insert:pivotTable",
         params={"source_address": "ZZZZ99999999", "target_address": "E1", "worksheet_name": "Data"},
         expect_error_code="3009",
-        xfail_reason="待 Add-In 接线 office-editor4ai#80",
+        xfail_reason=PENDING_ADDIN_80,
         tags=["error"],
     ),
     ExcelCase(

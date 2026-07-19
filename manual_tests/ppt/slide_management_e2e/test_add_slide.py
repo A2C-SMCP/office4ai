@@ -19,9 +19,9 @@ from pathlib import Path
 from typing import Any
 
 from manual_tests.ppt.e2e_base import (
+    PptTestCase,
     PPTTestRunner,
     PresentationReader,
-    PptTestCase,
     _call_ppt_validator,
     ensure_ppt_fixtures,
 )

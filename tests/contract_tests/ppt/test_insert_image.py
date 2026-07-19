@@ -11,7 +11,7 @@ import asyncio
 import pytest
 
 from office4ai.environment.workspace.base import OfficeAction
-from office4ai.environment.workspace.office_workspace import OfficeWorkspace
+from office4ai.environment.workspace.office_workspace import OfficeWorkspace, parse_error_details
 
 TEST_BASE64 = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg=="
 
@@ -159,5 +159,60 @@ async def test_insert_image_error(
         result = await workspace.execute(action)
 
         assert result.success is False
+    finally:
+        await client.disconnect()
+
+
+@pytest.mark.asyncio
+@pytest.mark.contract
+async def test_insert_image_format_not_supported_3007(
+    workspace: OfficeWorkspace,
+    mock_word_client_factory,
+):
+    """base64 可解码但图片格式不受支持 → 3007 FORMAT_NOT_SUPPORTED（oasp#23 / issue #90）。
+
+    输入侧 ``4002``/``3007`` 二分：``4002`` 是 base64 在线缆层就解不开，``3007`` 是解得开、
+    宿主拒绝这一格式——后者**转码重发即可成功**，前者必须修参数。events-ppt.md
+    §ppt:insert:image 错误表已把两者拆成独立行。
+    """
+
+    def error_response(request: dict) -> dict:
+        return {
+            "requestId": request["requestId"],
+            "success": False,
+            "error": {
+                "code": "3007",
+                "message": "Image format 'image/tiff' is not supported",
+                "details": {"format": "image/tiff", "accepted": ["image/png", "image/jpeg"]},
+            },
+            "timestamp": int(asyncio.get_event_loop().time() * 1000),
+        }
+
+    client = mock_word_client_factory(
+        server_url="http://127.0.0.1:3003",
+        namespace="/ppt",
+        client_id="contract_test_ppt_client",
+        document_uri="file:///tmp/test.pptx",
+    )
+
+    client.register_response("ppt:insert:image", error_response)
+    await client.connect()
+
+    try:
+        action = OfficeAction(
+            category="ppt",
+            action_name="insert:image",
+            params={
+                "document_uri": client.document_uri,
+                "image": {"base64": TEST_BASE64},
+            },
+        )
+        result = await workspace.execute(action)
+
+        assert result.success is False
+        assert "3007" in (result.error or "")
+        details = parse_error_details(result.error or "")
+        assert details is not None
+        assert details["format"] == "image/tiff"
     finally:
         await client.disconnect()

@@ -107,6 +107,14 @@ async def test_replace_text_no_matches(
     """
     测试没有找到匹配项的替换操作。
 
+    ⚠️ **规范层反例守护，勿改成错误用例**（oasp#23 §SEARCH_NO_MATCH / issue #90）：
+    ``replaceCount: 0`` 是**良定义的零元结果**——「替换了 0 处」是完整、真实、可消费的答案，
+    故 MUST 返回 ``success: true``，**不得**返回 ``3012 SEARCH_NO_MATCH``。判据不是「搜索是否
+    为变更的锚点」（本事件的搜索同样是锚点），而是「零元有没有对应的良定义结果」。
+    报成错误会迫使调用方从错误处理路径消费正常结果。
+    对照：``word:insert:comment`` 的 searchText 零匹配**没有**良定义零元结果，故 MUST 判 3012
+    （见 ``test_insert_comment.py::test_insert_comment_search_no_match_3012``）。
+
     测试步骤：
     1. 创建 Mock Add-In 客户端
     2. 注册响应（replaceCount=0）

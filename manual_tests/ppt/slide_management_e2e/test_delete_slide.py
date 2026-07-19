@@ -6,6 +6,7 @@ PPT Delete Slide E2E Tests
 测试场景:
 1. 删除中间幻灯片 — 删除 index=1 (中间)
 2. 删除末尾幻灯片 — 删除最后一张
+3. 错误码 3008 — slideIndex 越界（oasp#23，Add-In 接线前为 XFAIL）
 
 运行方式:
     uv run python manual_tests/ppt/slide_management_e2e/test_delete_slide.py --test all
@@ -17,10 +18,11 @@ import time
 from pathlib import Path
 from typing import Any
 
+from manual_tests.error_case import PENDING_ADDIN_92, judge_error_case
 from manual_tests.ppt.e2e_base import (
+    PptTestCase,
     PPTTestRunner,
     PresentationReader,
-    PptTestCase,
     ensure_ppt_fixtures,
 )
 from manual_tests.ppt.test_helpers import ppt_delete_slide, ppt_get_slide_info
@@ -87,6 +89,42 @@ async def _workflow_delete_last(workspace: Any, doc_uri: str, working_path: Any)
     return True
 
 
+async def _workflow_delete_out_of_range(workspace: Any, doc_uri: str, working_path: Any) -> bool:
+    """slideIndex 越界 → 3008 POSITION_INVALID + details（oasp#23 / issue #90）。
+
+    该值在线缆上完全合法（非负整数），仅相对**当前文档状态**无效，故不是 4002/4004——
+    正确恢复是「重读文档状态后原值重试」而非「改参数」。details 回带 ``{index,total,kind}``
+    让调用方一次拿到实时边界。
+    """
+    success, data, _ = await ppt_get_slide_info(workspace, doc_uri)
+    if not success:
+        return False
+    total = (data or {}).get("slideCount", 0)
+    out_of_range = total + 100
+
+    print(f"\n   📋 slideCount={total}，请求删除 index={out_of_range}（越界）")
+    ok, _, error = await ppt_delete_slide(workspace, doc_uri, slide_index=out_of_range)
+
+    verdict, message = judge_error_case(
+        ok,
+        error,
+        expect_code="3008",
+        expect_details={"kind": "slide"},
+        xfail_reason=PENDING_ADDIN_92,
+    )
+    print(message)
+
+    # 越界删除绝不能改动文档——无论错误码对不对，页数必须原样
+    await asyncio.sleep(0.5)
+    reader = PresentationReader(working_path)
+    reader.reload()
+    if reader.slide_count != total:
+        print(f"   ❌ 越界删除改动了文档: {total} → {reader.slide_count}")
+        return False
+    print(f"   ✅ 文档未被改动: slide_count={reader.slide_count}")
+    return verdict.passed
+
+
 TEST_CASES: list[PptTestCase] = [
     PptTestCase(
         name="删除中间幻灯片",
@@ -100,7 +138,26 @@ TEST_CASES: list[PptTestCase] = [
         description="删除最后一张幻灯片",
         tags=["crud"],
     ),
+    PptTestCase(
+        name="错误码 3008 — slideIndex 越界",
+        fixture_name="multi_slide.pptx",
+        description="delete:slide 请求越界序号 → 3008 POSITION_INVALID（oasp#23，过渡期样板事件）",
+        expect_error_code="3008",
+        expect_error_details={"kind": "slide"},
+        xfail_reason=PENDING_ADDIN_92,
+        tags=["error"],
+    ),
 ]
+
+#: 与 TEST_CASES 一一对应（索引即 test_number - 1）——原先 ``if test_number == 1 / else``
+#: 的二分派在加入第 3 个用例后会把它错误路由到 _workflow_delete_last，故改为按序表驱动。
+_WORKFLOWS = [
+    _workflow_delete_middle,
+    _workflow_delete_last,
+    _workflow_delete_out_of_range,
+]
+if len(_WORKFLOWS) != len(TEST_CASES):  # 结构约束，非调试断言（python -O 会剥离 assert）
+    raise RuntimeError(f"TEST_CASES({len(TEST_CASES)}) 与 _WORKFLOWS({len(_WORKFLOWS)}) 必须一一对应")
 
 
 async def run_single_test(runner: PPTTestRunner, test_case: PptTestCase, test_number: int) -> bool:
@@ -113,10 +170,8 @@ async def run_single_test(runner: PPTTestRunner, test_case: PptTestCase, test_nu
     try:
         async with runner.run_with_workspace(fixture_path, open_delay=3.0) as (workspace, fixture):
             start_time = time.time()
-            if test_number == 1:
-                passed = await _workflow_delete_middle(workspace, fixture.document_uri, fixture.working_path)
-            else:
-                passed = await _workflow_delete_last(workspace, fixture.document_uri, fixture.working_path)
+            workflow = _WORKFLOWS[test_number - 1]
+            passed = await workflow(workspace, fixture.document_uri, fixture.working_path)
             elapsed_ms = (time.time() - start_time) * 1000
             print(f"\n⏱️  总执行时间: {elapsed_ms:.1f}ms")
             print(f"{'✅' if passed else '❌'} 测试 {test_number} {'通过' if passed else '失败'}")

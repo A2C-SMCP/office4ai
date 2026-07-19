@@ -9,6 +9,7 @@ PPT Insert Image E2E Tests
 3. 跨幻灯片插入 — slideIndex=1，验证图片在目标幻灯片
 4. slideIndex 越界 — slideIndex=999，预期失败
 5. 视图恢复验证 — 跨页插入后 currentSlideIndex 应恢复
+6. 错误码 3007 — 可解码但不受支持的 TIFF（oasp#23，Add-In 接线前为 XFAIL）
 
 运行方式:
     uv run python manual_tests/ppt/insert_image_e2e/test_image_insert.py --test all
@@ -17,15 +18,18 @@ PPT Insert Image E2E Tests
 import asyncio
 import sys
 import time
+from collections.abc import Awaitable, Callable
 from pathlib import Path
 from typing import Any
 
+from manual_tests.error_case import PENDING_ADDIN_92, judge_error_case
 from manual_tests.ppt.e2e_base import (
-    PPTTestRunner,
     PptTestCase,
+    PPTTestRunner,
     ensure_ppt_fixtures,
 )
 from manual_tests.ppt.test_helpers import (
+    TIFF_UNSUPPORTED,
     ppt_get_slide_elements,
     ppt_get_slide_info,
     ppt_insert_image,
@@ -97,6 +101,15 @@ TEST_CASES: list[PptTestCase] = [
         validator=None,
         tags=["cross_slide", "view_restore"],
     ),
+    PptTestCase(
+        name="错误码 3007 — 格式不受支持",
+        fixture_name="empty.pptx",
+        description="插入合法但不受支持的 TIFF → 3007 FORMAT_NOT_SUPPORTED（oasp#23，区别于 4002 不可解码）",
+        validator=None,
+        expect_error_code="3007",
+        xfail_reason=PENDING_ADDIN_92,
+        tags=["error"],
+    ),
 ]
 
 _INSERT_PARAMS: list[tuple[dict[str, Any], dict[str, Any] | None]] = [
@@ -105,7 +118,10 @@ _INSERT_PARAMS: list[tuple[dict[str, Any], dict[str, Any] | None]] = [
     ({"base64": MINIMAL_PNG_BASE64}, {"slideIndex": 1, "left": 100, "top": 100, "width": 200, "height": 150}),
     ({"base64": MINIMAL_PNG_BASE64}, {"slideIndex": 999}),
     ({"base64": MINIMAL_PNG_BASE64}, {"slideIndex": 2, "left": 100, "top": 100, "width": 200, "height": 150}),
+    ({"base64": TIFF_UNSUPPORTED}, {"left": 100, "top": 100, "width": 200, "height": 150}),
 ]
+if len(_INSERT_PARAMS) != len(TEST_CASES):  # 结构约束，非调试断言（python -O 会剥离 assert）
+    raise RuntimeError(f"TEST_CASES({len(TEST_CASES)}) 与 _INSERT_PARAMS({len(_INSERT_PARAMS)}) 必须一一对应")
 
 
 # ==============================================================================
@@ -210,6 +226,51 @@ async def _run_view_restore_test(workspace: Any, doc_uri: str, image_data: dict,
     return False
 
 
+async def _run_format_not_supported_test(
+    workspace: Any,
+    doc_uri: str,
+    image_data: dict[str, Any],
+    options: dict[str, Any],
+    test_case: PptTestCase,
+) -> bool:
+    """可解码但不受支持的图片格式 → 3007 FORMAT_NOT_SUPPORTED（oasp#23 / issue #90）。
+
+    与 case 4「slideIndex 越界」的 4002 是两条不同判法，别混：那条是**参数**问题，这条是
+    **载荷格式**问题。而与 4002「base64 不可解码」的分界在于——本用例的 TIFF 是**真正合法
+    的图片**，解得开，只是宿主不吃这一格式，故恢复动作是转码重发而非修参数。
+    """
+    expect_code = test_case.expect_error_code
+    assert expect_code, "该用例必须在 TEST_CASES 中声明 expect_error_code"
+
+    ok, _, err = await ppt_insert_image(workspace, doc_uri, image_data, options)
+    verdict, message = judge_error_case(
+        ok,
+        err,
+        expect_code=expect_code,
+        expect_details=test_case.expect_error_details,
+        xfail_reason=test_case.xfail_reason,
+    )
+    print(message)
+    return verdict.passed
+
+
+#: 与 TEST_CASES 一一对应（索引即 test_number - 1）。原为 if/elif 长链，新增用例时忘记加分支
+#: 会静默走 ``else: passed = False``；改表驱动后由下方长度守护立即报错。
+#: 各 runner 签名不一，用 lambda 适配成统一的 (ws, uri, image, options, case)——lambda 是
+#: **签名适配器不是冗余**：前两行相同正是「两个用例共用同一 runner」这一事实的正确编码，
+#: 消掉它要么退回条件分支，要么给三个用不到 test_case 的 runner 强塞该参数，均是净负。
+_RUNNERS: list[Callable[..., Awaitable[bool]]] = [
+    lambda ws, uri, img, opt, tc: _run_basic_test(ws, uri, img, opt, tc.validator),
+    lambda ws, uri, img, opt, tc: _run_basic_test(ws, uri, img, opt, tc.validator),
+    lambda ws, uri, img, opt, tc: _run_cross_slide_test(ws, uri, img, opt),
+    lambda ws, uri, img, opt, tc: _run_out_of_bounds_test(ws, uri, img, opt),
+    lambda ws, uri, img, opt, tc: _run_view_restore_test(ws, uri, img, opt),
+    _run_format_not_supported_test,
+]
+if len(_RUNNERS) != len(TEST_CASES):  # 结构约束，非调试断言（python -O 会剥离 assert）
+    raise RuntimeError(f"TEST_CASES({len(TEST_CASES)}) 与 _RUNNERS({len(_RUNNERS)}) 必须一一对应")
+
+
 async def run_single_test(runner: PPTTestRunner, test_case: PptTestCase, test_number: int) -> bool:
     print("\n" + "=" * 70)
     print(f"🧪 测试 {test_number}: {test_case.name}")
@@ -224,16 +285,8 @@ async def run_single_test(runner: PPTTestRunner, test_case: PptTestCase, test_nu
             print(f"\n📝 执行: 插入图片 (options={options})...")
             start_time = time.time()
 
-            if test_number <= 2:
-                passed = await _run_basic_test(workspace, fixture.document_uri, image_data, options, test_case.validator)
-            elif test_number == 3:
-                passed = await _run_cross_slide_test(workspace, fixture.document_uri, image_data, options or {})
-            elif test_number == 4:
-                passed = await _run_out_of_bounds_test(workspace, fixture.document_uri, image_data, options or {})
-            elif test_number == 5:
-                passed = await _run_view_restore_test(workspace, fixture.document_uri, image_data, options or {})
-            else:
-                passed = False
+            runner_func = _RUNNERS[test_number - 1]
+            passed = await runner_func(workspace, fixture.document_uri, image_data, options or {}, test_case)
 
             elapsed_ms = (time.time() - start_time) * 1000
             print(f"\n⏱️  总执行时间: {elapsed_ms:.1f}ms")

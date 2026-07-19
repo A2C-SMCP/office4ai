@@ -369,8 +369,19 @@ class ErrorCode:
     SELECTION_EMPTY = "3002"
     DOCUMENT_READ_ONLY = "3003"
     OPERATION_FAILED = "3004"
-    RESOURCE_NOT_ACCESSIBLE = "3005"
+    # RESOURCE_NOT_ACCESSIBLE("3005") 已退役 (oasp#23)：无指涉对象——全协议无任何请求参数引用
+    # 可拉取的外部资源（documentUri 已由 3001/3003 覆盖，图片等载荷一律 inline base64 自包含），
+    # 自初始提交起从未被任何事件引用。不留别名。
+    # ⚠️ 唯一潜在反例 oasp#26：若 imageInfo.data 补齐显式请求参数且需 materialize 外链图片，
+    # 该退役前提失效、可能须重新引入——跟进该 issue 时先回看此处。
     CONTENT_TOO_LARGE = "3006"
+    # 3007/3008/3012 经 oasp#23 裁决接线（详见 error-handling.md 各码「触发场景」小节）：
+    # 3007 = 事件可用但**这一种格式**不受支持（换格式即可成功；区别于 4002 线缆层不可解码、
+    #        3016 整个能力不可用）；输入侧转码重发、输出侧改请求另一格式
+    # 3008 = 序号相对**当前文档状态**无效（重读状态后原值重试；区别于 4004 静态声明边界）。
+    #        ⚠️ 过渡期：规范层效力仅及 ppt:{delete,goto}:slide，全量清扫见 oasp#24
+    # 3012 = 以搜索文本定位的操作零匹配**且零元无良定义结果**（仅 word:insert:comment
+    #        searchText 模式）；replace:text/select:text/find:values 的零元是正常 success
     FORMAT_NOT_SUPPORTED = "3007"
     POSITION_INVALID = "3008"
     RANGE_INVALID = "3009"

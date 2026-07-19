@@ -255,6 +255,11 @@ async def test_select_text_no_matches(
     测试未找到匹配文本的情况。
 
     验证 matchCount = 0 时返回的响应。
+
+    ⚠️ **规范层反例守护，勿改成错误用例**（oasp#23 §SEARCH_NO_MATCH / issue #90）：
+    ``matchCount: 0`` 是**良定义的零元结果**，MUST 返回 ``success: true``，**不得**返回
+    ``3012 SEARCH_NO_MATCH``。该区分在线缆上可观测——本事件规范早已把 ``matchCount: 0``
+    写成正常成功响应。对照 ``test_insert_comment.py::test_insert_comment_search_no_match_3012``。
     """
     # Arrange
     search_text = "nonexistent text"

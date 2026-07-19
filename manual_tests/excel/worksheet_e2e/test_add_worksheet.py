@@ -20,7 +20,7 @@ from __future__ import annotations
 from typing import Any
 
 from manual_tests.excel.e2e_base import WorkbookReader
-from manual_tests.excel.e2e_case import ExcelCase, run_main
+from manual_tests.excel.e2e_case import PENDING_ADDIN_80, ExcelCase, run_main
 from manual_tests.excel.worksheet_e2e._fixtures import ensure_fixtures
 
 BOOK = "worksheet_e2e/book.xlsx"
@@ -150,7 +150,7 @@ TEST_CASES: list[ExcelCase] = [
         action="add:worksheet",
         params={"name": "Alpha"},
         expect_error_code="3004",
-        xfail_reason="待 Add-In 接线 office-editor4ai#80",
+        xfail_reason=PENDING_ADDIN_80,
         tags=["error"],
     ),
 ]

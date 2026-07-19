@@ -6,6 +6,7 @@ PPT Goto Slide E2E Tests
 测试场景:
 1. 跳到首页 — slideIndex=0
 2. 跳到末页 — slideIndex=最后一张
+3. 错误码 3008 — slideIndex 越界（oasp#23，Add-In 接线前为 XFAIL）
 
 运行方式:
     uv run python manual_tests/ppt/slide_management_e2e/test_goto_slide.py --test all
@@ -17,9 +18,10 @@ import time
 from pathlib import Path
 from typing import Any
 
+from manual_tests.error_case import PENDING_ADDIN_92, judge_error_case
 from manual_tests.ppt.e2e_base import (
-    PPTTestRunner,
     PptTestCase,
+    PPTTestRunner,
     ensure_ppt_fixtures,
 )
 from manual_tests.ppt.test_helpers import ppt_get_slide_info, ppt_goto_slide
@@ -68,14 +70,51 @@ async def _workflow_goto_last(workspace: Any, doc_uri: str) -> bool:
     return True
 
 
-_WORKFLOW_FUNCS = [_workflow_goto_first, _workflow_goto_last]
+async def _workflow_goto_out_of_range(workspace: Any, doc_uri: str) -> bool:
+    """slideIndex 越界 → 3008 POSITION_INVALID + details（oasp#23 / issue #90）。
+
+    与 ``ppt:delete:slide`` 同判法。oasp#23 仅取这两个 /ppt 事件作样板验证判法，
+    全量清扫见 oasp#24——**其余序号越界事件沿用其表内现码，勿照抄本用例扩大化**。
+    """
+    success, data, _ = await ppt_get_slide_info(workspace, doc_uri)
+    if not success:
+        return False
+    total = (data or {}).get("slideCount", 0)
+    out_of_range = total + 100
+
+    print(f"\n   📋 slideCount={total}，请求跳转 index={out_of_range}（越界）")
+    ok, _, error = await ppt_goto_slide(workspace, doc_uri, slide_index=out_of_range)
+
+    verdict, message = judge_error_case(
+        ok,
+        error,
+        expect_code="3008",
+        expect_details={"kind": "slide"},
+        xfail_reason=PENDING_ADDIN_92,
+    )
+    print(message)
+    return verdict.passed
+
+
+_WORKFLOW_FUNCS = [_workflow_goto_first, _workflow_goto_last, _workflow_goto_out_of_range]
 
 TEST_CASES: list[PptTestCase] = [
     PptTestCase(name="跳到首页", fixture_name="multi_slide.pptx", description="跳转到 slideIndex=0", tags=["basic"]),
     PptTestCase(
         name="跳到末页", fixture_name="multi_slide.pptx", description="跳转到最后一张幻灯片", tags=["basic"]
     ),
+    PptTestCase(
+        name="错误码 3008 — slideIndex 越界",
+        fixture_name="multi_slide.pptx",
+        description="goto:slide 请求越界序号 → 3008 POSITION_INVALID（oasp#23，过渡期样板事件）",
+        expect_error_code="3008",
+        expect_error_details={"kind": "slide"},
+        xfail_reason=PENDING_ADDIN_92,
+        tags=["error"],
+    ),
 ]
+if len(_WORKFLOW_FUNCS) != len(TEST_CASES):  # 结构约束，非调试断言（python -O 会剥离 assert）
+    raise RuntimeError(f"TEST_CASES({len(TEST_CASES)}) 与 _WORKFLOW_FUNCS({len(_WORKFLOW_FUNCS)}) 必须一一对应")
 
 
 async def run_single_test(runner: PPTTestRunner, test_case: PptTestCase, test_number: int) -> bool:

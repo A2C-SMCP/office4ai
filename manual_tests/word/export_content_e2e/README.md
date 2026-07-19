@@ -107,6 +107,21 @@ uv run python manual_tests/word/export_content_e2e/test_basic_export.py --test 1
 
 夹具文件会在首次运行时自动创建。
 
+## 错误码 3007 为何没有真机用例（issue #90 / oasp#23）
+
+oasp#23 给本事件补了 `3007 FORMAT_NOT_SUPPORTED`（输出侧：`format` 枚举合法但目标产不出该
+格式）。**该条件在真机上不可构造**——`format` 枚举只有 `text` / `html` / `markdown` 三值，
+而本目录的用例 1-3 已把三者都验证为**成功**路径。没有「枚举内但宿主拒绝」的取值可请求，
+硬写用例只会得到一个永远失败的测试（xfail 三态**不赦免**「本应失败却成功」，见
+`manual_tests/error_case.py`）。
+
+故 3007 由**契约层**覆盖（mock 可模拟宿主拒绝）：
+`tests/contract_tests/word/test_export_content.py::test_export_content_format_not_supported_3007`
+（同文件另有 `..._api_not_supported_3016` 钉住「换格式无用」的降级路由）。
+
+若将来枚举扩容且新格式非全宿主支持，可回到本目录补真机用例。同理适用于
+`ppt:get:slideScreenshot`。
+
 ## 相关文档
 
 - [Confluence 文档](https://turingfocus.atlassian.net/wiki/pages/32702465) - word:export:content 事件规范
@@ -114,4 +129,4 @@ uv run python manual_tests/word/export_content_e2e/test_basic_export.py --test 1
 
 ## 最后更新
 
-2026-02-19
+2026-07-18（issue #90：补 3007 不可真机构造的说明）

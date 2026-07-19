@@ -35,13 +35,37 @@ def format_wire_error(error: dict[str, Any]) -> str:
     （如 3010 ELEMENT_NOT_FOUND 用 ``details.kind`` 区分 worksheet/table/chart/
     pivotTable），MCP 工具层透传 obs.error 时 AI 消费者也依赖它定位问题对象。
     渲染格式固定为 ``"{code}: {message} (details: {json})"``（json 按键排序、
-    不转义中文），e2e 断言侧按该格式反解析（见 manual_tests/excel/e2e_case.py）。
+    不转义中文），断言侧按该格式反解析——见配对的 :func:`parse_error_details`。
     """
     flattened = f"{error.get('code', 'Unknown')}: {error.get('message', 'Unknown error')}"
     details = error.get("details")
     if details:
         flattened += f" (details: {json.dumps(details, ensure_ascii=False, sort_keys=True)})"
     return flattened
+
+
+#: :func:`format_wire_error` 追加 details 时的定界标记（两函数配对，勿单独改动）
+_DETAILS_MARKER = "(details: "
+
+
+def parse_error_details(err: str) -> dict[str, Any] | None:
+    """从摊平的错误字符串尾部反解析 details JSON；无 details 或畸形时返回 None。
+
+    :func:`format_wire_error` 的**逆函数**，与之同居一处以杜绝格式漂移——`OfficeObs.error`
+    是 ``str | None``，结构化 ``{code, message, details}`` 在摊平处不可逆丢失，故断言侧
+    只能反解析。契约测试与 manual e2e 共用本函数（issue #82 引入、#90 上提至生产侧）。
+
+    取**最后一次**出现的 ``(details: {`` 标记——真 details 由 format_wire_error 追加在
+    尾部，即使 wire message 自身含 ``(details: {...})`` 字面量也不会误捕获。
+    """
+    marker = err.rfind(_DETAILS_MARKER + "{")
+    if marker == -1 or not err.endswith(")"):
+        return None
+    try:
+        parsed = json.loads(err[marker + len(_DETAILS_MARKER) : -1])
+    except json.JSONDecodeError:
+        return None
+    return parsed if isinstance(parsed, dict) else None
 
 
 @dataclass

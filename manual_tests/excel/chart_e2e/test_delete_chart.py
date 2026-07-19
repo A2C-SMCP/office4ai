@@ -20,7 +20,7 @@ from typing import Any
 
 from manual_tests.excel.chart_e2e._fixtures import ensure_fixtures
 from manual_tests.excel.e2e_base import WorkbookReader
-from manual_tests.excel.e2e_case import ExcelCase, run_main
+from manual_tests.excel.e2e_case import PENDING_ADDIN_80, ExcelCase, run_main
 from manual_tests.excel.test_helpers import excel_op
 from office4ai.environment.workspace.office_workspace import OfficeWorkspace
 
@@ -114,7 +114,7 @@ TEST_CASES: list[ExcelCase] = [
         params={"chart_name": "NoSuchChart", "worksheet_name": "Data"},
         expect_error_code="3010",
         expect_error_details={"kind": "chart"},
-        xfail_reason="待 Add-In 接线 office-editor4ai#80",
+        xfail_reason=PENDING_ADDIN_80,
         tags=["error"],
     ),
 ]
