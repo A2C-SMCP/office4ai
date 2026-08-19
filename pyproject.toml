@@ -1,6 +1,6 @@
 [project]
 name = "office4ai"
-version = "0.4.0"
+version = "0.4.1"
 description = "A powerful Office document management environment designed for AI agents to interact with Office documents"
 readme = "README.md"
 authors = [
@@ -19,7 +19,7 @@ dependencies = [
     "jinja2>=3.1.6",
     "regex>=2025.10.23",
     "pexpect>=4.9.0",
-    "mcp>=1.19.0",
+    "mcp>=1.19.0,<2.0.0",
     "confz>=2.1.0",
     # MCP HTTP/SSE 传输支持 | MCP HTTP/SSE transport support
     "starlette>=0.27.0",

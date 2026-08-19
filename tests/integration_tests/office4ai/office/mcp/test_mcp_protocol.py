@@ -10,18 +10,39 @@ MCP 协议集成测试 | MCP protocol integration tests
 
 from pathlib import Path
 
+import anyio
 import pytest
 from mcp.client.session import ClientSession
 from mcp.client.stdio import StdioServerParameters, stdio_client
 from pydantic import AnyUrl
 
 # 项目根目录路径 | Project root path
-project_root = Path(__file__).parent.parent.parent.parent.parent
+project_root = Path(__file__).parent.parent.parent.parent.parent.parent
 
 
 @pytest.mark.integration
 class TestMCPProtocol:
     """MCP 协议测试类 | MCP protocol test class"""
+
+    async def test_uvx_distribution_resolves_compatible_mcp_and_handshakes(self):
+        """未锁定的 uvx 分发安装必须解析兼容 SDK，并完成真实 stdio 握手。
+
+        仓库内 ``uv run`` 受 uv.lock 保护，无法发现 PyPI/uvx 根据发布元数据解析到
+        不兼容 MCP 主版本的问题。本测试从本地源码构建分发包，在隔离 uvx 环境中按
+        ``pyproject.toml`` 重新解析依赖，覆盖用户实际使用的安装与启动路径。
+        """
+        server_params = StdioServerParameters(
+            command="uvx",
+            args=["--isolated", "--from", str(project_root), "office4ai-mcp", "serve"],
+            cwd=str(project_root),
+        )
+
+        with anyio.fail_after(180):
+            async with stdio_client(server_params) as (read, write):
+                async with ClientSession(read, write) as session:
+                    result = await session.initialize()
+
+                    assert result.serverInfo.name == "office4ai"
 
     async def test_mcp_handshake(self):
         """测试 MCP 握手 | Test MCP handshake"""

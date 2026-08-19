@@ -1143,7 +1143,7 @@ wheels = [
 
 [[package]]
 name = "office4ai"
-version = "0.4.0"
+version = "0.4.1"
 source = { editable = "." }
 dependencies = [
     { name = "aiohttp" },
@@ -1207,7 +1207,7 @@ requires-dist = [
     { name = "jinja2", specifier = ">=3.1.6" },
     { name = "loguru", specifier = ">=0.7.2" },
     { name = "lxml", specifier = ">=4.9.0" },
-    { name = "mcp", specifier = ">=1.19.0" },
+    { name = "mcp", specifier = ">=1.19.0,<2.0.0" },
     { name = "openpyxl", specifier = ">=3.1.2" },
     { name = "paramiko", specifier = ">=3.4.0" },
     { name = "pexpect", specifier = ">=4.9.0" },
