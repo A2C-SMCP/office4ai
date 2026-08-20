@@ -15,7 +15,7 @@ from socketio import AsyncClient, AsyncServer  # type: ignore[import-untyped]
 
 from office4ai.environment.workspace.socketio.config import SocketIOConfig
 from office4ai.environment.workspace.socketio.server import create_socketio_server
-from office4ai.environment.workspace.socketio.versioning import SERVER_VERSION
+from office4ai.environment.workspace.socketio.versioning import OASP_PROTOCOL_VERSION
 
 
 @pytest_asyncio.fixture
@@ -54,7 +54,7 @@ async def socketio_server() -> AsyncServer:
 INTEGRATION_AUTH: dict[str, Any] = {
     "clientId": "integration_test_client",
     "documentUri": "file:///tmp/integration_test.docx",
-    "oaspVersion": str(SERVER_VERSION),  # 同 Server 版本，随 bump 自动跟随
+    "oaspVersion": str(OASP_PROTOCOL_VERSION),
 }
 
 

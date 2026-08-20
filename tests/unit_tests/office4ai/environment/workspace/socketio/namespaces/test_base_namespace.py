@@ -4,6 +4,8 @@ Test BaseNamespace functionality
 测试 BaseNamespace 的所有核心功能。
 """
 
+import json
+import logging
 from typing import Any
 from unittest.mock import AsyncMock
 
@@ -15,7 +17,14 @@ from office4ai.environment.workspace.socketio.namespaces.base import BaseNamespa
 from office4ai.environment.workspace.socketio.services.connection_manager import (
     connection_manager,
 )
-from office4ai.environment.workspace.socketio.versioning import SERVER_VERSION
+from office4ai.environment.workspace.socketio.versioning import OASP_PROTOCOL_VERSION
+
+
+def rejection_log_fields(caplog: pytest.LogCaptureFixture) -> dict[str, str]:
+    """Extract the structured field payload from the single rejection log."""
+    records = [record for record in caplog.records if "event=oasp_handshake_rejected" in record.getMessage()]
+    assert len(records) == 1
+    return json.loads(records[0].getMessage().split(" fields=", 1)[1])
 
 
 class TestBaseNamespace:
@@ -50,7 +59,7 @@ class TestBaseNamespace:
         assert call_args[1]["to"] == sid
         payload = call_args[0][1]
         assert payload["socketId"] == sid
-        assert payload["serverVersion"] == str(SERVER_VERSION)
+        assert payload["serverVersion"] == str(OASP_PROTOCOL_VERSION)
         assert "timestamp" in payload
 
         # Cleanup
@@ -91,44 +100,68 @@ class TestBaseNamespace:
         self,
         base_namespace: BaseNamespace,
         handshake_data_missing_version: dict[str, Any],
+        caplog: pytest.LogCaptureFixture,
     ) -> None:
         """Version-first: missing oaspVersion → HANDSHAKE_FAILED before business check"""
         sid = "test_socket_123"
 
-        with pytest.raises(ConnectionRefusedError) as exc_info:
+        with caplog.at_level(logging.WARNING), pytest.raises(ConnectionRefusedError) as exc_info:
             await base_namespace.on_connect(sid, {}, handshake_data_missing_version)
         assert exc_info.value.error_args["data"]["code"] == ErrorCode.HANDSHAKE_FAILED
         assert connection_manager.get_client_info(sid) is None
+        assert rejection_log_fields(caplog) == {
+            "code": ErrorCode.HANDSHAKE_FAILED,
+            "namespace": "/test",
+            "reason": "missing_oasp_version",
+            "sid": sid,
+        }
+        assert handshake_data_missing_version["documentUri"] not in caplog.text
 
     @pytest.mark.asyncio
     async def test_on_connect_invalid_version(
         self,
         base_namespace: BaseNamespace,
         handshake_data_invalid_version: dict[str, Any],
+        caplog: pytest.LogCaptureFixture,
     ) -> None:
         """Version-first: malformed oaspVersion → HANDSHAKE_FAILED"""
         sid = "test_socket_123"
 
-        with pytest.raises(ConnectionRefusedError) as exc_info:
+        with caplog.at_level(logging.WARNING), pytest.raises(ConnectionRefusedError) as exc_info:
             await base_namespace.on_connect(sid, {}, handshake_data_invalid_version)
         assert exc_info.value.error_args["data"]["code"] == ErrorCode.HANDSHAKE_FAILED
         assert connection_manager.get_client_info(sid) is None
+        assert rejection_log_fields(caplog)["reason"] == "invalid_oasp_version"
+        assert handshake_data_invalid_version["oaspVersion"] not in caplog.text
+        assert handshake_data_invalid_version["documentUri"] not in caplog.text
 
     @pytest.mark.asyncio
     async def test_on_connect_incompatible_version(
         self,
         base_namespace: BaseNamespace,
         handshake_data_incompatible_version: dict[str, Any],
+        caplog: pytest.LogCaptureFixture,
     ) -> None:
         """Version-first: incompatible oaspVersion → PROTOCOL_VERSION_MISMATCH (2006)"""
         sid = "test_socket_123"
 
-        with pytest.raises(ConnectionRefusedError) as exc_info:
+        with caplog.at_level(logging.WARNING), pytest.raises(ConnectionRefusedError) as exc_info:
             await base_namespace.on_connect(sid, {}, handshake_data_incompatible_version)
         data = exc_info.value.error_args["data"]
         assert data["code"] == ErrorCode.PROTOCOL_VERSION_MISMATCH
-        assert data["serverVersion"] == str(SERVER_VERSION)
+        assert data["serverVersion"] == str(OASP_PROTOCOL_VERSION)
         assert data["clientVersion"] == "0.2.0"
+        assert rejection_log_fields(caplog) == {
+            "client_version": "0.2.0",
+            "code": ErrorCode.PROTOCOL_VERSION_MISMATCH,
+            "max_supported": "0.4.999",
+            "min_supported": "0.4.0",
+            "namespace": "/test",
+            "reason": "protocol_version_mismatch",
+            "server_version": "0.4.0",
+            "sid": sid,
+        }
+        assert handshake_data_incompatible_version["documentUri"] not in caplog.text
         # Not registered
         assert connection_manager.get_client_info(sid) is None
 

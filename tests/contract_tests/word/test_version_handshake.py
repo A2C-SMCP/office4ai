@@ -21,7 +21,7 @@ from socketio import AsyncClient, AsyncServer  # type: ignore[import-untyped]
 from socketio.exceptions import ConnectionError as SioConnectionError  # type: ignore[import-untyped]
 
 from office4ai.environment.workspace.dtos.common import ErrorCode
-from office4ai.environment.workspace.socketio.versioning import SERVER_VERSION
+from office4ai.environment.workspace.socketio.versioning import OASP_PROTOCOL_VERSION
 
 SERVER_URL = "http://127.0.0.1:3003"
 NAMESPACE = "/word"
@@ -48,7 +48,7 @@ async def test_handshake_compatible_version_established_carries_server_version(
             auth={
                 "clientId": "contract_handshake_ok",
                 "documentUri": "file:///tmp/handshake_ok.docx",
-                "oaspVersion": str(SERVER_VERSION),
+                "oaspVersion": str(OASP_PROTOCOL_VERSION),
             },
         )
         assert client.connected is True
@@ -56,7 +56,7 @@ async def test_handshake_compatible_version_established_carries_server_version(
 
         assert len(established) == 1
         payload = established[0]
-        assert payload["serverVersion"] == str(SERVER_VERSION)
+        assert payload["serverVersion"] == str(OASP_PROTOCOL_VERSION)
         assert payload["socketId"]
         assert "timestamp" in payload
     finally:
@@ -97,7 +97,7 @@ async def test_handshake_incompatible_version_rejected_2006_on_wire(
     assert wire["message"] == "Protocol version mismatch"
     rejection = wire["data"]
     assert rejection["code"] == ErrorCode.PROTOCOL_VERSION_MISMATCH
-    assert rejection["serverVersion"] == str(SERVER_VERSION)
+    assert rejection["serverVersion"] == str(OASP_PROTOCOL_VERSION)
     assert rejection["clientVersion"] == "0.2.0"
     assert "minSupported" in rejection
     assert "maxSupported" in rejection

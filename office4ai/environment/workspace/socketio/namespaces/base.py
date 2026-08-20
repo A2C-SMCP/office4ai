@@ -8,11 +8,13 @@ import logging
 from typing import Any
 
 from socketio import AsyncNamespace  # type: ignore[import-untyped]
+from socketio.exceptions import ConnectionRefusedError  # type: ignore[import-untyped]
 
 from office4ai.environment.workspace.dtos.common import ErrorCode
 from office4ai.environment.workspace.socketio.middleware.handshake import (
     build_connection_established,
     handshake_rejection,
+    log_handshake_rejection,
     validate_oasp_version,
 )
 from office4ai.environment.workspace.socketio.services.connection_manager import ClientInfo, connection_manager
@@ -57,27 +59,31 @@ class BaseNamespace(AsyncNamespace):
         """
         data = auth if auth else {}
 
-        # ① 协议版本先行校验：缺失/非法 → HANDSHAKE_FAILED(2003)；不兼容 → PROTOCOL_VERSION_MISMATCH(2006)
-        client_version = validate_oasp_version(data)
-
-        # ② 业务参数校验（版本兼容后再查）
-        client_id = data.get("clientId")
-        document_uri = data.get("documentUri")
-        if not client_id or not document_uri:
-            logger.error(f"Connection refused: missing handshake params from {sid}")
-            raise handshake_rejection("Missing required auth parameters", ErrorCode.HANDSHAKE_FAILED)
-
-        # ③ 注册连接
         try:
-            connection_manager.register_client(
-                socket_id=sid,
-                client_id=client_id,
-                document_uri=document_uri,
-                namespace=self.namespace_name,
-            )
-        except Exception as e:
-            logger.error(f"Error registering client: {e}", exc_info=True)
-            raise handshake_rejection("Internal error during connection registration", ErrorCode.UNKNOWN) from e
+            # ① 协议版本先行校验：缺失/非法 → HANDSHAKE_FAILED(2003)；不兼容 → 2006
+            client_version = validate_oasp_version(data)
+
+            # ② 业务参数校验（版本兼容后再查）
+            client_id = data.get("clientId")
+            document_uri = data.get("documentUri")
+            if not client_id or not document_uri:
+                raise handshake_rejection("Missing required auth parameters", ErrorCode.HANDSHAKE_FAILED)
+
+            # ③ 注册连接
+            try:
+                connection_manager.register_client(
+                    socket_id=sid,
+                    client_id=client_id,
+                    document_uri=document_uri,
+                    namespace=self.namespace_name,
+                )
+            except Exception as e:
+                logger.error("Error registering client", exc_info=True)
+                raise handshake_rejection("Internal error during connection registration", ErrorCode.UNKNOWN) from e
+        except ConnectionRefusedError as rejection:
+            # 所有握手拒绝在 namespace 边界统一诊断，wire 异常原样重抛。
+            log_handshake_rejection(self.namespace_name, sid, rejection)
+            raise
 
         # ④ 发送确认（含 serverVersion，仅供诊断）
         await self.emit("connection:established", build_connection_established(sid), to=sid)

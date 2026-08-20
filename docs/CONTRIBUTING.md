@@ -74,6 +74,17 @@ Run before submitting a PR:
 poe pre-commit
 ```
 
+## Versioning and Releases
+
+Office4AI has two independent versions:
+
+- The package version in `pyproject.toml` identifies an Office4AI software release.
+- `OASP_PROTOCOL_VERSION` in `office4ai/environment/workspace/socketio/versioning.py` identifies the OASP wire contract used by the Socket.IO handshake.
+
+Routine package PATCH or MINOR releases must not change `OASP_PROTOCOL_VERSION`. Update the protocol version only when the OASP
+wire contract or compatibility boundary changes. A protocol-version change must be coordinated with the Office Add-In, covered by
+the real Socket.IO contract tests, and recorded in the release notes.
+
 ## Project Structure
 
 ```

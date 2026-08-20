@@ -7,15 +7,14 @@ OASP Protocol Versioning
 - conventions.md#versioning / conventions.md#compatibility-rule
 - connection.md#protocol-version-handshake
 
-版本号语义为 SemVer ``MAJOR.MINOR.PATCH``，单一事实源为 ``office4ai.__version__``
-（同步自 ``pyproject.toml`` 的 ``version`` 字段，由 bump-my-version 管理）。
+版本号语义为 SemVer ``MAJOR.MINOR.PATCH``。OASP 协议版本独立于 Office4AI 软件包版本：
+软件 PATCH/MINOR 发布不会隐式改变握手兼容性，只有 OASP 线缆协议变化时才更新协议常量。
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass
-
-from office4ai import __version__
+from typing import Final
 
 
 @dataclass(frozen=True)
@@ -82,13 +81,17 @@ def is_compatible(client: OaspVersion, server: OaspVersion) -> bool:
 
 
 # ---------------------------------------------------------------------------
-# Server 版本常量（单一事实源：office4ai.__version__）
+# OASP 协议版本常量
 # ---------------------------------------------------------------------------
 
-#: 本 Server 实现的 OASP 协议版本（用于兼容性判定与 connection:established 诊断字段）
-SERVER_VERSION: OaspVersion = OaspVersion.parse(__version__)
+#: 本 Server 实现的 OASP 协议版本（兼容性判定与线缆诊断字段的唯一事实源）。
+#: 仅当 OASP wire contract 发生变化时更新；不得随 Office4AI 软件包版本自动递增。
+OASP_PROTOCOL_VERSION: Final[OaspVersion] = OaspVersion(0, 4, 0)
+
+#: 向后兼容旧导入名。新代码应使用语义明确的 ``OASP_PROTOCOL_VERSION``。
+SERVER_VERSION: Final[OaspVersion] = OASP_PROTOCOL_VERSION
 
 #: Server 支持的最低 / 最高版本，仅用于不兼容时回送给 AddIn 的诊断字段。
 #: v0.x 阶段实际放行与否由 is_compatible 的严格 MAJOR.MINOR 判定，min/max 不参与决策。
-SERVER_MIN_SUPPORTED: OaspVersion = OaspVersion(SERVER_VERSION.major, SERVER_VERSION.minor, 0)
-SERVER_MAX_SUPPORTED: OaspVersion = OaspVersion(SERVER_VERSION.major, SERVER_VERSION.minor, 999)
+SERVER_MIN_SUPPORTED: Final[OaspVersion] = OaspVersion(OASP_PROTOCOL_VERSION.major, OASP_PROTOCOL_VERSION.minor, 0)
+SERVER_MAX_SUPPORTED: Final[OaspVersion] = OaspVersion(OASP_PROTOCOL_VERSION.major, OASP_PROTOCOL_VERSION.minor, 999)

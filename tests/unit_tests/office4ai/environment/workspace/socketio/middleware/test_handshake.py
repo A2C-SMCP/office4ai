@@ -9,7 +9,6 @@ from typing import Any
 import pytest
 from socketio.exceptions import ConnectionRefusedError  # type: ignore[import-untyped]
 
-from office4ai import __version__
 from office4ai.environment.workspace.dtos.common import ErrorCode
 from office4ai.environment.workspace.socketio.middleware.handshake import (
     build_connection_established,
@@ -18,7 +17,7 @@ from office4ai.environment.workspace.socketio.middleware.handshake import (
     validate_handshake_data,
     validate_oasp_version,
 )
-from office4ai.environment.workspace.socketio.versioning import SERVER_VERSION, OaspVersion
+from office4ai.environment.workspace.socketio.versioning import OASP_PROTOCOL_VERSION, OaspVersion
 
 
 class TestHandshakeMiddleware:
@@ -106,12 +105,12 @@ class TestValidateOaspVersion:
 
     def test_compatible_version_returns_parsed(self) -> None:
         """兼容版本：返回解析后的 OaspVersion，不抛异常"""
-        result = validate_oasp_version({"oaspVersion": str(SERVER_VERSION)})
-        assert result == SERVER_VERSION
+        result = validate_oasp_version({"oaspVersion": str(OASP_PROTOCOL_VERSION)})
+        assert result == OASP_PROTOCOL_VERSION
 
     def test_compatible_patch_differs(self) -> None:
         """v0.x：同 MAJOR.MINOR 不同 PATCH 仍兼容"""
-        client = OaspVersion(SERVER_VERSION.major, SERVER_VERSION.minor, 99)
+        client = OaspVersion(OASP_PROTOCOL_VERSION.major, OASP_PROTOCOL_VERSION.minor, 99)
         result = validate_oasp_version({"oaspVersion": str(client)})
         assert result == client
 
@@ -145,12 +144,12 @@ class TestValidateOaspVersion:
     def test_incompatible_version_rejected_2006_with_fields(self) -> None:
         """不兼容版本 → PROTOCOL_VERSION_MISMATCH (2006) + 扁平诊断字段"""
         # v0.x 严格 MINOR：构造一个不同 MINOR 的客户端版本
-        incompatible = OaspVersion(SERVER_VERSION.major, SERVER_VERSION.minor + 1, 0)
+        incompatible = OaspVersion(OASP_PROTOCOL_VERSION.major, OASP_PROTOCOL_VERSION.minor + 1, 0)
         with pytest.raises(ConnectionRefusedError) as exc_info:
             validate_oasp_version({"oaspVersion": str(incompatible)})
         data = exc_info.value.error_args["data"]
         assert data["code"] == ErrorCode.PROTOCOL_VERSION_MISMATCH
-        assert data["serverVersion"] == str(SERVER_VERSION)
+        assert data["serverVersion"] == str(OASP_PROTOCOL_VERSION)
         assert data["clientVersion"] == str(incompatible)
         assert "minSupported" in data
         assert "maxSupported" in data
@@ -163,7 +162,7 @@ class TestValidateOaspVersion:
         既有不兼容用例只覆盖 MINOR 维度；MAJOR 走 ``is_compatible`` 的另一分支，
         必须同样经 ``validate_oasp_version`` 拒绝（防止未来给 major==0 加特例时漏判）。
         """
-        incompatible_major = OaspVersion(SERVER_VERSION.major + 1, 0, 0)
+        incompatible_major = OaspVersion(OASP_PROTOCOL_VERSION.major + 1, 0, 0)
         with pytest.raises(ConnectionRefusedError) as exc_info:
             validate_oasp_version({"oaspVersion": str(incompatible_major)})
         data = exc_info.value.error_args["data"]
@@ -177,6 +176,6 @@ class TestBuildConnectionEstablished:
     def test_shape_and_server_version(self) -> None:
         payload = build_connection_established("sid_abc")
         assert payload["socketId"] == "sid_abc"
-        assert payload["serverVersion"] == str(SERVER_VERSION) == __version__
+        assert payload["serverVersion"] == str(OASP_PROTOCOL_VERSION)
         assert isinstance(payload["timestamp"], int)
         assert set(payload.keys()) == {"socketId", "serverVersion", "timestamp"}

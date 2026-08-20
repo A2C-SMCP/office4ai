@@ -5,6 +5,7 @@ Simple handshake validation for client connections.
 Validates clientId and documentUri are provided.
 """
 
+import json
 import logging
 import time
 from collections.abc import Awaitable, Callable
@@ -15,9 +16,9 @@ from socketio.exceptions import ConnectionRefusedError  # type: ignore[import-un
 
 from office4ai.environment.workspace.dtos.common import ErrorCode
 from office4ai.environment.workspace.socketio.versioning import (
+    OASP_PROTOCOL_VERSION,
     SERVER_MAX_SUPPORTED,
     SERVER_MIN_SUPPORTED,
-    SERVER_VERSION,
     OaspVersion,
     is_compatible,
 )
@@ -44,6 +45,64 @@ def handshake_rejection(message: str, code: str, **extra: str) -> ConnectionRefu
     """
     data: dict[str, Any] = {"code": code, "message": message, **extra}
     return ConnectionRefusedError(message, data)
+
+
+def _safe_rejection_reason(message: object) -> str:
+    """Map wire messages to stable log reasons without copying untrusted values."""
+    if message == "Missing oaspVersion":
+        return "missing_oasp_version"
+    if isinstance(message, str) and message.startswith("Invalid oaspVersion:"):
+        return "invalid_oasp_version"
+    if message == "Protocol version mismatch":
+        return "protocol_version_mismatch"
+    if message == "Missing required auth parameters":
+        return "missing_required_auth_parameters"
+    if message == "Internal error during connection registration":
+        return "connection_registration_failed"
+    return "handshake_rejected"
+
+
+def _safe_version_log_value(value: object) -> str:
+    """Return a canonical SemVer for logs, or ``unknown`` for unexpected data."""
+    if not isinstance(value, str):
+        return "unknown"
+    try:
+        return str(OaspVersion.parse(value))
+    except ValueError:
+        return "unknown"
+
+
+def log_handshake_rejection(namespace: str, sid: str, rejection: ConnectionRefusedError) -> None:
+    """Log a handshake rejection using an allowlisted, JSON-encoded field set.
+
+    The wire rejection remains untouched. The log deliberately excludes the auth
+    payload, ``documentUri``, client ID, and malformed raw version values.
+    """
+    error_args = rejection.error_args
+    raw_data = error_args.get("data")
+    data = raw_data if isinstance(raw_data, dict) else {}
+    code = data.get("code")
+    fields = {
+        "namespace": namespace,
+        "sid": sid,
+        "code": str(code) if code is not None else ErrorCode.HANDSHAKE_FAILED,
+        "reason": _safe_rejection_reason(data.get("message")),
+    }
+
+    if fields["code"] == ErrorCode.PROTOCOL_VERSION_MISMATCH:
+        fields.update(
+            {
+                "client_version": _safe_version_log_value(data.get("clientVersion")),
+                "server_version": _safe_version_log_value(data.get("serverVersion")),
+                "min_supported": _safe_version_log_value(data.get("minSupported")),
+                "max_supported": _safe_version_log_value(data.get("maxSupported")),
+            }
+        )
+
+    logger.warning(
+        "event=oasp_handshake_rejected fields=%s",
+        json.dumps(fields, sort_keys=True, separators=(",", ":")),
+    )
 
 
 def validate_oasp_version(auth: dict[str, Any] | None) -> OaspVersion:
@@ -79,12 +138,12 @@ def validate_oasp_version(auth: dict[str, Any] | None) -> OaspVersion:
     except ValueError:
         raise handshake_rejection(f"Invalid oaspVersion: {raw}", ErrorCode.HANDSHAKE_FAILED) from None
 
-    if not is_compatible(client_version, SERVER_VERSION):
+    if not is_compatible(client_version, OASP_PROTOCOL_VERSION):
         # 扁平拒绝结构（非标准 ErrorResponse——握手期无 requestId）
         raise handshake_rejection(
             "Protocol version mismatch",
             ErrorCode.PROTOCOL_VERSION_MISMATCH,
-            serverVersion=str(SERVER_VERSION),
+            serverVersion=str(OASP_PROTOCOL_VERSION),
             clientVersion=str(client_version),
             minSupported=str(SERVER_MIN_SUPPORTED),
             maxSupported=str(SERVER_MAX_SUPPORTED),
@@ -102,7 +161,7 @@ def build_connection_established(socket_id: str) -> dict[str, Any]:
     """
     return {
         "socketId": socket_id,
-        "serverVersion": str(SERVER_VERSION),
+        "serverVersion": str(OASP_PROTOCOL_VERSION),
         "timestamp": int(time.time() * 1000),
     }
 

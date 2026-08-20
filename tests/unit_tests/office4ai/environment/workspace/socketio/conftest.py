@@ -16,10 +16,10 @@ from office4ai.environment.workspace.socketio.services.connection_manager import
     ClientInfo,
     ConnectionManager,
 )
-from office4ai.environment.workspace.socketio.versioning import SERVER_VERSION
+from office4ai.environment.workspace.socketio.versioning import OASP_PROTOCOL_VERSION
 
-# 与 Server 同版本的 oaspVersion（单一事实源，避免版本 bump 时握手 fixture 漂移）
-_COMPATIBLE_OASP_VERSION = str(SERVER_VERSION)
+# 与 Server 的 OASP 协议版本一致；软件包版本 bump 不影响握手 fixture。
+_COMPATIBLE_OASP_VERSION = str(OASP_PROTOCOL_VERSION)
 
 
 @pytest.fixture
