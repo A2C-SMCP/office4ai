@@ -5,10 +5,13 @@ Test OASP protocol versioning
 规范：conventions.md#versioning / conventions.md#compatibility-rule。
 """
 
+import subprocess
+import sys
+
 import pytest
 
-from office4ai import __version__
 from office4ai.environment.workspace.socketio.versioning import (
+    OASP_PROTOCOL_VERSION,
     SERVER_MAX_SUPPORTED,
     SERVER_MIN_SUPPORTED,
     SERVER_VERSION,
@@ -73,17 +76,27 @@ class TestIsCompatible:
 
 
 class TestServerConstants:
-    """Server 版本常量 —— 单一事实源 office4ai.__version__"""
+    """OASP 协议版本常量独立于 Office4AI 软件包版本。"""
 
-    def test_server_version_matches_package(self) -> None:
-        assert str(SERVER_VERSION) == __version__
+    def test_protocol_version_is_explicit_040(self) -> None:
+        assert OASP_PROTOCOL_VERSION == OaspVersion(0, 4, 0)
 
-    def test_server_version_is_040(self) -> None:
-        assert (SERVER_VERSION.major, SERVER_VERSION.minor) == (0, 4)
+    def test_package_version_change_does_not_change_protocol_version(self) -> None:
+        code = """
+import office4ai
+office4ai.__version__ = "9.8.7"
+from office4ai.environment.workspace.socketio.versioning import OASP_PROTOCOL_VERSION
+assert str(OASP_PROTOCOL_VERSION) == "0.4.0"
+"""
+        result = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, check=False)
+        assert result.returncode == 0, result.stderr
+
+    def test_legacy_server_version_alias(self) -> None:
+        assert SERVER_VERSION is OASP_PROTOCOL_VERSION
 
     def test_min_max_window(self) -> None:
-        assert SERVER_MIN_SUPPORTED == OaspVersion(SERVER_VERSION.major, SERVER_VERSION.minor, 0)
-        assert SERVER_MAX_SUPPORTED == OaspVersion(SERVER_VERSION.major, SERVER_VERSION.minor, 999)
+        assert SERVER_MIN_SUPPORTED == OaspVersion(OASP_PROTOCOL_VERSION.major, OASP_PROTOCOL_VERSION.minor, 0)
+        assert SERVER_MAX_SUPPORTED == OaspVersion(OASP_PROTOCOL_VERSION.major, OASP_PROTOCOL_VERSION.minor, 999)
 
     def test_server_self_compatible(self) -> None:
-        assert is_compatible(SERVER_VERSION, SERVER_VERSION) is True
+        assert is_compatible(OASP_PROTOCOL_VERSION, OASP_PROTOCOL_VERSION) is True
